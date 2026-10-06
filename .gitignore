@@ -1,0 +1,28 @@
+# Installed by Start Review.command (npm install)
+node_modules/
+
+# Secrets: never commit. Share these two files privately (see README).
+data/google-service-account.json
+data/gemini-key.txt
+
+# Everything in data/ is per computer (browser logins, logs, caches, local state)...
+data/*
+# ...except the voicenote clips, which both computers need.
+!data/voice/
+data/voice/*
+!data/voice/clips/
+
+# Per-computer state written by the app
+review-state.json
+sheet-review-state.json
+voicenote-yes.csv
+
+# Large or local-only tools and leftovers
+bin/
+detect/.venv/
+detect/weights/
+detect/results*/
+detect/*.pt
+.backup/
+.claude/
+.DS_Store

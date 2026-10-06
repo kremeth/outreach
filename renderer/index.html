@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Voicenote review</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header>
+      <div id="track" class="track"></div>
+      <div class="top-row">
+        <div class="who">
+          <div id="kicker" class="kicker"></div>
+          <h1 id="name"></h1>
+          <p id="meta" class="meta"></p>
+          <p id="notes" class="notes"></p>
+        </div>
+        <div id="status" class="status"></div>
+      </div>
+    </header>
+    <main>
+      <p id="loading" class="loading">Loading profile…</p>
+      <section id="saved" hidden></section>
+    </main>
+    <footer>
+      <div id="q" class="q">Send a voicenote?</div>
+      <div id="review-actions" class="actions">
+        <button id="no" type="button">No</button>
+        <button id="yes" type="button">Yes</button>
+      </div>
+      <div id="saved-actions" class="actions" hidden>
+        <button id="back" type="button">Back to profiles</button>
+      </div>
+      <div class="sub">
+        <button id="prev" type="button">Previous</button>
+        <span id="keys">N no · Y yes</span>
+        <button id="reload" type="button">Reload</button>
+        <button id="external" type="button">Open in browser</button>
+        <button id="fileline" type="button"></button>
+      </div>
+    </footer>
+    <script src="app.js"></script>
+  </body>
+</html>

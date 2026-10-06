@@ -1,0 +1,17 @@
+{
+  "name": "voicenote-review",
+  "productName": "Voicenote Review",
+  "version": "1.0.0",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "start": "node server.js",
+    "record": "electron record-main.js"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0"
+  },
+  "dependencies": {
+    "sharp": "^0.34.5"
+  }
+}
