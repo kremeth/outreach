@@ -238,6 +238,19 @@ function timeLabel(ms) {
   return new Date(ms).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' })
 }
 
+// "Next comment at 7:58 pm", "Resumes tomorrow at 8:00 am". The time is only ever added here.
+function waitingLabel(data) {
+  const label = data.waitingFor || 'Next action'
+  if (!data.nextAt || /^Waiting/.test(label)) return data.nextAt ? label : 'Working…'
+  const day = (ms) => new Date(ms).toDateString()
+  const tomorrow = new Date()
+  tomorrow.setDate(tomorrow.getDate() + 1)
+  const when = day(data.nextAt) === day(Date.now()) ? ''
+    : day(data.nextAt) === day(tomorrow.getTime()) ? 'tomorrow '
+    : `${new Date(data.nextAt).toLocaleDateString('en-AU', { weekday: 'long' })} `
+  return `${label} ${when}at ${timeLabel(data.nextAt)}`
+}
+
 function launchPlan(data) {
   const { counts, left, windowStart, windowEnd, now } = data.preview
   const dmWanted = (launchTasks.relaunch1 ? counts.relaunch1 : 0) + (launchTasks.relaunch2 ? counts.relaunch2 : 0)
@@ -277,7 +290,7 @@ function renderLaunch() {
   if (data.running) {
     card.classList.add('on')
     const head = el('div', 'launch-head')
-    head.append(el('span', 'launch-pill', 'Running'), el('strong', '', data.current || (data.nextAt ? `${data.waitingFor || 'Next action'} at ${timeLabel(data.nextAt)}` : 'Working…')))
+    head.append(el('span', 'launch-pill', 'Running'), el('strong', '', data.current || waitingLabel(data)))
     card.append(head)
     card.append(el('p', 'launch-line', `Sent so far: ${data.sent.voice} voicenotes · ${data.sent.comment} comments · ${data.sent.dm} relaunches. Runs until ${data.window.endHour}:00, then continues tomorrow.`))
     const stop = button('Stop', 'ghost small', async () => {
