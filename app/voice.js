@@ -198,6 +198,9 @@ async function sendTo(item, account) {
   clipSeconds = loaded?.duration || 30
   await ig.sleep(SETTLE_BEFORE_SEND_MS)
 
+  // Instagram draws the waveform from the live audio only while the page is visible; a hidden page
+  // gives a flat row of dots, so never record unless it is visible.
+  if ((await ig.run(wc, 'document.visibilityState')) !== 'visible') throw fail('The Instagram panel was not visible, so the voicenote was not recorded.', 'notsent')
   status = { phase: 'recording', text: `Voicenote to @${item.username} (${item.voice})` }
   await startRecording()
   await waitForEnd()
@@ -210,7 +213,9 @@ async function sendTo(item, account) {
   await queue.markSent(item, item.voice)
   const after = await confirmWarning('Warning after a voicenote')
   if (after) throw fail(`Instagram showed a warning after sending: ${after}`, 'blocked')
-  return { sent: true, item: { name: item.name, username: item.username, device: item.device, voice: item.voice, sheetRow: item.sheetRow } }
+  await ig.sleep(2000)
+  const wave = await ig.lastVoiceWaveform(wc)
+  return { sent: true, flatWaveform: Boolean(wave.found && wave.flat), item: { name: item.name, username: item.username, device: item.device, voice: item.voice, sheetRow: item.sheetRow } }
 }
 
 // One voicenote at a time. The app wraps this in its safety gate (limits, record, 48 hour stop).

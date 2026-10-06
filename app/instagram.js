@@ -420,6 +420,18 @@ const THREAD = String.raw`(() => {
     .sort((a, b) => a.top - b.top)
 })()`
 
+// The newest voicenote bubble's waveform in the open chat: flat means every bar is the same height
+// (Instagram drew it while the page was hidden).
+async function lastVoiceWaveform(wc) {
+  return run(wc, String.raw`(() => {
+    const waves = [...document.querySelectorAll('[role="main"] [aria-label="Waveform for audio message"]')]
+    const wave = waves[waves.length - 1]
+    if (!wave) return { found: false }
+    const heights = [...wave.querySelectorAll('rect')].map((rect) => Number(rect.getAttribute('height')) || 0)
+    return { found: true, flat: new Set(heights.map((height) => Math.round(height))).size <= 1 }
+  })()`).catch(() => ({ found: false }))
+}
+
 async function readThread(wc) {
   let messages = []
   for (let attempt = 0; attempt < 12; attempt++) {
@@ -513,4 +525,4 @@ async function dmSteps(wc, { username, message, expect }, progress) {
   return { ok: true }
 }
 
-module.exports = { openUrl, run, click, key, sleep, aborted, comment, dm, pageProblem, readThread, threadAllows }
+module.exports = { openUrl, run, click, key, sleep, aborted, comment, dm, pageProblem, readThread, threadAllows, lastVoiceWaveform }
