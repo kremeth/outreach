@@ -85,15 +85,16 @@ async function ensureServer() {
 function layout() {
   if (!win || win.isDestroyed()) return
   const { width, height } = win.getContentBounds()
-  // Prospecting gets the whole window; the Instagram panel is only needed for the daily tasks.
-  panel.setVisible(!panelHidden)
+  const panelWidth = Math.max(PANEL_MIN, Math.round(width * 0.4))
+  panel.setBounds({ x: width - panelWidth, y: 0, width: panelWidth, height })
+  // Prospecting gets the whole window by laying the UI over the panel. The panel is never hidden:
+  // a hidden Instagram page defers clicks (a Like tap would not go out until it is shown again).
   if (panelHidden) {
     ui.setBounds({ x: 0, y: 0, width, height })
-    return
+    win.contentView.addChildView(ui)
+  } else {
+    ui.setBounds({ x: 0, y: 0, width: Math.max(0, width - panelWidth), height })
   }
-  const panelWidth = Math.max(PANEL_MIN, Math.round(width * 0.4))
-  ui.setBounds({ x: 0, y: 0, width: Math.max(0, width - panelWidth), height })
-  panel.setBounds({ x: width - panelWidth, y: 0, width: panelWidth, height })
   // Instagram only shows the inline comment box in its desktop layout (about 830 CSS px and up).
   panel.webContents.setZoomFactor(Math.max(0.6, Math.min(1, panelWidth / PANEL_CSS_WIDTH)))
 }
@@ -131,6 +132,8 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      // Keeps Instagram running normally when the window is minimised or behind other apps.
+      backgroundThrottling: false,
     },
   })
   try { ui.setBackgroundColor('#f6f6f3') } catch {}
@@ -191,11 +194,26 @@ async function accountId() {
 
 // One Instagram action at a time (comment, DM or voicenote), always through
 // the safety gate: shared limits, the cross-computer account lock, then a record of the attempt.
+// Instagram must see its page as visible, or it defers what we click. If the window was minimised,
+// bring it back without stealing focus.
+async function ensurePanelLive() {
+  const state = () => panel.webContents.executeJavaScript('document.visibilityState', true).catch(() => 'hidden')
+  if ((await state()) === 'visible') return
+  if (win.isMinimized()) win.restore()
+  win.showInactive()
+  for (let attempt = 0; attempt < 10; attempt++) {
+    await sleep(300)
+    if ((await state()) === 'visible') return
+  }
+  throw Object.assign(new Error('The Instagram panel is not visible, so nothing was clicked. Keep the Outreach window open.'), { kind: 'notsent' })
+}
+
 // describe(result, failure) says what to record in the shared log: { target, detail }, or null for nothing.
 async function inPanel(kind, label, describe, task) {
   if (panelTask) throw Object.assign(new Error(`Instagram is busy (${panelTask}). Try again in a moment.`), { kind: 'busy' })
   panelTask = label
   try {
+    await ensurePanelLive()
     const account = await accountId()
     if (!account) throw Object.assign(new Error('Instagram is not logged in. Log in inside the Instagram panel first.'), { kind: 'login' })
     await guard.check(kind, account)

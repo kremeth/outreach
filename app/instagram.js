@@ -88,16 +88,43 @@ const POST_PARTS = String.raw`
   const box = document.querySelector('textarea[aria-label*="comment" i], textarea[placeholder*="comment" i]')
   const form = box ? (box.closest('form') || box.parentElement?.parentElement) : null
   const postButton = form ? [...form.querySelectorAll('[role="button"], button, div')].find((el) => (el.innerText || '').trim() === 'Post' && el.children.length < 3) : null
+  const media = [...document.querySelectorAll('main img, main video')]
+    .map((el) => ({ el, area: el.getBoundingClientRect().width * el.getBoundingClientRect().height }))
+    .filter((item) => item.area > 40000)
+    .sort((a, b) => b.area - a.area)[0]?.el || null
 `
 
-const point = (name) => String.raw`(() => {
+const scrollTo = (name) => String.raw`(() => {
+  ${POST_PARTS}
+  const target = ${name}
+  if (!target) return false
+  target.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' })
+  return true
+})()`
+
+// Where to click, read after scrolling has settled, and only if that exact spot is really the target
+// (not covered by a header, a popup or the edge of the screen).
+const aimAt = (name) => String.raw`(() => {
   ${POST_PARTS}
   const target = ${name}
   if (!target) return null
-  target.scrollIntoView({ block: 'center', inline: 'center' })
   const rect = target.getBoundingClientRect()
-  return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) }
+  const x = Math.round(rect.left + rect.width / 2)
+  const y = Math.round(rect.top + rect.height / 2)
+  const onScreen = rect.width > 0 && x > 0 && y > 0 && x < window.innerWidth && y < window.innerHeight
+  const hit = onScreen ? document.elementFromPoint(x, y) : null
+  return { x, y, clear: Boolean(hit && (target === hit || target.contains(hit) || hit.contains(target))) }
 })()`
+
+async function aim(wc, name) {
+  if (!(await run(wc, scrollTo(name)))) return null
+  for (let attempt = 0; attempt < 6; attempt++) {
+    await sleep(attempt ? 250 : 450)
+    const spot = await run(wc, aimAt(name))
+    if (spot?.clear) return spot
+  }
+  return null
+}
 
 const POST_STATE = String.raw`(() => {
   ${PAGE_PROBLEM}
@@ -142,6 +169,117 @@ async function waitFor(check, timeoutMs, stepMs = 300) {
   return last
 }
 
+async function doubleClick(wc, point) {
+  const zoom = wc.getZoomFactor() || 1
+  const x = Math.round(point.x * zoom)
+  const y = Math.round(point.y * zoom)
+  wc.focus()
+  wc.sendInputEvent({ type: 'mouseMove', x, y })
+  for (const clickCount of [1, 2]) {
+    await sleep(60)
+    wc.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount })
+    await sleep(60)
+    wc.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount })
+  }
+}
+
+// Watches the panel's own network traffic (Chrome DevTools protocol, invisible to the page) for
+// requests matching `pattern`, with their status and the start of their response.
+async function watchNetwork(wc, pattern) {
+  const dbg = wc.debugger
+  const ownsDebugger = !dbg.isAttached()
+  if (ownsDebugger) dbg.attach('1.3')
+  await dbg.sendCommand('Network.enable')
+  const requests = new Map()
+  const onMessage = (_event, method, params) => {
+    if (method === 'Network.requestWillBeSent') {
+      const headers = params.request.headers || {}
+      const name = headers['X-FB-Friendly-Name'] || headers['x-fb-friendly-name'] || ''
+      const label = `${params.request.url} ${name}`
+      if (params.request.method === 'POST' && pattern.test(label) && !/unlike/i.test(label)) {
+        requests.set(params.requestId, { url: params.request.url, name, done: false })
+      }
+    } else if (method === 'Network.responseReceived' && requests.has(params.requestId)) {
+      requests.get(params.requestId).status = params.response.status
+    } else if (method === 'Network.loadingFinished' && requests.has(params.requestId)) {
+      const entry = requests.get(params.requestId)
+      dbg.sendCommand('Network.getResponseBody', { requestId: params.requestId })
+        .then((body) => { entry.body = String(body.body || '').slice(0, 4000) })
+        .catch(() => {})
+        .finally(() => { entry.done = true })
+    } else if (method === 'Network.loadingFailed' && requests.has(params.requestId)) {
+      Object.assign(requests.get(params.requestId), { done: true, failed: params.errorText || 'failed' })
+    }
+  }
+  dbg.on('message', onMessage)
+  return {
+    list: () => [...requests.values()],
+    stop() {
+      dbg.removeListener('message', onMessage)
+      if (ownsDebugger) { try { dbg.detach() } catch {} }
+    },
+  }
+}
+
+// Any POST whose address or GraphQL name mentions like (e.g. /api/v1/web/likes/<id>/like/ or
+// usePolarisLikeMediaLikeMutation), only while the like is being clicked.
+const LIKE_REQUEST = /like/i
+const REFUSED = /feedback_required|"spam"\s*:\s*true|try again later|we restrict certain activity|action blocked|"status"\s*:\s*"fail"|checkpoint_required|challenge_required/i
+
+// What Instagram's servers said about the like requests so far.
+function likeVerdict(requests) {
+  const refused = requests.find((request) => request.done && !request.failed && ((request.status || 0) >= 400 || REFUSED.test(request.body || '')))
+  if (refused) {
+    const detail = (String(refused.body || '').match(REFUSED) || [])[0] || `status ${refused.status}`
+    return { refused: true, reason: `Instagram answered the like with "${detail}".` }
+  }
+  return {
+    accepted: requests.some((request) => request.done && !request.failed && request.status >= 200 && request.status < 300 && !/"errors"\s*:\s*\[/.test(request.body || '')),
+    pending: requests.some((request) => !request.done),
+    sent: requests.length > 0,
+  }
+}
+
+// Likes the post. Re-aims and clicks again only when no like request left the browser at all (a
+// missed click); never clicks while one is in flight (that would unlike); a refusal is a block.
+async function likePost(wc) {
+  const net = await watchNetwork(wc, LIKE_REQUEST)
+  try {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      // A hidden page queues clicks instead of sending them: never tap again into a hidden page.
+      if ((await run(wc, 'document.visibilityState')) !== 'visible') return { liked: false, reason: 'The Instagram panel was not visible.' }
+      const useMedia = attempt === 2
+      const spot = await aim(wc, useMedia ? 'media' : 'heartButton')
+      if (!spot) continue
+      if (useMedia) await doubleClick(wc, spot)
+      else await click(wc, spot)
+      const seen = await waitFor(async () => {
+        const verdict = likeVerdict(net.list())
+        const dom = await run(wc, POST_STATE)
+        return { ...verdict, dom, done: dom.liked || dom.problem === 'blocked' || verdict.refused || verdict.accepted }
+      }, 8000, 300)
+      let verdict = likeVerdict(net.list())
+      if (verdict.pending) {
+        await waitFor(async () => ({ done: !likeVerdict(net.list()).pending }), 10000, 300)
+        verdict = likeVerdict(net.list())
+      }
+      if (seen.dom?.problem === 'blocked') return { blocked: true, reason: seen.dom.warning || 'Instagram showed a warning.' }
+      if (verdict.refused) return { blocked: true, reason: verdict.reason }
+      if (verdict.accepted) {
+        await sleep(1200)
+        return { liked: true }
+      }
+      if ((await run(wc, POST_STATE)).liked) return { liked: true }
+      // A request went out but neither failed nor succeeded clearly: do not risk toggling it back.
+      if (verdict.sent) return { liked: false, reason: 'Instagram did not confirm the like.' }
+    }
+    return { liked: false, reason: 'The Like button never responded after 3 tries.' }
+  } finally {
+    console.log('like requests', JSON.stringify(net.list().map((request) => ({ url: request.url.slice(0, 120), name: request.name, status: request.status, failed: request.failed, body: String(request.body || '').slice(0, 200) }))))
+    net.stop()
+  }
+}
+
 // Errors before Post/Send was pressed are 'notsent' (safe to retry); after it, the attempt may have
 // gone through, so it is never retried automatically.
 async function untilSent(task) {
@@ -175,20 +313,20 @@ async function commentSteps(wc, { permalink, message, dryRun = false, allowLiked
   if (!state.hasHeart) throw fail('Could not find the Like button on this post.')
   if (state.closed && !state.hasBox) throw fail('Comments are turned off on this post.')
   if (!state.hasBox) throw fail('Could not find the comment box on this post.')
-  // Test mode: finds everything, types into the box, locates Post, then clears the box. Clicks nothing that publishes.
   if (!dryRun && state.liked && !allowLiked) {
     throw fail('This post is already liked from your account, so it was probably handled already. Skipped to avoid a double comment.', 'duplicate')
   }
+  // Test mode: finds everything, types into the box, locates Post, then clears the box. Clicks nothing that publishes.
   if (dryRun) {
     const onPost = text ? await run(wc, shown(text.slice(0, 40))) : false
-    const heartPoint = await run(wc, point('heartButton'))
-    const typedPoint = await run(wc, point('box'))
+    const heartPoint = await aim(wc, 'heartButton')
+    const typedPoint = await aim(wc, 'box')
     await click(wc, typedPoint)
     await sleep(300)
     await wc.insertText(text || 'test')
     await sleep(600)
     const typed = await run(wc, POST_STATE)
-    const postPoint = await run(wc, point('postButton'))
+    const postPoint = await aim(wc, 'postButton')
     await run(wc, `(() => { const box = document.querySelector('textarea[aria-label*="comment" i]'); box.focus(); return true })()`)
     wc.selectAll()
     await sleep(100)
@@ -200,19 +338,13 @@ async function commentSteps(wc, { permalink, message, dryRun = false, allowLiked
 
   let liked = state.liked
   if (!liked) {
-    const heartPoint = await run(wc, point('heartButton'))
-    if (!heartPoint) throw fail('Could not find the Like button on this post.')
-    await sleep(250)
-    await click(wc, heartPoint)
-    const after = await waitFor(async () => {
-      const value = await run(wc, POST_STATE)
-      return { ...value, done: value.liked }
-    }, 4000)
-    liked = Boolean(after?.liked)
-    if (!liked) throw fail('Tapped Like, but Instagram did not register it. Nothing was commented.')
+    const outcome = await likePost(wc)
+    if (outcome.blocked) throw fail(`Instagram refused the like: ${outcome.reason}`, 'blocked')
+    if (!outcome.liked) throw fail(`Could not like the post: ${outcome.reason} Nothing was commented.`)
+    liked = true
   }
 
-  const boxPoint = await run(wc, point('box'))
+  const boxPoint = await aim(wc, 'box')
   if (!boxPoint) throw fail('Could not find the comment box on this post.')
   await sleep(250)
   await click(wc, boxPoint)
@@ -228,7 +360,7 @@ async function commentSteps(wc, { permalink, message, dryRun = false, allowLiked
     const visible = !String(value.boxText || '').trim() && await run(wc, shown(snippet))
     return { ...value, visible, done: visible || Boolean(value.problem) }
   }
-  const postPoint = await run(wc, point('postButton'))
+  const postPoint = await aim(wc, 'postButton')
   progress.pressed = true
   if (postPoint) await click(wc, postPoint)
   else await key(wc, 'Return')
