@@ -241,10 +241,12 @@ function timeLabel(ms) {
 function launchPlan(data) {
   const { counts, left, windowStart, windowEnd, now } = data.preview
   const dmWanted = (launchTasks.relaunch1 ? counts.relaunch1 : 0) + (launchTasks.relaunch2 ? counts.relaunch2 : 0)
+  const first = launchTasks.relaunch1 ? Math.min(counts.relaunch1, left ? left.relaunch1 : 20) : 0
+  const second = launchTasks.relaunch2 ? Math.min(counts.relaunch2, left ? left.relaunch2 : 10) : 0
   const today = {
     voice: launchTasks.voice ? Math.min(counts.voice, left ? left.voice : counts.voice) : 0,
     comment: launchTasks.comment ? Math.min(counts.comment, left ? left.comment : counts.comment) : 0,
-    dm: Math.min(dmWanted, left ? left.dm : dmWanted),
+    dm: Math.min(first + second, left ? left.dm : first + second),
   }
   const total = today.voice + today.comment + today.dm
   const startAt = Math.max(now, windowStart)
@@ -303,7 +305,7 @@ function renderLaunch() {
     if (plan.total) {
       const when = plan.later ? `from ${timeLabel(plan.startAt)}` : 'from now'
       summary = `Today: ${plan.today.voice} voicenotes, ${plan.today.comment} comments, ${plan.today.dm} relaunch DMs, spread ${when} until ${timeLabel(plan.windowEnd)}, about one every ${plan.minutes} min.`
-      if (plan.dmWanted > plan.today.dm) summary += ` Relaunches are capped at ${data.preview.left?.dm ?? 40} a day, so the other ${number(plan.dmWanted - plan.today.dm)} follow on the next days.`
+      if (plan.dmWanted > plan.today.dm) summary += ` Relaunches go out at 20 first and 10 second relaunches a day, so the other ${number(plan.dmWanted - plan.today.dm)} follow on the next days.`
     }
     card.append(el('p', 'launch-line', summary))
     const blocked = data.guard?.blocked || !data.guard?.app || !data.guard?.loggedIn

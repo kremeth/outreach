@@ -12,6 +12,7 @@ const QUEUE_CACHE_MS = 2 * 60 * 1000
 
 let wc = null
 let hookSource = ''
+let ensureLive = async () => {}
 let running = null
 let waiting = null
 let profiles = []
@@ -22,6 +23,7 @@ let status = { phase: 'idle', text: '' }
 function init(options) {
   wc = options.webContents
   hookSource = options.hookSource
+  ensureLive = options.ensureLive || ensureLive
 }
 
 function active() {
@@ -200,6 +202,7 @@ async function sendTo(item, account) {
 
   // Instagram draws the waveform from the live audio only while the page is visible; a hidden page
   // gives a flat row of dots, so never record unless it is visible.
+  if ((await ig.run(wc, 'document.visibilityState')) !== 'visible') await ensureLive()
   if ((await ig.run(wc, 'document.visibilityState')) !== 'visible') throw fail('The Instagram panel was not visible, so the voicenote was not recorded.', 'notsent')
   status = { phase: 'recording', text: `Voicenote to @${item.username} (${item.voice})` }
   await startRecording()

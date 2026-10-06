@@ -258,7 +258,8 @@ function readBody(req) {
   })
 }
 
-// While Launch is running, keep the Mac awake so the day's schedule is not cut short by sleep.
+// While Launch is running, keep the Mac and its display awake: a sleeping display makes Instagram
+// treat the page as hidden (clicks are deferred and voicenote waveforms come out flat).
 let awake = null
 function keepAwakeWhileLaunched() {
   const check = () => {
@@ -268,7 +269,7 @@ function keepAwakeWhileLaunched() {
       response.on('end', () => {
         let running = false
         try { running = JSON.parse(body).running } catch {}
-        if (running && awake === null) awake = powerSaveBlocker.start('prevent-app-suspension')
+        if (running && awake === null) awake = powerSaveBlocker.start('prevent-display-sleep')
         if (!running && awake !== null) {
           powerSaveBlocker.stop(awake)
           awake = null
@@ -334,6 +335,7 @@ if (!gotLock) {
     voice.init({
       webContents: panel.webContents,
       hookSource: fs.readFileSync(path.join(ROOT, 'record-ig-hook.js'), 'utf8'),
+      ensureLive: ensurePanelLive,
     })
     startControl()
     try {
