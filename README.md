@@ -15,9 +15,11 @@ It runs on the shared Google Sheet, so both of us can use it at the same time on
 4. **Add the two secret files** to the repo's `data/` folder. They are deliberately not in GitHub; get them from Mathieu (AirDrop, 1Password, never by email or Slack):
    - `data/google-service-account.json` (lets the app read and write the Google Sheet)
    - `data/gemini-key.txt` (writes the comment options)
-5. **Double-click `Start Review.command`.** The first time it installs everything (a minute or two), then opens the Outreach window.
+5. **Double-click `Install Dock App.command`.** It installs everything (a minute or two), builds **Outreach** in your Applications folder and adds it to the Dock.
    If macOS says it can't be opened, right-click it, choose Open, then Open again.
-6. **Log into Instagram** in the panel on the right of the Outreach window. Approve the login in the Instagram app on your phone if it asks.
+6. **Open Outreach from the Dock** and log into Instagram in the panel on the right. Approve the login in the Instagram app on your phone if it asks.
+
+From then on, just click Outreach in the Dock. (`Start Review.command` still works too.)
 
 Optional: put a short name for your computer in `data/machine-name.txt` (e.g. `Romain`). That name shows in the sheet's App Log tab.
 
@@ -39,7 +41,7 @@ Optional: put a short name for your computer in `data/machine-name.txt` (e.g. `R
 ```bash
 git pull
 ```
-Then open `Start Review.command` again; it installs anything new automatically.
+Quit and reopen Outreach. The Dock app runs the code from this folder, so there is nothing to rebuild. Only run `Install Dock App.command` again if you move this folder, or if an update says Electron changed (then run `npm install` first).
 
 ## What is not in the repo
 
