@@ -14,6 +14,7 @@ const sendQueue = require('./lib/send-queue')
 const log = require('./lib/shared-log')
 const autopilot = require('./lib/autopilot')
 const training = require('./lib/training-log')
+const migrations = require('./lib/row-migrations')
 
 const ROOT = __dirname
 const WEB = path.join(ROOT, 'web')
@@ -884,6 +885,13 @@ const mediaServer = http.createServer(serveMedia)
 mediaServer.keepAliveTimeout = 30000
 
 async function boot() {
+  // Row numbers shift when rows are deleted from the sheet: update local files first (once per change).
+  try {
+    const done = migrations.apply()
+    if (done.length) console.log(`applied row migrations: ${done.join(', ')}`)
+  } catch (error) {
+    console.error('row migration failed', error)
+  }
   try {
     const loaded = await sheet.loadPending()
     rows = loaded.rows
