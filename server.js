@@ -117,16 +117,44 @@ function presentYes(row) {
   }
 }
 
+// Every Yes / No is also written to the shared log, so the other computer sees it within seconds
+// (the sheet download it otherwise relies on is only refreshed now and then).
+function logDecision(row, choice) {
+  log.append({ action: 'decide', target: `row:${row.sheetRow}`, detail: choice }).catch((error) => console.error(error))
+}
+
+// Today's decisions from both computers, oldest first, as row -> choice.
+function decisionsToday() {
+  const start = new Date()
+  start.setHours(0, 0, 0, 0)
+  const latest = new Map()
+  for (const entry of log.list((item) => item.action === 'decide' && item.time >= start.getTime())) {
+    latest.set(Number(entry.target.slice(4)), { choice: entry.detail, machine: entry.machine })
+  }
+  return latest
+}
+
 function counts() {
+  const live = decisionsToday()
+  // The other computer's decisions count as decided here straight away.
+  for (const [sheetRow, decision] of live) {
+    if (decision.machine !== log.MACHINE && byRow.has(sheetRow) && !sheet.savedDecision(decisions, byRow.get(sheetRow))) {
+      elsewhere.set(sheetRow, decision.choice)
+    }
+  }
   let remaining = 0
   for (const row of rows) {
     if (!choiceFor(row)) remaining++
   }
   const toSend = yesRows.filter((row) => voiceStatus(row) === 'to-send').length
-  // Yes decisions dated today in the sheet, so both computers' Yeses count.
+  // Yes today, both computers: Yeses dated today in the sheet, updated by today's live decisions.
   const today = sheet.todayLabel()
-  const yesToday = yesRows.filter((row) => row.date === today).length
-  return { total: rows.length, yesCount: yesRows.length, toSend, remaining, yesToday, yesTarget: sendQueue.DAILY_LIMIT }
+  const yesSet = new Set(yesRows.filter((row) => row.date === today).map((row) => row.sheetRow))
+  for (const [sheetRow, decision] of live) {
+    if (decision.choice === 'yes') yesSet.add(sheetRow)
+    else yesSet.delete(sheetRow)
+  }
+  return { total: rows.length, yesCount: yesRows.length, toSend, remaining, yesToday: yesSet.size, yesTarget: sendQueue.DAILY_LIMIT }
 }
 
 // The next profiles to review: not decided by anyone (checked live in the sheet), not claimed by the
@@ -268,6 +296,7 @@ async function decide(sheetRow, choice, device, link) {
     if (choice === 'yes' && !yesRows.some((item) => item.sheetRow === row.sheetRow)) rememberYes(row, device)
     if (choice === 'no') yesRows = yesRows.filter((item) => item.sheetRow !== row.sheetRow)
     sheet.persist(rows, decisions)
+    logDecision(row, choice)
     return { ok: true, already: true, ...counts(), writeNote: writeNote() }
   }
   const updates = []
@@ -284,6 +313,7 @@ async function decide(sheetRow, choice, device, link) {
     if (choice === 'yes') rememberYes(row, device)
     else yesRows = yesRows.filter((item) => item.sheetRow !== row.sheetRow)
     sheet.persist(rows, decisions)
+    logDecision(row, choice)
     return { ok: true, ...counts(), writeNote: writeNote() }
   } catch (error) {
     if (decisions[key] && decisions[key].choice === choice) {
@@ -744,6 +774,11 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && url.pathname === '/api/autopilot') {
       const guard = await guardStatus()
       sendJson(res, 200, { ...autopilot.status(), preview: await autopilot.preview(guard), guard })
+      return
+    }
+    if (req.method === 'GET' && url.pathname === '/api/counts') {
+      await log.refresh(4000).catch((error) => console.error(error))
+      sendJson(res, 200, counts())
       return
     }
     if (req.method === 'GET' && url.pathname === '/api/autopilot/running') {

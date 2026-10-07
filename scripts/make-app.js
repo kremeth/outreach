@@ -18,11 +18,9 @@ function run(command, args, options = {}) {
   return execFileSync(command, args, { stdio: ['ignore', 'pipe', 'pipe'], ...options }).toString()
 }
 
-const ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <rect x="64" y="64" width="896" height="896" rx="200" fill="#141413"/>
-  <circle cx="500" cy="540" r="230" fill="none" stroke="#d6ff4a" stroke-width="92"/>
-  <circle cx="742" cy="282" r="74" fill="#d6ff4a"/>
-</svg>`
+// The app icon, already on the standard macOS grid (1024 canvas, 824 px tile, rounded, soft shadow)
+// so it sits at the same size as every other app in the Dock.
+const ICON = path.join(REPO, 'assets', 'icon.png')
 
 async function makeIcon() {
   const sharp = require(path.join(REPO, 'node_modules', 'sharp'))
@@ -30,7 +28,7 @@ async function makeIcon() {
   const iconset = path.join(work, 'outreach.iconset')
   fs.mkdirSync(iconset)
   for (const size of [16, 32, 64, 128, 256, 512, 1024]) {
-    const png = await sharp(Buffer.from(ICON_SVG)).resize(size, size).png().toBuffer()
+    const png = await sharp(ICON).resize(size, size).png().toBuffer()
     if (size <= 512) fs.writeFileSync(path.join(iconset, `icon_${size}x${size}.png`), png)
     if (size >= 32) fs.writeFileSync(path.join(iconset, `icon_${size / 2}x${size / 2}@2x.png`), png)
   }

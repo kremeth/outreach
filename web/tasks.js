@@ -340,13 +340,24 @@ function renderLaunch() {
   }
 }
 
+// Keeps the To do page live for both computers: Launch, the "Instagram today" line, and the
+// Prospecting card's yes today / profiles left.
 async function pollLaunch() {
   clearTimeout(launchTimer)
   try {
-    launchData = await api('/api/autopilot', null, 30000)
-    if (route === 'home') renderLaunch()
+    const [autopilot, latest] = await Promise.all([api('/api/autopilot', null, 30000), api('/api/counts', null, 15000)])
+    launchData = autopilot
+    if (todoData) {
+      todoData.guard = autopilot.guard
+      todoData.prospecting = { ...todoData.prospecting, remaining: latest.remaining, yesToday: latest.yesToday, yesTarget: latest.yesTarget }
+    }
+    if (route === 'home') {
+      renderLaunch()
+      renderSafety()
+      renderTasks()
+    }
   } catch {}
-  if (route === 'home') launchTimer = setTimeout(pollLaunch, launchData?.running ? 3000 : 10000)
+  if (route === 'home') launchTimer = setTimeout(pollLaunch, 5000)
 }
 
 async function loadTodo(refresh) {

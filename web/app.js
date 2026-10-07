@@ -466,16 +466,34 @@ function show() {
   renderStage()
 }
 
+// Yes today and profiles left, including the other computer's decisions, refreshed every few
+// seconds while this screen is open (skipped while one of our own answers is still saving).
+let countsTimer = null
+async function pollCounts() {
+  clearTimeout(countsTimer)
+  if (mode !== 'review') return
+  try {
+    const latest = await api('/api/counts', null, 15000)
+    if (!saving.size && mode === 'review') {
+      counts = takeCounts(latest)
+      renderChrome()
+    }
+  } catch {}
+  countsTimer = setTimeout(pollCounts, 5000)
+}
+
 // Called by the router in tasks.js when the Prospecting screen opens or closes.
 function enterProspecting() {
   askingDevice = false
   mode = 'review'
   show()
+  pollCounts()
 }
 
 function leaveProspecting() {
   askingDevice = false
   mode = 'away'
+  clearTimeout(countsTimer)
   closeZoom()
 }
 
