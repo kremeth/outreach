@@ -133,6 +133,17 @@ async function confirmWarning(fallback) {
   return found.problem === 'blocked' ? (found.warning || fallback) : ''
 }
 
+// The chat link resolves to /direct/... when a chat opens; it stays on /m/<username> when Instagram
+// will not open a normal chat with this creator.
+async function openedChat() {
+  for (let attempt = 0; attempt < 16; attempt++) {
+    const path = await ig.run(wc, 'location.pathname').catch(() => '')
+    if (path.startsWith('/direct/')) return true
+    await ig.sleep(500)
+  }
+  return false
+}
+
 async function waitForComposer() {
   for (let attempt = 0; attempt < 20; attempt++) {
     const composer = await ig.run(wc, 'window.__composerReady()').catch(() => null)
@@ -182,6 +193,12 @@ async function sendTo(item, account) {
   await openUrl(`https://ig.me/m/${encodeURIComponent(item.username)}`)
   state = await ig.run(wc, 'window.__igPageState()')
   if (state.kind === 'login') throw fail('Log into Instagram in the panel.', 'login')
+  // Some creators (accounts set up for brand partnerships) can only be reached through Instagram's
+  // "prioritised" partnership message: their chat link never becomes a chat. Leave them out and say so.
+  if (!(await openedChat())) {
+    await log.append({ action: 'skip', target: `voice:${item.sheetRow}`, detail: 'partnership inbox only: no normal chat' })
+    return { sent: false, skipped: true, item: { name: item.name, username: item.username, sheetRow: item.sheetRow }, reason: 'Instagram only offers a partnership message for this creator, so no voicenote. Message them by hand if you want to.' }
+  }
   const composer = await waitForComposer()
   const canMessage = await ig.run(wc, 'window.__canMessage()')
   if (canMessage.kind === 'unreachable') {
