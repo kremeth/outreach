@@ -49,6 +49,8 @@ async function openUrl(url) {
 }
 
 // Next creator waiting for a voicenote: claimed for this computer and re-checked in the live sheet.
+let leftOut = []
+
 async function nextProfile() {
   if (!profiles.length || Date.now() - profilesAt > QUEUE_CACHE_MS) {
     profiles = await queue.loadQueue()
@@ -61,9 +63,22 @@ async function nextProfile() {
     ...log.list((entry) => entry.action === 'voice' && !/ notsent$/.test(entry.detail)).map((entry) => entry.detail.split(' ')[0]),
     ...log.list((entry) => entry.action === 'skip' && entry.target.startsWith('voice:')).map((entry) => entry.target),
   ])
+  // Twice unable to open the chat today (nothing sent either time): leave them out instead of retrying all day.
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const failures = new Map()
+  for (const entry of log.list((item) => item.action === 'voice' && / notsent$/.test(item.detail) && item.time >= today.getTime())) {
+    const key = entry.detail.split(' ')[0]
+    failures.set(key, (failures.get(key) || 0) + 1)
+  }
   while (profiles.length) {
     const item = profiles.shift()
     if (attempted.has(`voice:${item.sheetRow}`)) continue
+    if ((failures.get(`voice:${item.sheetRow}`) || 0) >= 2) {
+      await log.append({ action: 'skip', target: `voice:${item.sheetRow}`, detail: 'left out: the chat would not open after 2 tries' })
+      leftOut.push(item.username)
+      continue
+    }
     if (log.claimedByOther(`voice:${item.sheetRow}`)) continue
     const claimed = await log.claim(`voice:${item.sheetRow}`, 30 * 60 * 1000)
     if (!claimed.ok) continue
@@ -129,10 +144,11 @@ async function waitForComposer() {
 
 async function sendOne(account) {
   if (queue.remainingToday() <= 0) return { done: true, reason: `Already sent ${queue.DAILY_LIMIT} voicenotes today.` }
+  leftOut = []
   const item = await nextProfile()
-  if (!item) return { done: true, reason: 'No voicenotes left to send.' }
+  if (!item) return { done: true, reason: 'No voicenotes left to send.', leftOut }
   try {
-    return await sendTo(item, account)
+    return { ...(await sendTo(item, account)), leftOut }
   } catch (error) {
     error.item = { name: item.name, username: item.username, sheetRow: item.sheetRow }
     throw error
@@ -146,29 +162,11 @@ async function sendTo(item, account) {
   item.clip = pick.clip
   await guard.lock(account, 5 * 60 * 1000)
 
-  // The first voicenote only goes into an empty chat. Anything already there (an old conversation,
-  // a reply, anything) means skip them, before following or sending anything.
-  status = { phase: 'preparing', text: `Checking the chat with @${item.username}` }
-  await openUrl(`https://ig.me/m/${encodeURIComponent(item.username)}`)
-  let state = await ig.run(wc, 'window.__igPageState()')
-  if (state.kind === 'login') throw fail('Log into Instagram in the panel.', 'login')
-  const ready = await waitForComposer()
-  const reachable = await ig.run(wc, 'window.__canMessage()')
-  if (reachable.kind === 'unreachable') {
-    await queue.markUnreachable(item, reachable.error)
-    return { sent: false, unreachable: true, item: { name: item.name, username: item.username } }
-  }
-  if (!ready) throw fail('The DM opened, but the chat never finished loading.', 'notsent')
-  await ig.sleep(1500)
-  const existing = await ig.readThread(wc)
-  if (existing.length) {
-    await log.append({ action: 'skip', target: `voice:${item.sheetRow}`, detail: `chat not empty (${existing.length} messages)` })
-    return { sent: false, skipped: true, item: { name: item.name, username: item.username, sheetRow: item.sheetRow }, reason: 'The chat already has messages, so no voicenote.' }
-  }
-
+  // Follow first: Instagram only opens a normal chat with creators we follow (otherwise some, such
+  // as accounts set up for brand partnerships, show a choice instead of a chat).
   status = { phase: 'preparing', text: `Following @${item.username}` }
   await openUrl(`https://www.instagram.com/${item.username}/`)
-  state = await ig.run(wc, 'window.__igPageState()')
+  let state = await ig.run(wc, 'window.__igPageState()')
   if (state.kind === 'login') throw fail('Log into Instagram in the panel.', 'login')
   if (state.kind === 'blocked') {
     const warning = await confirmWarning(state.text)
@@ -177,7 +175,7 @@ async function sendTo(item, account) {
   const followed = await ig.run(wc, 'window.__followProfile()')
   if (followed.click) {
     await ig.click(wc, followed)
-    await ig.sleep(1500)
+    await ig.sleep(2500)
   }
 
   status = { phase: 'preparing', text: `Opening the DM with @${item.username}` }
@@ -193,6 +191,15 @@ async function sendTo(item, account) {
   const warning = await confirmWarning('Warning while opening the DM')
   if (warning) throw fail(`Instagram showed a warning: ${warning}`, 'blocked')
   if (!composer?.ok) throw fail('The DM opened, but the voice button never appeared.', 'notsent')
+
+  // The first voicenote only goes into an empty chat. Anything already there (an old conversation,
+  // a reply, anything) means skip them.
+  await ig.sleep(1500)
+  const existing = await ig.readThread(wc)
+  if (existing.length) {
+    await log.append({ action: 'skip', target: `voice:${item.sheetRow}`, detail: `chat not empty (${existing.length} messages)` })
+    return { sent: false, skipped: true, item: { name: item.name, username: item.username, sheetRow: item.sheetRow }, reason: 'The chat already has messages, so no voicenote.' }
+  }
 
   const audio = fs.readFileSync(item.clip).toString('base64')
   await ensureHook()
