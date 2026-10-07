@@ -60,6 +60,8 @@ async function main() {
   setPlist('CFBundleDisplayName', 'Outreach')
   setPlist('CFBundleIdentifier', 'com.nutricode.outreach')
   setPlist('CFBundleIconFile', 'outreach.icns')
+  // Never let macOS App Nap pause Outreach when its window is on another desktop.
+  run('plutil', ['-replace', 'LSAppNapIsDisabled', '-bool', 'YES', PLIST])
   await makeIcon()
 
   // The app's code is this repo.

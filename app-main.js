@@ -29,6 +29,19 @@ let panelHidden = false
 
 app.userAgentFallback = CHROME_UA
 app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled')
+// Outreach often runs on another desktop or behind other apps: never slow down or pause its pages.
+app.commandLine.appendSwitch('disable-renderer-backgrounding')
+app.commandLine.appendSwitch('disable-background-timer-throttling')
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows')
+
+// macOS App Nap pauses apps whose windows have been out of sight for a while (another desktop),
+// which freezes the Instagram page. Turn it off for this app (takes effect from the next launch;
+// the Dock app also has LSAppNapIsDisabled in its Info.plist).
+if (process.platform === 'darwin' && process.env.__CFBundleIdentifier) {
+  try {
+    spawnSync('defaults', ['write', process.env.__CFBundleIdentifier, 'NSAppSleepDisabled', '-bool', 'YES'])
+  } catch {}
+}
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -196,16 +209,22 @@ async function accountId() {
 // the safety gate: shared limits, the cross-computer account lock, then a record of the attempt.
 // Instagram must see its page as visible, or it defers what we click. If the window was minimised,
 // bring it back without stealing focus.
+// A paused page answers slowly or not at all, so the check itself has a time limit. A panel that
+// stays paused is 'hidden': nothing was clicked, and Launch simply tries again a little later.
 async function ensurePanelLive() {
-  const state = () => panel.webContents.executeJavaScript('document.visibilityState', true).catch(() => 'hidden')
+  const state = () => Promise.race([
+    panel.webContents.executeJavaScript('document.visibilityState', true).catch(() => 'hidden'),
+    sleep(3000).then(() => 'hidden'),
+  ])
   if ((await state()) === 'visible') return
   if (win.isMinimized()) win.restore()
   win.showInactive()
-  for (let attempt = 0; attempt < 10; attempt++) {
-    await sleep(300)
+  panel.webContents.invalidate()
+  for (let attempt = 0; attempt < 15; attempt++) {
+    await sleep(400)
     if ((await state()) === 'visible') return
   }
-  throw Object.assign(new Error('The Instagram panel is not visible, so nothing was clicked. Keep the Outreach window open.'), { kind: 'notsent' })
+  throw Object.assign(new Error('macOS paused the Instagram panel, so nothing was clicked. It will try again shortly.'), { kind: 'hidden' })
 }
 
 // describe(result, failure) says what to record in the shared log: { target, detail }, or null for nothing.
@@ -225,7 +244,7 @@ async function inPanel(kind, label, describe, task) {
     } catch (error) {
       failure = error
     }
-    const reachedInstagram = !failure || !['missing', 'unreachable', 'duplicate', 'login', 'busy', 'replied', 'mismatch'].includes(failure.kind)
+    const reachedInstagram = !failure || !['missing', 'unreachable', 'duplicate', 'login', 'busy', 'replied', 'mismatch', 'hidden'].includes(failure.kind)
     const outcome = !failure ? '' : failure.kind === 'notsent' ? ' notsent' : ' failed'
     const entry = reachedInstagram ? describe(result, failure) : null
     if (entry) await guard.record(kind, account, entry.target, `${entry.detail}${outcome}`).catch((error) => console.error(error))
@@ -269,9 +288,9 @@ function keepAwakeWhileLaunched() {
       response.on('end', () => {
         let running = false
         try { running = JSON.parse(body).running } catch {}
-        if (running && awake === null) awake = powerSaveBlocker.start('prevent-display-sleep')
+        if (running && awake === null) awake = [powerSaveBlocker.start('prevent-display-sleep'), powerSaveBlocker.start('prevent-app-suspension')]
         if (!running && awake !== null) {
-          powerSaveBlocker.stop(awake)
+          for (const id of awake) powerSaveBlocker.stop(id)
           awake = null
         }
       })

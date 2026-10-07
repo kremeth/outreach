@@ -28,7 +28,7 @@ Optional: put a short name for your computer in `data/machine-name.txt` (e.g. `R
 1. **Prospecting:** answer Yes / No (Y / N keys) until you have about 30 Yes. The counter shows "yes today".
 2. **Hustling:** pick a comment for each new post (1–5 keys, R for 5 new ones). Picks are saved for Launch.
    Every round of 5 suggestions and what you did with it (picked, own comment, rewrote and how, skipped, later, undo) is saved to the **HUSTLING Training Data** tab, to train a model later.
-3. **Launch** on the To do page. It runs from 8:00 to 21:00 and carries anything left over to the next morning. Keep the Outreach window open; it keeps the Mac awake while it runs.
+3. **Launch** on the To do page. It runs from 8:00 to 21:00 and carries anything left over to the next morning. Outreach just has to be open; it can sit on another desktop or behind other windows, and it keeps the Mac awake while it runs.
 
 ## Working together
 

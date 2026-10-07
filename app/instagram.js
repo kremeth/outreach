@@ -247,7 +247,7 @@ async function likePost(wc) {
   try {
     for (let attempt = 0; attempt < 3; attempt++) {
       // A hidden page queues clicks instead of sending them: never tap again into a hidden page.
-      if ((await run(wc, 'document.visibilityState')) !== 'visible') return { liked: false, reason: 'The Instagram panel was not visible.' }
+      if ((await run(wc, 'document.visibilityState')) !== 'visible') throw fail('macOS paused the Instagram panel, so nothing was clicked. It will try again shortly.', 'hidden')
       const useMedia = attempt === 2
       const spot = await aim(wc, useMedia ? 'media' : 'heartButton')
       if (!spot) continue
