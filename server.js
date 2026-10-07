@@ -13,6 +13,7 @@ const relaunch = require('./lib/relaunch')
 const sendQueue = require('./lib/send-queue')
 const log = require('./lib/shared-log')
 const autopilot = require('./lib/autopilot')
+const training = require('./lib/training-log')
 
 const ROOT = __dirname
 const WEB = path.join(ROOT, 'web')
@@ -420,6 +421,9 @@ async function commentDrafts(username, avoid = [], guidance = '') {
     kind: post.kind,
     postedAt: post.at,
     caption: photo.alt || '',
+    bio: profile.bio || '',
+    name: profile.name || '',
+    followers: profile.followers || '',
     image: photo.src,
     full: photo.full || photo.src,
     description: drafted.description,
@@ -776,6 +780,11 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, { ...autopilot.status(), preview: await autopilot.preview(guard), guard })
       return
     }
+    if (req.method === 'POST' && url.pathname === '/api/hustle/training') {
+      const body = await readBody(req)
+      sendJson(res, 200, { ok: training.record(body) })
+      return
+    }
     if (req.method === 'GET' && url.pathname === '/api/counts') {
       await log.refresh(4000).catch((error) => console.error(error))
       sendJson(res, 200, counts())
@@ -911,3 +920,9 @@ async function boot() {
 }
 
 boot()
+
+// Write any queued training rows before the app closes.
+process.on('SIGTERM', () => {
+  training.flush().finally(() => process.exit(0))
+  setTimeout(() => process.exit(0), 8000)
+})

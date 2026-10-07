@@ -476,6 +476,38 @@ function hustleScreen() {
   let picked = 0
   let lastPick = null
   const draftCache = new Map()
+
+  // Training data: every round of 5 suggestions and what was done with it goes to the
+  // "HUSTLING Training Data" tab. A round starts when its comments appear on screen.
+  function track(item, outcome, extra = {}) {
+    const drafted = item.drafted || {}
+    const seconds = item.shownAt ? (Date.now() - item.shownAt) / 1000 : ''
+    fetch('/api/hustle/training', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      keepalive: true,
+      body: JSON.stringify({
+        username: item.username,
+        name: drafted.name || item.name,
+        followers: drafted.followers || item.followers,
+        bio: drafted.bio || item.notes || '',
+        pk: drafted.pk || item.latest?.pk || '',
+        code: drafted.code || item.latest?.code || '',
+        caption: drafted.caption || '',
+        description: drafted.description || '',
+        round: item.round || 1,
+        guidance: item.roundGuidance || '',
+        comments: drafted.comments || [],
+        outcome,
+        seconds,
+        ...extra,
+      }),
+    }).catch(() => {})
+  }
+
+  function shown(item) {
+    if (!item.shownAt) item.shownAt = Date.now()
+  }
   const saving = new Map()
 
   function draftsFor(item) {
@@ -499,8 +531,12 @@ function hustleScreen() {
   async function reload(item, guidance = '') {
     if (busy || !item.drafted || item.rewriting) return
     const drafted = item.drafted
+    track(item, 'reloaded')
     item.rejected = [...(item.rejected || []), ...drafted.comments]
     item.guidance = guidance.trim()
+    item.round = (item.round || 1) + 1
+    item.roundGuidance = item.guidance
+    item.shownAt = 0
     item.rewriting = true
     showRewriting(item)
     try {
@@ -514,6 +550,7 @@ function hustleScreen() {
         guidance: item.guidance,
       }, 60000)
       item.drafted = { ...drafted, comments: result.comments }
+      shown(item)
       draftCache.set(item.username, Promise.resolve(item.drafted))
     } catch (error) {
       note = error.message || 'Could not write new comments.'
@@ -566,7 +603,7 @@ function hustleScreen() {
     right.append(el('p', 'saved-lead', 'Reading the newest post and writing 5 comments…'))
 
     const footerRow = el('div', 'actions')
-    footerRow.append(button('Skip this post', 'ghost', () => skipCurrent(item)), button('Later', 'ghost', () => advance(false)))
+    footerRow.append(button('Skip this post', 'ghost', () => skipCurrent(item)), button('Later', 'ghost', () => later(item)))
     if (lastPick) footerRow.append(button('Undo last pick', 'ghost', undoPick))
     parts.footer.append(footerRow)
     const sub = el('div', 'sub')
@@ -581,6 +618,7 @@ function hustleScreen() {
       .then((drafted) => {
         if (left || queue[index] !== item) return
         item.drafted = drafted
+        shown(item)
         postSide.replaceChildren(postCard(drafted.image, drafted.full, drafted.caption, drafted.description))
         right.replaceChildren(commentPicker(item, drafted))
         prefetch()
@@ -670,11 +708,19 @@ function hustleScreen() {
     }
   }
 
+  function later(item) {
+    if (item.drafted) track(item, 'later')
+    item.shownAt = 0
+    advance(false)
+  }
+
   function choose(item, drafted, text, option) {
     if (busy) return
+    const position = option ? [...viewTask.querySelectorAll('.comment-option')].indexOf(option) + 1 : 0
+    track(item, position ? 'picked' : 'own comment', { pickedIndex: position || '', pickedText: text })
     if (option) option.classList.add('sending')
     picked++
-    lastPick = { item, pk: drafted.pk }
+    lastPick = { item, pk: drafted.pk, text }
     note = `Picked for @${item.username}`
     const pending = savePick(item, drafted, text)
       .catch((error) => {
@@ -697,6 +743,8 @@ function hustleScreen() {
     try {
       await saving.get(item.username)
       await api('/api/hustle/unpick', { username: item.username, pk })
+      track(item, 'undo pick', { pickedText: lastPick.text || '' })
+      item.shownAt = 0
       picked = Math.max(0, picked - 1)
       lastPick = null
       queue.splice(index, 0, item)
@@ -714,6 +762,7 @@ function hustleScreen() {
     const pk = item.drafted?.pk || item.latest?.pk
     try {
       await api('/api/hustle/skip', { username: item.username, pk })
+      track(item, 'skipped')
       note = `Skipped @${item.username}’s post`
       advance(true)
     } catch (error) {
@@ -741,7 +790,7 @@ function hustleScreen() {
       if (!item || busy) return
       if (key === 's') skipCurrent(item)
       if (key === 'r') reload(item)
-      if (key === 'arrowright') advance(false)
+      if (key === 'arrowright') later(item)
       if (/^[1-5]$/.test(key) && item.drafted) {
         const option = viewTask.querySelectorAll('.comment-option')[Number(key) - 1]
         if (option) choose(item, item.drafted, option.dataset.text, option)
