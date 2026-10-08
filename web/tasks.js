@@ -801,8 +801,9 @@ function hustleScreen() {
 
 // ---------- Relaunch ----------
 
-function fillTemplate(template, first) {
-  return String(template || '').replace(/\s*\{first\}/g, first ? ` ${first}` : '').replace(/^\s+/, '')
+// Relaunches are sent exactly as written, never with a name.
+function fillTemplate(template) {
+  return String(template || '').replace(/\s*\{first\}/g, '').replace(/^\s+/, '')
 }
 
 function relaunchScreen(stage) {
@@ -873,7 +874,7 @@ function relaunchScreen(stage) {
     right.append(context)
 
     right.append(el('div', 'section-label', 'Message they will get'))
-    right.append(el('p', 'message-preview', fillTemplate(template, item.first)))
+    right.append(el('p', 'message-preview', fillTemplate(template)))
     const templateRow = el('div', 'template-row')
     templateRow.append(button(editing ? 'Close template' : 'Edit template', 'link', () => { editing = !editing; render() }))
     right.append(templateRow)
@@ -897,7 +898,7 @@ function relaunchScreen(stage) {
 
   function templateEditor() {
     const box = el('div', 'template-box')
-    box.append(el('p', 'saved-lead', '{first} becomes their first name. Used for every ' + label.toLowerCase() + ' Launch sends.'))
+    box.append(el('p', 'saved-lead', 'Sent exactly as written to everyone (no names are added). Used for every ' + label.toLowerCase() + ' Launch sends.'))
     const area = document.createElement('textarea')
     area.className = 'message'
     area.rows = 3
