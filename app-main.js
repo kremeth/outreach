@@ -26,6 +26,7 @@ let panel = null
 let server = null
 let panelTask = ''
 let panelHidden = false
+let quitting = false
 
 app.userAgentFallback = CHROME_UA
 app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled')
@@ -47,9 +48,9 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-function serverUp() {
+function serverUp(timeout = 1500) {
   return new Promise((resolve) => {
-    const request = http.get({ host: '127.0.0.1', port: SERVER_PORT, path: '/api/hustle/status', timeout: 1500 }, (response) => {
+    const request = http.get({ host: '127.0.0.1', port: SERVER_PORT, path: '/api/hustle/status', timeout }, (response) => {
       response.resume()
       resolve(response.statusCode === 200)
     })
@@ -85,14 +86,37 @@ async function ensureServer() {
   }
   fs.mkdirSync(path.dirname(LOG_PATH), { recursive: true })
   const log = fs.openSync(LOG_PATH, 'a')
+  fs.writeSync(log, `\n[${new Date().toISOString()}] starting server\n`)
   server = spawn(nodeBinary(), [path.join(ROOT, 'server.js')], { cwd: ROOT, stdio: ['ignore', log, log] })
-  server.on('exit', (code) => console.log(`server exited ${code}`))
+  const child = server
+  child.on('exit', (code, signal) => {
+    try { fs.appendFileSync(LOG_PATH, `[${new Date().toISOString()}] server stopped (code ${code}, signal ${signal})\n`) } catch {}
+    // Bring it back unless Outreach itself is quitting.
+    if (!quitting && server === child) setTimeout(() => ensureServer().catch((error) => console.error(error)), 2000)
+  })
   for (let attempt = 0; attempt < 120; attempt++) {
     if (await serverUp()) return
     if (server.exitCode !== null) throw new Error(`The server stopped while starting. See ${LOG_PATH}.`)
     await sleep(500)
   }
   throw new Error(`The server did not start. See ${LOG_PATH}.`)
+}
+
+// If the server stops answering for about a minute while its process is still alive (frozen), restart it.
+function watchServer() {
+  let misses = 0
+  setInterval(async () => {
+    if (quitting) return
+    if (await serverUp(10000)) {
+      misses = 0
+      return
+    }
+    misses++
+    if (misses < 4 || !server || server.exitCode !== null) return
+    misses = 0
+    try { fs.appendFileSync(LOG_PATH, `[${new Date().toISOString()}] server not answering, restarting it\n`) } catch {}
+    server.kill('SIGKILL')
+  }, 20000)
 }
 
 function layout() {
@@ -347,6 +371,7 @@ if (!gotLock) {
     if (win && !win.isDestroyed()) win.focus()
   })
   app.on('before-quit', () => {
+    quitting = true
     if (server && server.exitCode === null) server.kill()
   })
   app.whenReady().then(async () => {
@@ -359,6 +384,7 @@ if (!gotLock) {
     startControl()
     try {
       await ensureServer()
+      watchServer()
       await ui.webContents.loadURL(UI_URL)
       keepAwakeWhileLaunched()
     } catch (error) {

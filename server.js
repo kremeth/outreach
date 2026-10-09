@@ -917,6 +917,7 @@ async function boot() {
     console.error(error)
   }
   writer.start()
+  autopilot.resume()
   mediaServer.listen(MEDIA_PORT, '127.0.0.1')
   server.listen(PORT, '127.0.0.1', () => {
     console.log(`Open http://127.0.0.1:${PORT}`)

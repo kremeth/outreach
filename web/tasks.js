@@ -355,17 +355,23 @@ async function pollLaunch() {
       renderLaunch()
       renderSafety()
       renderTasks()
+      renderHomeWarn()
     }
   } catch {}
   if (route === 'home') launchTimer = setTimeout(pollLaunch, 5000)
 }
 
+// A failed load (server busy or restarting) shows "Reconnecting" and retries on its own; the
+// message disappears as soon as the server answers again.
+let todoRetry = null
 async function loadTodo(refresh) {
+  clearTimeout(todoRetry)
   try {
     todoData = await api(`/api/todo${refresh ? '?refresh=1' : ''}`, null, 60000)
     syncStatus = todoData.hustle
   } catch (error) {
-    homeWarn.replaceChildren(el('div', 'warn', error.message || 'Could not load the to do list.'))
+    homeWarn.replaceChildren(el('div', 'warn', error.kind === 'network' ? 'Reconnecting to Outreach…' : (error.message || 'Could not load the to do list.')))
+    if (route === 'home') todoRetry = setTimeout(() => loadTodo(refresh), 5000)
     return
   }
   if (route !== 'home') return
