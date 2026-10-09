@@ -546,6 +546,13 @@ async function sendRelaunch(stage, sheetRow, message) {
       await relaunch.markUnreachable(row, stage, error.message).catch((writeError) => console.error(writeError))
       return { ok: false, unreachable: true, error: `Can't message @${username}. Marked NA in the sheet.` }
     }
+    // Deleted or renamed account: nothing to relaunch. Leave them out first so Launch never retries,
+    // even if the sheet write fails.
+    if (error.kind === 'missing') {
+      await relaunch.leaveOut(stage, row.sheetRow).catch((logError) => console.error(logError))
+      await relaunch.markUnreachable(row, stage, error.message).catch((writeError) => console.error(writeError))
+      return { ok: false, unreachable: true, error: `@${username}'s Instagram account no longer exists. Marked NA in the sheet, no relaunch sent.` }
+    }
     throw error
   }
   try {
@@ -586,6 +593,7 @@ autopilot.init({
   sendRelaunch,
   relaunchQueue,
   refreshSheet: () => refreshSheet(true).catch((error) => console.error(error)),
+  sheetReady: () => Boolean(sheetRefreshedAt),
   voiceCount: () => voiceQueue().length,
   voiceRemainingToday: () => sendQueue.remainingToday(),
   nextPick: () => hustle.picks().find((item) => !log.claimedByOther(`hustle:${item.username}`)),

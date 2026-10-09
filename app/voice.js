@@ -179,6 +179,10 @@ async function sendTo(item, account) {
   await openUrl(`https://www.instagram.com/${item.username}/`)
   let state = await ig.run(wc, 'window.__igPageState()')
   if (state.kind === 'login') throw fail('Log into Instagram in the panel.', 'login')
+  if (state.kind === 'missing') {
+    await queue.markUnreachable(item, 'Instagram account no longer exists')
+    return { sent: false, unreachable: true, reason: 'their Instagram account no longer exists', item: { name: item.name, username: item.username } }
+  }
   if (state.kind === 'blocked') {
     const warning = await confirmWarning(state.text)
     throw fail(warning ? `Instagram showed a warning: ${warning}` : 'Instagram may be limiting actions.', warning ? 'blocked' : 'notsent')

@@ -486,6 +486,7 @@ async function dmSteps(wc, { username, message, expect }, progress) {
     return { ...value, done: Boolean(value.problem) || !value.waiting }
   }, 20000, 500)
   if (state?.problem === 'unreachable') throw fail('This account cannot receive your messages.', 'unreachable')
+  if (state?.problem === 'missing') throw fail('This Instagram account no longer exists.', 'missing')
   if (state?.problem) throw problemError(state)
   if (!state || state.waiting) throw fail('The DM opened, but the message box never appeared.')
 

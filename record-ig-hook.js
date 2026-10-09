@@ -245,6 +245,8 @@
     if (path.startsWith('/accounts/login') || /log in to continue|log into instagram/i.test(text)) {
       return { kind: 'login' }
     }
+    // A deleted (or renamed) account: its profile and its chat link both show this page.
+    if (/sorry, this page isn't available/i.test(text)) return { kind: 'missing' }
     return { kind: 'ok', path, text: text.slice(0, 200) }
   }
 
