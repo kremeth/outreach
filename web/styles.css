@@ -1380,41 +1380,63 @@ a.person.current {
 .comment-option.likely { border-color: var(--fill); box-shadow: inset 0 0 0 1px var(--fill); }
 .comment-option.likely .option-chance-value { color: var(--ink); font-weight: 700; }
 
-/* API costs card: today first, week and month second */
+/* API costs card: today first, week and month second, then 28 days of spend */
 .usage {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 6px 24px;
+  gap: 14px;
   margin-bottom: 6px;
-  padding: 18px 22px;
+  padding: 18px 22px 16px;
   border: 1px solid var(--line);
   border-radius: 16px;
   background: var(--surface);
 }
+.usage-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px 24px; }
 .usage-primary { display: grid; gap: 2px; }
-.usage-label {
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: var(--muted);
-}
-.usage-today {
-  font-size: 34px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  line-height: 1.1;
-  color: var(--ink);
-  font-variant-numeric: tabular-nums;
-}
+.usage-label { font-size: 12px; font-weight: 600; letter-spacing: 0.02em; color: var(--muted); }
+.usage-today { font-size: 34px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.1; color: var(--ink); font-variant-numeric: tabular-nums; }
 .usage-side { display: flex; align-items: center; gap: 20px; }
 .usage-divider { width: 1px; align-self: stretch; background: var(--line); }
 .usage-stat { display: grid; gap: 2px; text-align: right; }
 .usage-stat-label { font-size: 12px; color: var(--muted); }
 .usage-stat-value { font-size: 17px; font-weight: 600; color: var(--ink-2); font-variant-numeric: tabular-nums; }
-.usage-note { grid-column: 1 / -1; margin: 4px 0 0; font-size: 12px; color: var(--muted); }
+
+.usage-chart { position: relative; }
+.usage-plot { position: relative; height: 96px; margin-right: 52px; }
+.usage-grid { position: absolute; left: 0; right: -52px; border-top: 1px solid var(--line); }
+.usage-grid-label { position: absolute; right: 0; top: -8px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; background: var(--surface); padding-left: 6px; }
+.usage-bars { position: absolute; inset: 0; display: flex; align-items: flex-end; gap: 2px; }
+.usage-col { position: relative; flex: 1; height: 100%; display: flex; align-items: flex-end; cursor: default; outline: none; border-radius: 4px; }
+.usage-col:hover, .usage-col.hover, .usage-col:focus-visible { background: var(--surface-hover); }
+.usage-col:focus-visible { box-shadow: 0 0 0 2px var(--line-focus); }
+.usage-bar { width: 100%; border-radius: 4px 4px 0 0; background: #6f9632; }
+.usage-col.today .usage-bar { background: #3d6e00; }
+.usage-col.untracked .usage-bar {
+  border-radius: 4px;
+  background: repeating-linear-gradient(135deg, transparent 0 3px, var(--sunken) 3px 6px);
+}
+.usage-axis { display: flex; gap: 2px; margin: 6px 52px 0 0; font-size: 11px; color: var(--muted); }
+.usage-axis span { flex: 1; white-space: nowrap; overflow: visible; }
+.usage-axis span:last-child { text-align: right; }
+.usage-tip {
+  position: absolute;
+  top: 0;
+  min-width: 160px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 6px 20px rgba(20, 20, 19, 0.08);
+  pointer-events: none;
+  z-index: 2;
+}
+.usage-tip-date { font-size: 12px; color: var(--muted); }
+.usage-tip-value { font-size: 16px; font-weight: 650; color: var(--ink); font-variant-numeric: tabular-nums; }
+.usage-tip-meta { margin-top: 2px; font-size: 12px; color: var(--muted); max-width: 220px; }
+.usage-note { margin: 0; font-size: 12px; color: var(--muted); }
+.usage-live { display: inline-flex; align-items: center; gap: 5px; color: var(--accent-text); font-weight: 600; }
+.usage-live::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--fill); }
 @media (max-width: 560px) {
-  .usage { grid-template-columns: 1fr; }
+  .usage-head { grid-template-columns: 1fr; }
   .usage-side { justify-content: flex-start; }
   .usage-stat { text-align: left; }
 }

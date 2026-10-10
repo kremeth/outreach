@@ -461,15 +461,108 @@ function usageStat(label, value) {
   return stat
 }
 
+let usageHover = -1
+
+function niceMax(value) {
+  if (value <= 0) return 0.1
+  const steps = [0.01, 0.02, 0.05, 0.1, 0.2, 0.25, 0.5, 1, 2, 2.5, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000]
+  return steps.find((step) => step * 2 >= value) * 2 || Math.ceil(value)
+}
+
+const compact = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 })
+
+function dayLabel(day, style = 'short') {
+  const date = new Date(`${day}T00:00:00`)
+  return style === 'long'
+    ? date.toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })
+    : date.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })
+}
+
+// 28 days of spend, one bar per day (today darkest). Hover or focus a day for its numbers.
+function usageChart(data) {
+  const days = data.days || []
+  const top = niceMax(Math.max(0, ...days.map((day) => day.usd)))
+  const chart = el('div', 'usage-chart')
+  const plot = el('div', 'usage-plot')
+  for (const fraction of [1, 0.5, 0]) {
+    const line = el('div', 'usage-grid')
+    line.style.bottom = `${fraction * 100}%`
+    line.append(el('span', 'usage-grid-label', money(top * fraction)))
+    plot.append(line)
+  }
+  const bars = el('div', 'usage-bars')
+  const tip = el('div', 'usage-tip')
+  tip.hidden = true
+  const show = (index, column) => {
+    usageHover = index
+    const day = days[index]
+    tip.replaceChildren()
+    tip.append(el('div', 'usage-tip-date', dayLabel(day.day, 'long')))
+    if (!day.tracked) {
+      tip.append(el('div', 'usage-tip-value', 'Not tracked'), el('div', 'usage-tip-meta', 'Before Outreach logged its calls. Google AI Studio has this day.'))
+    } else {
+      tip.append(el('div', 'usage-tip-value', money(day.usd)))
+      tip.append(el('div', 'usage-tip-meta', `${day.calls} call${day.calls === 1 ? '' : 's'} · ${compact.format(day.input)} tokens in · ${compact.format(day.output)} out`))
+    }
+    tip.hidden = false
+    const box = column.getBoundingClientRect()
+    const area = chart.getBoundingClientRect()
+    // Beside the bar, inside the chart: to its left on the right half, to its right on the left half.
+    const center = box.left - area.left + box.width / 2
+    if (center > area.width / 2) {
+      tip.style.left = ''
+      tip.style.right = `${area.width - center + box.width / 2 + 8}px`
+    } else {
+      tip.style.right = ''
+      tip.style.left = `${center + box.width / 2 + 8}px`
+    }
+    for (const other of bars.children) other.classList.toggle('hover', other === column)
+  }
+  const hide = () => {
+    usageHover = -1
+    tip.hidden = true
+    for (const other of bars.children) other.classList.remove('hover')
+  }
+  days.forEach((day, index) => {
+    const column = el('div', `usage-col${index === days.length - 1 ? ' today' : ''}${day.tracked ? '' : ' untracked'}`)
+    column.tabIndex = 0
+    column.setAttribute('role', 'img')
+    column.setAttribute('aria-label', day.tracked ? `${dayLabel(day.day, 'long')}: ${money(day.usd)}, ${day.calls} calls` : `${dayLabel(day.day, 'long')}: not tracked`)
+    const bar = el('div', 'usage-bar')
+    bar.style.height = day.tracked ? (day.usd > 0 ? `max(3px, ${(day.usd / top) * 100}%)` : '0') : '100%'
+    column.append(bar)
+    column.addEventListener('mouseenter', () => show(index, column))
+    column.addEventListener('focus', () => show(index, column))
+    column.addEventListener('mouseleave', hide)
+    column.addEventListener('blur', hide)
+    bars.append(column)
+  })
+  plot.append(bars)
+  const axis = el('div', 'usage-axis')
+  days.forEach((day, index) => {
+    const label = el('span', '', index === days.length - 1 ? 'Today' : index % 7 === 0 ? dayLabel(day.day) : '')
+    axis.append(label)
+  })
+  chart.append(plot, axis, tip)
+  if (usageHover >= 0 && usageHover < days.length) requestAnimationFrame(() => show(usageHover, bars.children[usageHover]))
+  return chart
+}
+
 function renderUsage(data) {
+  const head = el('div', 'usage-head')
   const primary = el('div', 'usage-primary')
   primary.append(el('span', 'usage-label', 'API costs today'), el('span', 'usage-today', data ? money(data.today) : '—'))
   const side = el('div', 'usage-side')
   side.append(usageStat('This week', data?.week), el('span', 'usage-divider'), usageStat('This month', data?.month))
-  const parts = [primary, side]
+  head.append(primary, side)
+  const parts = [head]
+  if (data?.days) parts.push(usageChart(data))
   if (data) {
-    const since = new Date(`${data.trackedSince}T00:00:00`).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })
-    parts.push(el('p', 'usage-note', `Gemini · ${data.computers > 1 ? 'both Macs' : 'this Mac'} · tracked since ${since}`))
+    const since = new Date(data.trackedSince)
+    const sinceText = Number.isNaN(since.getTime()) ? '' : ` · tracked since ${since.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}, ${since.toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' })}`
+    const note = el('p', 'usage-note')
+    note.append(el('span', 'usage-live', 'Live'), document.createTextNode(` Gemini · ${data.computers > 1 ? 'both Macs' : 'this Mac'}${sinceText}`))
+    parts.push(note)
   }
   usageEl.replaceChildren(...parts)
 }
@@ -481,7 +574,7 @@ async function pollUsage() {
   } catch {
     if (!usageEl.childElementCount) renderUsage(null)
   }
-  if (route === 'home') usageTimer = setTimeout(pollUsage, 60000)
+  if (route === 'home') usageTimer = setTimeout(pollUsage, 15000)
 }
 
 function openHome() {
