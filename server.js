@@ -869,6 +869,16 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, modelProspect.prediction(url.searchParams.get('username')))
       return
     }
+    if (req.method === 'GET' && url.pathname === '/api/model-image') {
+      const file = modelProspect.imagePath(url.searchParams.get('username'), url.searchParams.get('n'))
+      if (!file) {
+        send(res, 404, 'Not found', 'text/plain; charset=utf-8')
+        return
+      }
+      res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=3600' })
+      fs.createReadStream(file).pipe(res)
+      return
+    }
     if (req.method === 'GET' && url.pathname === '/api/model-agreement') {
       sendJson(res, 200, modelProspect.agreement())
       return

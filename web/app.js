@@ -464,6 +464,7 @@ function show() {
   renderHeader()
   renderChrome()
   renderStage()
+  showModel()
 }
 
 // Yes today and profiles left, including the other computer's decisions, refreshed every few
@@ -486,6 +487,7 @@ async function pollCounts() {
 function enterProspecting() {
   askingDevice = false
   mode = 'review'
+  refreshTally()
   show()
   pollCounts()
 }
@@ -493,6 +495,9 @@ function enterProspecting() {
 function leaveProspecting() {
   askingDevice = false
   mode = 'away'
+  clearTimeout(modelPoll)
+  modelFor = ''
+  modelPanel.hidden = true
   clearTimeout(countsTimer)
   closeZoom()
 }
@@ -611,60 +616,85 @@ function send(item, choice, device) {
 }
 
 // ---------- The wearable model prospecting alongside ----------
-// After each answer, what the model would have chosen for that profile (it never shows before you
-// decide, so your answers stay your own). Every answer is logged next to the model's on the server.
-const modelCard = document.createElement('div')
-modelCard.className = 'model-verdict'
-modelCard.hidden = true
-document.getElementById('view-prospect').append(modelCard)
-let modelTimer = null
+// A panel left of the post photo with what the model decided for the profile on screen, and the photo
+// its answer rests on. It updates by itself while the model is still checking. Every answer is
+// logged next to the model's on the server.
+const modelPanel = document.createElement('aside')
+modelPanel.className = 'model-side'
+modelPanel.hidden = true
+stage.parentElement.style.position = 'relative'
+stage.parentElement.append(modelPanel)
+let modelFor = ''
+let modelPoll = null
+let modelTally = ''
 
-function modelLine(prediction) {
+function modelDecision(prediction) {
   if (prediction.decision === 'Yes') {
     const brands = prediction.brands.length ? prediction.brands : prediction.possibleBrands
-    return `Yes${brands.length ? ` · ${brands.join(', ')}` : ' · device not identified'}`
+    return { label: 'Yes', detail: brands.length ? brands.join(', ') : 'Wearable, brand not identified', tone: 'yes' }
   }
-  if (prediction.decision === 'No') return 'No'
-  return prediction.profileStatus && prediction.profileStatus !== 'ok' ? `Unknown (profile ${prediction.profileStatus})` : 'Unsure (no wrists or hands visible)'
+  if (prediction.decision === 'No') return { label: 'No', detail: 'No wearable on any wrist, arm or finger it could see', tone: 'no' }
+  return { label: 'Unsure', detail: prediction.profileStatus && prediction.profileStatus !== 'ok' ? `Profile ${prediction.profileStatus}` : 'No wrists or hands visible enough to tell', tone: 'unsure' }
 }
 
-async function revealModel(item, choice, device) {
-  if (!item.username) return
-  let prediction
-  try {
-    prediction = await api(`/api/model-prediction?username=${encodeURIComponent(item.username)}`, null, 8000)
-  } catch {
+function paintModel(item, prediction) {
+  if (queue[0] !== item || mode !== 'review') return
+  modelPanel.replaceChildren(el('div', 'model-side-label', 'Model'))
+  if (prediction.status !== 'ready') {
+    modelPanel.append(el('div', 'model-side-decision checking', prediction.status === 'pending' ? 'Checking…' : 'Not in the model’s list'))
+  } else {
+    const decision = modelDecision(prediction)
+    const head = el('div', `model-side-decision ${decision.tone}`, decision.label)
+    modelPanel.append(head, el('div', 'model-side-detail', decision.detail))
+    if (prediction.evidence) {
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.className = 'model-side-photo'
+      const img = document.createElement('img')
+      img.src = prediction.evidence.image
+      img.alt = `Photo ${prediction.evidence.photo}: ${prediction.evidence.where}`
+      button.append(img)
+      button.addEventListener('click', () => openZoom(prediction.evidence.image, img.alt, img.src))
+      modelPanel.append(button, el('div', 'model-side-where', `Photo ${prediction.evidence.photo} · ${prediction.evidence.brand} (${prediction.evidence.certainty}) · ${prediction.evidence.where}`))
+    } else if (prediction.textMentions?.length) {
+      modelPanel.append(el('div', 'model-side-where', `Named in the bio or captions: ${prediction.textMentions.join(', ')}`))
+    }
+  }
+  if (modelTally) modelPanel.append(el('div', 'model-side-tally', modelTally))
+  modelPanel.hidden = false
+}
+
+async function loadModel(item) {
+  clearTimeout(modelPoll)
+  if (!item?.username) {
+    modelPanel.hidden = true
     return
   }
-  if (prediction.status === 'none') return
-  clearTimeout(modelTimer)
-  modelCard.replaceChildren()
-  const head = el('div', 'model-verdict-head')
-  head.append(el('span', 'model-verdict-label', `Model on @${item.username}`))
-  if (prediction.status === 'pending') {
-    head.append(el('span', 'model-verdict-badge pending', 'Still checking'))
-    modelCard.append(head, el('div', 'model-verdict-line', 'It has not looked at this profile yet.'))
-  } else {
-    const modelYes = prediction.decision === 'Yes'
-    const sure = prediction.decision !== 'Unknown'
-    const agree = sure && modelYes === (choice === 'yes')
-    const deviceMatch = !modelYes || choice !== 'yes' || prediction.brands.includes(device) || prediction.possibleBrands.includes(device)
-    const badge = !sure ? ['Unsure', 'pending'] : agree ? [deviceMatch ? 'Agrees' : 'Agrees · other device', deviceMatch ? 'agree' : 'partial'] : ['Disagrees', 'disagree']
-    head.append(el('span', `model-verdict-badge ${badge[1]}`, badge[0]))
-    modelCard.append(head, el('div', 'model-verdict-line', `${modelLine(prediction)}  ·  you: ${choice === 'yes' ? `Yes · ${device}` : 'No'}`))
-    const evidence = (prediction.devices || []).map((d) => d.evidence).filter(Boolean)[0] || (prediction.textMentions.length ? `Named in bio or captions: ${prediction.textMentions.join(', ')}` : '')
-    if (evidence) modelCard.append(el('div', 'model-verdict-evidence', evidence))
+  let prediction = { status: 'pending' }
+  try {
+    prediction = await api(`/api/model-prediction?username=${encodeURIComponent(item.username)}`, null, 8000)
+  } catch {}
+  if (prediction.status === 'none') {
+    if (queue[0] === item) modelPanel.hidden = true
+    return
   }
-  const tally = el('div', 'model-verdict-tally', '')
-  modelCard.append(tally)
-  modelCard.hidden = false
-  modelTimer = setTimeout(() => { modelCard.hidden = true }, 7000)
-  setTimeout(async () => {
-    try {
-      const stats = await api('/api/model-agreement', null, 8000)
-      if (stats.compared) tally.textContent = `Agreed ${stats.agree} of ${stats.compared} · caught ${stats.yesCaught} of your ${stats.yes} Yes · right device ${stats.deviceRight}`
-    } catch {}
-  }, 1200)
+  paintModel(item, prediction)
+  if (prediction.status === 'pending' && queue[0] === item) modelPoll = setTimeout(() => loadModel(item), 3000)
+}
+
+function showModel() {
+  const item = mode === 'review' ? queue[0] : null
+  const key = item ? `${item.sheetRow}:${item.username}` : ''
+  if (key === modelFor) return
+  modelFor = key
+  loadModel(item)
+}
+
+async function refreshTally() {
+  try {
+    const stats = await api('/api/model-agreement', null, 8000)
+    modelTally = stats.compared ? `Agreed ${stats.agree} of ${stats.compared} · caught ${stats.yesCaught} of your ${stats.yes} Yes · right device ${stats.deviceRight}` : ''
+  } catch {}
 }
 
 function choose(choice, device) {
@@ -682,7 +712,7 @@ function choose(choice, device) {
   history.push({ item: { ...item, choice, device: device || '' }, previous: item.choice || null })
   queue = queue.slice(1)
   save(item, choice, device)
-  revealModel(item, choice, device)
+  setTimeout(refreshTally, 1500)
   show()
   refill()
 }
