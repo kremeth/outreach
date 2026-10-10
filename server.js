@@ -1,6 +1,7 @@
 const http = require('http')
 const fs = require('fs')
 const path = require('path')
+const crypto = require('crypto')
 const data = require('./lib/data')
 const sheet = require('./lib/sheet')
 const writer = require('./lib/sheet-writer')
@@ -459,6 +460,32 @@ async function readPost(post, photo) {
   return cover('')
 }
 
+// Pick predictions start as soon as comments are drafted or rewritten, so they are usually ready by
+// the time the creator is on screen; the page's own request picks up the same work.
+const scoreJobs = new Map()
+function scoreFor({ comments, description = '', caption = '', transcript = '' }) {
+  const clip = (value, max) => String(value || '').slice(0, max)
+  const list = (Array.isArray(comments) ? comments : []).map((text) => clip(text, 300))
+  const key = JSON.stringify(list)
+  const existing = scoreJobs.get(key)
+  if (existing && Date.now() - existing.at < 60 * 60 * 1000) return existing.promise
+  const promise = pickModel.score({ comments: list, description: clip(description, 1500), caption: clip(caption, 1500), transcript: clip(transcript, 3000), machine: log.MACHINE })
+  promise.catch(() => scoreJobs.delete(key))
+  scoreJobs.set(key, { at: Date.now(), promise })
+  while (scoreJobs.size > 300) scoreJobs.delete(scoreJobs.keys().next().value)
+  return promise
+}
+
+// The page's code version: when it changes, an open window reloads itself (see web/tasks.js).
+const WEB_FILES = ['index.html', 'app.js', 'tasks.js', 'styles.css']
+function webVersion() {
+  const hash = crypto.createHash('sha1')
+  for (const name of WEB_FILES) {
+    try { hash.update(fs.readFileSync(path.join(__dirname, 'web', name))) } catch {}
+  }
+  return hash.digest('hex').slice(0, 12)
+}
+
 async function commentDrafts(username, avoid = [], guidance = '') {
   const claimed = await log.claim(`hustle:${String(username).toLowerCase()}`, CREATOR_CLAIM_MS)
   if (!claimed.ok) throw taken(`${claimed.by} is working on @${username} right now.`)
@@ -476,7 +503,7 @@ async function commentDrafts(username, avoid = [], guidance = '') {
     avoid: avoid.map((text) => String(text).slice(0, 300)).slice(0, 15),
     guidance: String(guidance || '').replace(/\s+/g, ' ').trim().slice(0, 200),
   })
-  return {
+  const result = {
     permalink,
     pk: post.pk,
     code: post.code,
@@ -495,6 +522,8 @@ async function commentDrafts(username, avoid = [], guidance = '') {
     transcript: drafted.transcript,
     comments: drafted.comments,
   }
+  scoreFor({ comments: result.comments, description: result.description, caption: result.caption, transcript: result.transcript }).catch(() => {})
+  return result
 }
 
 async function postComment({ permalink, message, username, pk, code, kind }) {
@@ -826,7 +855,7 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req)
       const clip = (value, max) => String(value || '').slice(0, max)
       try {
-        sendJson(res, 200, await drafts.rewrite({
+        const result = await drafts.rewrite({
           name: clip(body.name, 120),
           username: clip(body.username, 60),
           bio: clip(body.bio, 600),
@@ -835,7 +864,9 @@ const server = http.createServer(async (req, res) => {
           transcript: clip(body.transcript, 6000),
           avoid: (Array.isArray(body.avoid) ? body.avoid : []).map((text) => clip(text, 300)).slice(-20),
           guidance: clip(body.guidance, 200).replace(/\s+/g, ' ').trim(),
-        }))
+        })
+        scoreFor({ comments: result.comments, description: body.description, caption: body.caption, transcript: body.transcript }).catch(() => {})
+        sendJson(res, 200, result)
       } catch (error) {
         sendJson(res, 502, { error: error.message || 'Could not rewrite the comments.' })
       }
@@ -844,20 +875,16 @@ const server = http.createServer(async (req, res) => {
     // How likely this computer's person is to pick each of the 5 (whole percent, adding to 100).
     if (req.method === 'POST' && url.pathname === '/api/comment-scores') {
       const body = await readBody(req)
-      const clip = (value, max) => String(value || '').slice(0, max)
       try {
-        const comments = (Array.isArray(body.comments) ? body.comments : []).map((text) => clip(text, 300))
-        const scored = await pickModel.score({
-          comments,
-          description: clip(body.description, 1500),
-          caption: clip(body.caption, 1500),
-          transcript: clip(body.transcript, 3000),
-          machine: log.MACHINE,
-        })
+        const scored = await scoreFor(body)
         sendJson(res, 200, { percent: scored?.percent || null, model: { ...pickModel.summary(), machine: log.MACHINE } })
       } catch (error) {
         sendJson(res, 502, { error: error.message || 'Could not score the comments.' })
       }
+      return
+    }
+    if (req.method === 'GET' && url.pathname === '/api/version') {
+      sendJson(res, 200, { version: webVersion() })
       return
     }
     if (req.method === 'GET' && url.pathname === '/api/pick-model') {

@@ -77,6 +77,23 @@ function go() {
 
 window.addEventListener('hashchange', go)
 
+// When Outreach's code is updated, the window reloads itself, but only on the To do page so a
+// task in progress (and anything still saving) is never interrupted.
+let loadedVersion = ''
+let updateWaiting = false
+async function checkVersion() {
+  const { version } = await api('/api/version', null, 10000).catch(() => ({}))
+  if (!version) return
+  if (!loadedVersion) loadedVersion = version
+  else if (version !== loadedVersion) updateWaiting = true
+  if (updateWaiting && route === 'home') location.reload()
+}
+setInterval(checkVersion, 30000)
+checkVersion()
+window.addEventListener('hashchange', () => {
+  if (updateWaiting && route === 'home') location.reload()
+})
+
 window.addEventListener('keydown', (event) => {
   if (route === 'prospect' || event.defaultPrevented) return
   if (event.metaKey || event.ctrlKey || event.altKey || event.repeat) return
@@ -476,16 +493,27 @@ function chanceColor(value, top) {
   return `rgb(${LOW.map((low, index) => Math.round(low + (HIGH[index] - low) * t)).join(',')})`
 }
 
+function pendingChance() {
+  const chance = el('span', 'option-chance pending')
+  chance.title = 'Predicting how likely you are to pick this one…'
+  const meter = el('span', 'option-meter')
+  meter.append(el('i', ''))
+  chance.append(meter, el('span', 'option-chance-value', '…'))
+  return chance
+}
+
 // Each option shows its own chance, the most likely one highlighted.
 function markChances(options, percent) {
   const top = Math.max(...percent)
   options.forEach((option, index) => {
+    option.querySelector('.option-chance')?.remove()
     const chance = el('span', 'option-chance')
     const meter = el('span', 'option-meter')
     const fill = el('i', '')
     fill.style.width = `${percent[index]}%`
     fill.style.background = chanceColor(percent[index], top)
     meter.append(fill)
+    chance.title = `${percent[index]}% likely you pick this one`
     chance.append(meter, el('span', 'option-chance-value', `${percent[index]}%`))
     option.append(chance)
     if (percent[index] === top) option.classList.add('likely')
@@ -746,12 +774,19 @@ function hustleScreen() {
       wrap.append(option)
       return option
     })
-    // Each option gets its chance once the pick predictor answers; without one they stay as they are.
-    scoresFor(drafted)
-      .then((result) => {
-        if (result.percent && wrap.isConnected) markChances(options, result.percent)
-      })
-      .catch(() => {})
+    // Each option shows a loading meter until the pick predictor answers, then its chance.
+    const cached = scoreCache.get(scoreKey(drafted))?.done
+    if (cached) markChances(options, cached)
+    else {
+      for (const option of options) option.append(pendingChance())
+      scoresFor(drafted)
+        .then((result) => {
+          if (!wrap.isConnected) return
+          if (result.percent) markChances(options, result.percent)
+          else for (const node of wrap.querySelectorAll('.option-chance.pending')) node.remove()
+        })
+        .catch(() => { for (const node of wrap.querySelectorAll('.option-chance.pending')) node.remove() })
+    }
     const own = el('form', 'own-comment')
     const input = document.createElement('input')
     input.type = 'text'
