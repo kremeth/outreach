@@ -465,7 +465,7 @@ function emptyState(main, footer, title, text) {
   footer.append(actions)
 }
 
-// ---------- Pick predictor gauge ----------
+// ---------- Pick predictor ----------
 
 // Light green (unlikely) to deep green (likely), by each comment's share of the most likely one. The
 // light end still clears 2:1 against the white surface (checked with the dataviz palette validator).
@@ -473,51 +473,7 @@ const LOW = [150, 182, 88]
 const HIGH = [61, 110, 0]
 function chanceColor(value, top) {
   const t = top ? Math.min(1, value / top) : 0
-  const rgb = LOW.map((low, index) => Math.round(low + (HIGH[index] - low) * t))
-  return { background: `rgb(${rgb.join(',')})`, ink: t > 0.7 ? '#ffffff' : 'var(--ink)' }
-}
-
-function percentLabel(value) {
-  return `${Math.round(value * 100)}%`
-}
-
-// One bar, split into the 5 comments' chances (adding to 100), in comment order, with the most
-// likely one named above it and how good the model has been underneath.
-function pickGauge(percent, model) {
-  const top = Math.max(...percent)
-  const best = percent.indexOf(top)
-  const box = el('div', 'predict')
-  const head = el('div', 'predict-head')
-  head.append(el('span', 'predict-label', 'Most likely pick'), el('strong', 'predict-top', `#${best + 1}`), el('span', 'predict-top-value', `${top}%`))
-  box.append(head)
-  const bar = el('div', 'predict-bar')
-  bar.setAttribute('role', 'img')
-  bar.setAttribute('aria-label', `Chance of each comment being picked: ${percent.map((value, index) => `#${index + 1} ${value}%`).join(', ')}`)
-  percent.forEach((value, index) => {
-    if (!value) return
-    const color = chanceColor(value, top)
-    const segment = el('div', `predict-seg${index === best ? ' best' : ''}`)
-    segment.style.flex = `${value} 1 0`
-    segment.style.background = color.background
-    segment.style.color = color.ink
-    segment.title = `Comment ${index + 1}: ${value}% likely`
-    if (value >= 9) segment.append(el('span', 'predict-seg-key', `#${index + 1}`), el('span', 'predict-seg-value', String(value)))
-    else if (value >= 5) segment.append(el('span', 'predict-seg-value', String(value)))
-    bar.append(segment)
-  })
-  box.append(bar)
-  const scale = el('div', 'predict-scale')
-  scale.append(el('span', '', '0'), el('span', '', '100'))
-  box.append(scale)
-  box.append(el('p', 'predict-note', modelLine(model)))
-  return box
-}
-
-function modelLine(model) {
-  if (!model?.ready) return ''
-  const mine = model.cv?.byMachine?.[model.machine]
-  const right = mine?.rounds ? `${percentLabel(mine.correct / mine.rounds)} on your past picks` : percentLabel(model.cv.accuracy)
-  return `Right first guess ${right} (random guessing: 20%) · learned from ${model.rounds} rounds · retrains itself as you pick`
+  return `rgb(${LOW.map((low, index) => Math.round(low + (HIGH[index] - low) * t)).join(',')})`
 }
 
 // Each option shows its own chance, the most likely one highlighted.
@@ -528,7 +484,7 @@ function markChances(options, percent) {
     const meter = el('span', 'option-meter')
     const fill = el('i', '')
     fill.style.width = `${percent[index]}%`
-    fill.style.background = chanceColor(percent[index], top).background
+    fill.style.background = chanceColor(percent[index], top)
     meter.append(fill)
     chance.append(meter, el('span', 'option-chance-value', `${percent[index]}%`))
     option.append(chance)
@@ -782,9 +738,6 @@ function hustleScreen() {
   function commentPicker(item, drafted) {
     const wrap = el('div', 'picker')
     wrap.append(postRead(drafted))
-    const gauge = el('div', 'predict loading')
-    gauge.append(el('div', 'predict-head', 'Predicting your pick…'), el('div', 'predict-bar'))
-    wrap.append(gauge)
     wrap.append(el('div', 'section-label', 'Pick one · Launch posts it later, with a like'))
     const options = drafted.comments.map((text, position) => {
       const option = button('', 'comment-option', () => choose(item, drafted, text, option))
@@ -793,17 +746,12 @@ function hustleScreen() {
       wrap.append(option)
       return option
     })
+    // Each option gets its chance once the pick predictor answers; without one they stay as they are.
     scoresFor(drafted)
       .then((result) => {
-        if (!gauge.isConnected) return
-        if (!result.percent) {
-          gauge.replaceWith(el('p', 'predict-note', result.model?.ready ? 'No prediction for these.' : 'The pick predictor is still learning (it needs more picks).'))
-          return
-        }
-        gauge.replaceWith(pickGauge(result.percent, result.model))
-        markChances(options, result.percent)
+        if (result.percent && wrap.isConnected) markChances(options, result.percent)
       })
-      .catch(() => gauge.isConnected && gauge.replaceWith(el('p', 'predict-note', 'The pick predictor did not answer for these.')))
+      .catch(() => {})
     const own = el('form', 'own-comment')
     const input = document.createElement('input')
     input.type = 'text'
