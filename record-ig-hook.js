@@ -278,16 +278,31 @@
     return { ok: true, click: true, label: following.label, ...pointOf(following.el) }
   }
 
-  // Unfollow, step 2: the "Unfollow" choice in the menu or confirmation dialog that opened, newest dialog first.
+  // Unfollow, step 2: the "Unfollow" choice in the menu or confirmation dialog that opened, newest
+  // dialog first. clear: the element under its centre really is that choice (not a gap, an edge, or
+  // something still animating into place); rect lets the caller wait until it has stopped moving.
   window.__unfollowChoice = () => {
     for (const dialog of [...document.querySelectorAll('[role="dialog"]')].reverse()) {
-      const target = [...dialog.querySelectorAll('button, [role="button"], div, span')]
+      const label = [...dialog.querySelectorAll('button, [role="button"], div, span')]
         .filter((el) => visible(el) && el.children.length < 4 && /^unfollow$/i.test((el.innerText || '').trim()))
         .pop()
-      if (target) return { ok: true, ...pointOf(target.closest('button, [role="button"]') || target) }
+      if (!label) continue
+      // The clickable row: the nearest button-like ancestor, else the label itself.
+      const target = label.closest('button, [role="button"], [tabindex="0"]') || label
+      const rect = target.getBoundingClientRect()
+      const point = pointOf(target)
+      const hit = document.elementFromPoint(point.x, point.y)
+      const clear = Boolean(hit && (hit === target || target.contains(hit) || hit.contains(label)))
+      return { ok: true, ...point, clear, rect: [Math.round(rect.left), Math.round(rect.top), Math.round(rect.width), Math.round(rect.height)], tag: target.tagName.toLowerCase() + (target.getAttribute('role') ? `[role=${target.getAttribute('role')}]` : '') }
     }
     return { ok: false }
   }
+
+  // What the profile shows right now, for the log when an unfollow does not take.
+  window.__unfollowSnapshot = () => ({
+    header: headerButtons().map((item) => item.label).slice(0, 8),
+    dialogs: [...document.querySelectorAll('[role="dialog"]')].map((el) => (el.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 160)),
+  })
 
   window.__canMessage = () => {
     const blocked = window.__igPageState()

@@ -554,6 +554,44 @@ async function followState(wc) {
   }, 15000, 500)
 }
 
+// The Unfollow choice once it has stopped moving (same place twice in a row) and the spot under its
+// centre really is it, so the tap cannot land beside it while the menu is still opening.
+async function steadyChoice(wc, timeoutMs) {
+  const started = Date.now()
+  let last = null
+  while (Date.now() - started < timeoutMs) {
+    const value = await run(wc, 'window.__unfollowChoice()').catch(() => ({}))
+    if (value?.ok && value.clear && last && last.x === value.x && last.y === value.y) return value
+    last = value?.ok ? value : null
+    await sleep(250)
+  }
+  return null
+}
+
+async function untilUnfollowedOrConfirm(wc, timeoutMs) {
+  return waitFor(async () => {
+    const state = await run(wc, UNFOLLOW_START).catch(() => ({}))
+    if (state?.notFollowing) return { notFollowing: true, done: true }
+    const confirm = await run(wc, 'window.__unfollowChoice()').catch(() => ({}))
+    // A confirmation dialog's Unfollow, or the menu's again if the first tap did not register (safe:
+    // once unfollowed, the profile shows Follow and nothing more is tapped).
+    if (confirm?.ok && confirm.clear) {
+      const steady = await steadyChoice(wc, 1500)
+      if (steady) return { confirm: steady, done: true }
+    }
+    return { done: false }
+  }, timeoutMs, 400)
+}
+
+// When an unfollow does not take, what was on screen goes to data/unfollow-debug.jsonl.
+async function debugUnfollow(wc, username, reason, choice = null) {
+  try {
+    const snapshot = await run(wc, 'window.__unfollowSnapshot()').catch(() => ({}))
+    const line = { at: new Date().toISOString(), username, reason, choice, zoom: wc.getZoomFactor(), ...snapshot }
+    require('fs').appendFileSync(require('path').join(__dirname, '..', 'data', 'unfollow-debug.jsonl'), `${JSON.stringify(line)}\n`)
+  } catch {}
+}
+
 // Unfollows from the profile page: Following → Unfollow (→ confirm), then checks the button says
 // Follow, and reloads the profile to be sure Instagram kept it.
 async function unfollowSteps(wc, { username }, progress) {
@@ -564,30 +602,33 @@ async function unfollowSteps(wc, { username }, progress) {
   if (start?.notFollowing) return { ok: true, unfollowed: false, notFollowing: true }
   if (!start?.click) throw fail(start?.error || 'The profile did not load.')
   await click(wc, start)
-  const choice = await waitFor(async () => {
-    const value = await run(wc, 'window.__unfollowChoice()').catch(() => ({}))
-    return { ...value, done: Boolean(value.ok) }
-  }, 6000, 300)
-  if (!choice?.ok) {
+  const choice = await steadyChoice(wc, 6000)
+  if (!choice) {
+    await debugUnfollow(wc, username, 'no Unfollow option')
     await key(wc, 'Escape')
     throw fail('The Following menu did not show an Unfollow option.')
   }
   progress.pressed = true
   await click(wc, choice)
-  await sleep(1500)
-  // Private accounts and follow requests ask to confirm.
-  const confirm = await run(wc, 'window.__unfollowChoice()').catch(() => ({}))
-  if (confirm?.ok) {
-    await click(wc, confirm)
-    await sleep(1500)
+  // Unfollowed straight away, or a confirmation dialog (private accounts, follow requests).
+  let after = await untilUnfollowedOrConfirm(wc, 5000)
+  if (after?.confirm) {
+    await click(wc, after.confirm)
+    after = await untilUnfollowedOrConfirm(wc, 5000)
   }
   const problem = problemError(await pageProblem(wc))
   if (problem) throw problem
-  const after = await waitFor(async () => {
-    const value = await run(wc, UNFOLLOW_START).catch(() => ({}))
-    return { ...value, done: Boolean(value.notFollowing) }
-  }, 6000, 400)
-  if (!after?.notFollowing) throw fail('Tapped Unfollow, but the profile still shows Following. Check the Instagram panel.')
+  if (!after?.notFollowing) {
+    // Instagram sometimes takes a while to flip the button: reload and look again before calling it.
+    await debugUnfollow(wc, username, 'still Following after tapping', choice)
+    await key(wc, 'Escape')
+    await sleep(3000)
+    await openUrl(wc, `https://www.instagram.com/${encodeURIComponent(username)}/`)
+    const reloaded = await followState(wc)
+    if (reloaded?.problem) throw problemError(reloaded) || fail('The profile did not reload.')
+    if (!reloaded?.notFollowing) throw fail('Tapped Unfollow, but the profile still shows Following. Check the Instagram panel.')
+    return { ok: true, unfollowed: true }
+  }
   await sleep(2000)
   await openUrl(wc, `https://www.instagram.com/${encodeURIComponent(username)}/`)
   const kept = await followState(wc)
