@@ -443,7 +443,49 @@ function pollSync() {
   }, 1500)
 }
 
+// ---------- API costs card ----------
+
+const usageEl = document.getElementById('usage')
+let usageTimer = null
+const usd = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+function money(value) {
+  if (!Number.isFinite(value)) return '—'
+  if (value > 0 && value < 0.005) return '<$0.01'
+  return usd.format(value)
+}
+
+function usageStat(label, value) {
+  const stat = el('div', 'usage-stat')
+  stat.append(el('span', 'usage-stat-label', label), el('span', 'usage-stat-value', money(value)))
+  return stat
+}
+
+function renderUsage(data) {
+  const primary = el('div', 'usage-primary')
+  primary.append(el('span', 'usage-label', 'API costs today'), el('span', 'usage-today', data ? money(data.today) : '—'))
+  const side = el('div', 'usage-side')
+  side.append(usageStat('This week', data?.week), el('span', 'usage-divider'), usageStat('This month', data?.month))
+  const parts = [primary, side]
+  if (data) {
+    const since = new Date(`${data.trackedSince}T00:00:00`).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })
+    parts.push(el('p', 'usage-note', `Gemini · ${data.computers > 1 ? 'both Macs' : 'this Mac'} · tracked since ${since}`))
+  }
+  usageEl.replaceChildren(...parts)
+}
+
+async function pollUsage() {
+  clearTimeout(usageTimer)
+  try {
+    renderUsage(await api('/api/usage-cost', null, 20000))
+  } catch {
+    if (!usageEl.childElementCount) renderUsage(null)
+  }
+  if (route === 'home') usageTimer = setTimeout(pollUsage, 60000)
+}
+
 function openHome() {
+  pollUsage()
   pollLaunch()
   todayEl.textContent = new Date().toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long' })
   renderTasks()

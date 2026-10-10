@@ -26,3 +26,8 @@ detect/*.pt
 .backup/
 .claude/
 .DS_Store
+
+# Local ranker: Python env and the downloaded Sentence-BERT weights
+.venv/
+models/
+__pycache__/

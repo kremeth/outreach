@@ -18,6 +18,7 @@ const training = require('./lib/training-log')
 const migrations = require('./lib/row-migrations')
 const replyCheck = require('./lib/reply-check')
 const pickModel = require('./lib/pick-model')
+const apiUsage = require('./lib/api-usage')
 
 const ROOT = __dirname
 const WEB = path.join(ROOT, 'web')
@@ -911,6 +912,15 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, { since: since.toISOString(), totals })
       return
     }
+    // Gemini API spend in USD (today, this week, this month), both computers.
+    if (req.method === 'GET' && url.pathname === '/api/usage-cost') {
+      try {
+        sendJson(res, 200, await apiUsage.totals())
+      } catch (error) {
+        sendJson(res, 502, { error: error.message || 'Could not read API usage.' })
+      }
+      return
+    }
     if (req.method === 'GET' && url.pathname === '/api/version') {
       sendJson(res, 200, { version: webVersion() })
       return
@@ -1178,6 +1188,7 @@ async function boot() {
   writer.start()
   autopilot.resume()
   pickModel.startAutoRetrain()
+  apiUsage.startSync()
   mediaServer.listen(MEDIA_PORT, '127.0.0.1')
   server.listen(PORT, '127.0.0.1', () => {
     console.log(`Open http://127.0.0.1:${PORT}`)
