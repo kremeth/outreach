@@ -627,9 +627,13 @@ function hustleScreen() {
 
   const scoreKey = (drafted) => (drafted.comments || []).join('\n')
 
-  // The pick model's chance (whole percent, adding to 100) for each of the 5 comments shown.
+  // The pick model's chance (whole percent, adding to 100) for each of the 5 comments shown. Usually
+  // it came back with the comments; otherwise it is asked for.
   function scoresFor(drafted) {
     const key = scoreKey(drafted)
+    if (!scoreCache.has(key) && Array.isArray(drafted.scores) && drafted.scores.length === 5) {
+      scoreCache.set(key, { done: drafted.scores, promise: Promise.resolve({ percent: drafted.scores }) })
+    }
     if (!scoreCache.has(key)) {
       const entry = {}
       entry.promise = api('/api/comment-scores', {
@@ -671,7 +675,7 @@ function hustleScreen() {
         avoid: item.rejected,
         guidance: item.guidance,
       }, 60000)
-      item.drafted = { ...drafted, comments: result.comments }
+      item.drafted = { ...drafted, comments: result.comments, scores: result.scores || null }
       shown(item)
       draftCache.set(item.username, Promise.resolve(item.drafted))
     } catch (error) {
@@ -774,12 +778,14 @@ function hustleScreen() {
       wrap.append(option)
       return option
     })
-    // Each option shows a loading meter until the pick predictor answers, then its chance.
+    // Each option shows its chance right away when it came with the comments; otherwise a loading
+    // meter until the pick predictor answers.
+    const scoring = scoresFor(drafted)
     const cached = scoreCache.get(scoreKey(drafted))?.done
     if (cached) markChances(options, cached)
     else {
       for (const option of options) option.append(pendingChance())
-      scoresFor(drafted)
+      scoring
         .then((result) => {
           if (!wrap.isConnected) return
           if (result.percent) markChances(options, result.percent)

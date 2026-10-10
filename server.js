@@ -522,8 +522,16 @@ async function commentDrafts(username, avoid = [], guidance = '') {
     transcript: drafted.transcript,
     comments: drafted.comments,
   }
-  scoreFor({ comments: result.comments, description: result.description, caption: result.caption, transcript: result.transcript }).catch(() => {})
+  // The pick predictor's chances come back with the comments, so they show on load (it takes about
+  // 3 seconds; if it is ever slower, the page gets the comments now and the chances right after).
+  result.scores = await withTimeout(scoreFor({ comments: result.comments, description: result.description, caption: result.caption, transcript: result.transcript }), 10000)
+    .then((scored) => scored?.percent || null)
+    .catch(() => null)
   return result
+}
+
+function withTimeout(promise, ms) {
+  return Promise.race([promise, new Promise((resolve) => setTimeout(() => resolve(null), ms))])
 }
 
 async function postComment({ permalink, message, username, pk, code, kind }) {
@@ -865,8 +873,8 @@ const server = http.createServer(async (req, res) => {
           avoid: (Array.isArray(body.avoid) ? body.avoid : []).map((text) => clip(text, 300)).slice(-20),
           guidance: clip(body.guidance, 200).replace(/\s+/g, ' ').trim(),
         })
-        scoreFor({ comments: result.comments, description: body.description, caption: body.caption, transcript: body.transcript }).catch(() => {})
-        sendJson(res, 200, result)
+        const scored = await withTimeout(scoreFor({ comments: result.comments, description: body.description, caption: body.caption, transcript: body.transcript }), 10000).catch(() => null)
+        sendJson(res, 200, { ...result, scores: scored?.percent || null })
       } catch (error) {
         sendJson(res, 502, { error: error.message || 'Could not rewrite the comments.' })
       }
