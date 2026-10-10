@@ -1380,7 +1380,8 @@ a.person.current {
 .comment-option.likely { border-color: var(--fill); box-shadow: inset 0 0 0 1px var(--fill); }
 .comment-option.likely .option-chance-value { color: var(--ink); font-weight: 700; }
 
-/* API costs card: today first, week and month second, then 28 days of spend */
+/* API costs card: today first, week and month second, then 28 days of spend.
+   Fixed sizes everywhere, so the card holds its space while it loads and never shifts the page. */
 .usage {
   display: grid;
   gap: 14px;
@@ -1389,43 +1390,41 @@ a.person.current {
   border: 1px solid var(--line);
   border-radius: 16px;
   background: var(--surface);
+  min-height: 268px;
 }
 .usage-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px 24px; }
 .usage-primary { display: grid; gap: 2px; }
 .usage-label { font-size: 12px; font-weight: 600; letter-spacing: 0.02em; color: var(--muted); }
-.usage-today { font-size: 34px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.1; color: var(--ink); font-variant-numeric: tabular-nums; }
+.usage-today { display: block; min-width: 110px; height: 38px; font-size: 34px; font-weight: 700; letter-spacing: -0.02em; line-height: 38px; color: var(--ink); font-variant-numeric: tabular-nums; }
 .usage-side { display: flex; align-items: center; gap: 20px; }
 .usage-divider { width: 1px; align-self: stretch; background: var(--line); }
-.usage-stat { display: grid; gap: 2px; text-align: right; }
+.usage-stat { display: grid; gap: 2px; justify-items: end; }
 .usage-stat-label { font-size: 12px; color: var(--muted); }
-.usage-stat-value { font-size: 17px; font-weight: 600; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.usage-stat-value { display: block; min-width: 64px; height: 22px; font-size: 17px; line-height: 22px; text-align: right; font-weight: 600; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.usage-value { transition: opacity 0.4s ease; }
 
-.usage-charts { position: relative; display: grid; gap: 12px; }
-.usage-chart { position: relative; display: grid; gap: 6px; }
-.usage-chart-title { font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
-.usage-plot { position: relative; height: 84px; margin-right: 52px; }
-.usage-chart.count .usage-plot { height: 56px; }
-.usage-chart.count .usage-bar { background: #8d9aa6; }
-.usage-chart.count .usage-col.today .usage-bar { background: #4f5c68; }
+.usage-chart { position: relative; }
+.usage-plot { position: relative; height: 120px; margin-right: 52px; }
 .usage-grid { position: absolute; left: 0; right: -52px; border-top: 1px solid var(--line); }
-.usage-grid-label { position: absolute; right: 0; top: -8px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; background: var(--surface); padding-left: 6px; }
+.usage-grid-label { position: absolute; right: 0; top: -8px; min-width: 40px; text-align: right; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; background: var(--surface); padding-left: 6px; transition: opacity 0.4s ease; }
 .usage-bars { position: absolute; inset: 0; display: flex; align-items: flex-end; gap: 2px; }
-.usage-col { position: relative; flex: 1; height: 100%; display: flex; align-items: flex-end; cursor: default; outline: none; border-radius: 4px; }
+.usage-col { position: relative; flex: 1; height: 100%; display: flex; align-items: flex-end; outline: none; border-radius: 4px; }
 .usage-col:hover, .usage-col.hover, .usage-col:focus-visible { background: var(--surface-hover); }
 .usage-col:focus-visible { box-shadow: 0 0 0 2px var(--line-focus); }
-.usage-bar { width: 100%; border-radius: 4px 4px 0 0; background: #6f9632; }
-.usage-col.today .usage-bar { background: #3d6e00; }
-.usage-col.untracked .usage-bar {
-  border-radius: 4px;
-  background: repeating-linear-gradient(135deg, transparent 0 3px, var(--sunken) 3px 6px);
+.usage-bar {
+  width: 100%;
+  border-radius: 4px 4px 0 0;
+  background: #6f9632;
+  transition: height 0.7s cubic-bezier(0.22, 1, 0.36, 1), background-color 0.4s ease;
 }
-.usage-axis { display: flex; gap: 2px; margin: -4px 52px 0 0; font-size: 11px; color: var(--muted); }
+.usage-col.today .usage-bar { background: #3d6e00; }
+.usage-axis { display: flex; gap: 2px; margin: 6px 52px 0 0; height: 14px; font-size: 11px; color: var(--muted); }
 .usage-axis span { flex: 1; white-space: nowrap; overflow: visible; }
 .usage-axis span:last-child { text-align: right; }
 .usage-tip {
   position: absolute;
   top: 0;
-  min-width: 180px;
+  min-width: 190px;
   padding: 8px 10px;
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -1436,12 +1435,27 @@ a.person.current {
 }
 .usage-tip-date { font-size: 12px; color: var(--muted); }
 .usage-tip-value { font-size: 16px; font-weight: 650; color: var(--ink); font-variant-numeric: tabular-nums; }
-.usage-tip-meta { margin-top: 2px; font-size: 12px; color: var(--muted); max-width: 220px; }
-.usage-note { margin: 0; font-size: 12px; color: var(--muted); }
+.usage-tip-meta { margin-top: 2px; font-size: 12px; color: var(--muted); max-width: 240px; }
+.usage-note { margin: 0; min-height: 16px; font-size: 12px; color: var(--muted); transition: opacity 0.4s ease; }
 .usage-live { display: inline-flex; align-items: center; gap: 5px; color: var(--accent-text); font-weight: 600; }
 .usage-live::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--fill); }
+
+/* Loading: same layout, shimmering placeholders instead of numbers and bars. */
+.usage.loading .usage-value,
+.usage.loading .usage-grid-label { color: transparent; border-radius: 6px; background: linear-gradient(90deg, var(--sunken) 0%, var(--shimmer) 50%, var(--sunken) 100%); background-size: 200% 100%; animation: usage-shimmer 1.4s ease-in-out infinite; }
+.usage.loading .usage-today { width: 120px; }
+.usage.loading .usage-stat-value { width: 64px; }
+.usage.loading .usage-grid-label { width: 40px; height: 12px; }
+.usage.loading .usage-bar { background: linear-gradient(180deg, var(--shimmer), var(--sunken)); }
+.usage.loading .usage-note { opacity: 0; }
+.usage.loading .usage-col { pointer-events: none; }
+@keyframes usage-shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .usage-bar, .usage-value, .usage-note { transition: none; }
+  .usage.loading .usage-value, .usage.loading .usage-grid-label { animation: none; }
+}
 @media (max-width: 560px) {
   .usage-head { grid-template-columns: 1fr; }
   .usage-side { justify-content: flex-start; }
-  .usage-stat { text-align: left; }
+  .usage-stat { justify-items: start; }
 }

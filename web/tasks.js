@@ -444,10 +444,15 @@ function pollSync() {
 }
 
 // ---------- API costs card ----------
+// Built once, at its final size, the moment the page loads (with shimmering placeholders), then
+// filled in place: values fade in, bars grow from the bottom, and later updates glide to the new
+// heights. Nothing is ever re-created, so the page never jumps.
 
 const usageEl = document.getElementById('usage')
-let usageTimer = null
 const usd = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 })
+const requestCount = new Intl.NumberFormat('en-US')
+const USAGE_DAYS = 28
+let usageTimer = null
 
 function money(value) {
   if (!Number.isFinite(value)) return '—'
@@ -455,21 +460,15 @@ function money(value) {
   return usd.format(value)
 }
 
-function usageStat(label, value) {
-  const stat = el('div', 'usage-stat')
-  stat.append(el('span', 'usage-stat-label', label), el('span', 'usage-stat-value', money(value)))
-  return stat
-}
-
-let usageHover = -1
-
 function niceMax(value) {
   if (value <= 0) return 0.1
-  const steps = [0.01, 0.02, 0.05, 0.1, 0.2, 0.25, 0.5, 1, 2, 2.5, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000]
-  return steps.find((step) => step * 2 >= value) * 2 || Math.ceil(value)
+  const magnitude = 10 ** Math.floor(Math.log10(value))
+  return [1, 2, 2.5, 5, 10].map((step) => step * magnitude).find((step) => step >= value)
 }
 
-const compact = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 })
+function localDayString(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
 
 function dayLabel(day, style = 'short') {
   const date = new Date(`${day}T00:00:00`)
@@ -478,130 +477,132 @@ function dayLabel(day, style = 'short') {
     : date.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })
 }
 
-// A 28-day bar chart, one bar per day (today darkest). hover is shared between charts, so pointing at
-// a day highlights it in every chart and one tooltip shows all its numbers.
-function barChart({ title, days, valueOf, format, kind, hover }) {
-  const values = days.map(valueOf)
-  const top = kind === 'money' ? niceMax(Math.max(0, ...values.filter(Number.isFinite))) : niceCount(Math.max(0, ...values.filter(Number.isFinite)))
-  const chart = el('div', `usage-chart ${kind}`)
-  chart.append(el('div', 'usage-chart-title', title))
-  const plot = el('div', 'usage-plot')
-  for (const fraction of [1, 0.5, 0]) {
-    const line = el('div', 'usage-grid')
-    line.style.bottom = `${fraction * 100}%`
-    line.append(el('span', 'usage-grid-label', format(top * fraction)))
-    plot.append(line)
-  }
-  const bars = el('div', 'usage-bars')
-  days.forEach((day, index) => {
-    const value = values[index]
-    const known = Number.isFinite(value)
-    const column = el('div', `usage-col${index === days.length - 1 ? ' today' : ''}${known ? '' : ' untracked'}`)
-    column.tabIndex = 0
-    column.dataset.index = String(index)
-    column.setAttribute('role', 'img')
-    column.setAttribute('aria-label', `${dayLabel(day.day, 'long')}: ${known ? format(value) : 'not tracked'}`)
-    const bar = el('div', 'usage-bar')
-    bar.style.height = known ? (value > 0 ? `max(3px, ${(value / top) * 100}%)` : '0') : '100%'
-    column.append(bar)
-    column.addEventListener('mouseenter', () => hover.show(index, column))
-    column.addEventListener('focus', () => hover.show(index, column))
-    column.addEventListener('mouseleave', hover.hide)
-    column.addEventListener('blur', hover.hide)
-    bars.append(column)
-  })
-  plot.append(bars)
-  chart.append(plot)
-  return chart
-}
-
-function niceCount(value) {
-  if (value <= 0) return 10
-  const magnitude = 10 ** Math.floor(Math.log10(value))
-  return [1, 2, 2.5, 5, 10].map((step) => step * magnitude).find((step) => step >= value)
-}
-
-const requestCount = new Intl.NumberFormat('en-US')
-
-function usageCharts(data) {
-  const days = data.days || []
-  const wrap = el('div', 'usage-charts')
-  const tip = el('div', 'usage-tip')
-  tip.hidden = true
-  const hover = {
-    show(index, column) {
-      usageHover = index
-      const day = days[index]
-      tip.replaceChildren(el('div', 'usage-tip-date', dayLabel(day.day, 'long')))
-      if (day.tracked) {
-        tip.append(el('div', 'usage-tip-value', money(day.usd)))
-        tip.append(el('div', 'usage-tip-meta', `${day.calls} call${day.calls === 1 ? '' : 's'} by Outreach · ${compact.format(day.input)} tokens in · ${compact.format(day.output)} out`))
-      } else {
-        tip.append(el('div', 'usage-tip-value', 'Cost not tracked'), el('div', 'usage-tip-meta', 'Before Outreach logged its calls; AI Studio has the cost.'))
-      }
-      if (day.requests != null) tip.append(el('div', 'usage-tip-meta', `${requestCount.format(day.requests)} API requests (Google)`))
-      tip.hidden = false
-      for (const other of wrap.querySelectorAll('.usage-col')) other.classList.toggle('hover', other.dataset.index === String(index))
-      const box = column.getBoundingClientRect()
-      const area = wrap.getBoundingClientRect()
-      const center = box.left - area.left + box.width / 2
-      tip.style.top = `${box.top - area.top}px`
-      if (center > area.width / 2) {
-        tip.style.left = ''
-        tip.style.right = `${area.width - center + box.width / 2 + 8}px`
-      } else {
-        tip.style.right = ''
-        tip.style.left = `${center + box.width / 2 + 8}px`
-      }
-    },
-    hide() {
-      usageHover = -1
-      tip.hidden = true
-      for (const other of wrap.querySelectorAll('.usage-col')) other.classList.remove('hover')
-    },
-  }
-  wrap.append(barChart({ title: 'Cost', days, valueOf: (day) => (day.tracked ? day.usd : NaN), format: money, kind: 'money', hover }))
-  if (days.some((day) => day.requests != null)) {
-    wrap.append(barChart({ title: 'Total API requests · from Google', days, valueOf: (day) => (day.requests == null ? NaN : day.requests), format: (value) => compact.format(value), kind: 'count', hover }))
-  }
-  const axis = el('div', 'usage-axis')
-  days.forEach((day, index) => axis.append(el('span', '', index === days.length - 1 ? 'Today' : index % 7 === 0 ? dayLabel(day.day) : '')))
-  wrap.append(axis, tip)
-  if (usageHover >= 0 && usageHover < days.length) {
-    requestAnimationFrame(() => {
-      const column = wrap.querySelector(`.usage-col[data-index="${usageHover}"]`)
-      if (column) hover.show(usageHover, column)
-    })
-  }
-  return wrap
-}
-
-function renderUsage(data) {
+const usageCard = (() => {
+  usageEl.classList.add('loading')
+  const value = (className) => el('span', `${className} usage-value`, '')
+  const today = value('usage-today')
+  const week = value('usage-stat-value')
+  const month = value('usage-stat-value')
   const head = el('div', 'usage-head')
   const primary = el('div', 'usage-primary')
-  primary.append(el('span', 'usage-label', 'API costs today'), el('span', 'usage-today', data ? money(data.today) : '—'))
-  const side = el('div', 'usage-side')
-  side.append(usageStat('This week', data?.week), el('span', 'usage-divider'), usageStat('This month', data?.month))
-  head.append(primary, side)
-  const parts = [head]
-  if (data?.days) parts.push(usageCharts(data))
-  if (data) {
-    const since = new Date(data.trackedSince)
-    const sinceText = Number.isNaN(since.getTime()) ? '' : ` · tracked since ${since.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}, ${since.toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' })}`
-    const note = el('p', 'usage-note')
-    note.append(el('span', 'usage-live', 'Live'), document.createTextNode(` Gemini · ${data.computers > 1 ? 'both Macs' : 'this Mac'}${sinceText}`))
-    parts.push(note)
+  primary.append(el('span', 'usage-label', 'API costs today'), today)
+  const stat = (label, node) => {
+    const box = el('div', 'usage-stat')
+    box.append(el('span', 'usage-stat-label', label), node)
+    return box
   }
-  usageEl.replaceChildren(...parts)
-}
+  const side = el('div', 'usage-side')
+  side.append(stat('This week', week), el('span', 'usage-divider'), stat('This month', month))
+  head.append(primary, side)
+
+  const chart = el('div', 'usage-chart')
+  const plot = el('div', 'usage-plot')
+  const gridLabels = [1, 0.5, 0].map((fraction) => {
+    const line = el('div', 'usage-grid')
+    line.style.bottom = `${fraction * 100}%`
+    const label = el('span', 'usage-grid-label', '')
+    line.append(label)
+    plot.append(line)
+    return { fraction, label }
+  })
+  const bars = el('div', 'usage-bars')
+  const tip = el('div', 'usage-tip')
+  tip.hidden = true
+  const columns = []
+  let days = []
+  let hovered = -1
+
+  const now = new Date()
+  const axis = el('div', 'usage-axis')
+  for (let index = 0; index < USAGE_DAYS; index++) {
+    const date = new Date(now)
+    date.setDate(now.getDate() - (USAGE_DAYS - 1 - index))
+    const column = el('div', `usage-col${index === USAGE_DAYS - 1 ? ' today' : ''}`)
+    column.tabIndex = 0
+    column.setAttribute('role', 'img')
+    const bar = el('div', 'usage-bar')
+    // Placeholder heights while loading, gently varied so the shimmer reads as a chart.
+    bar.style.height = `${12 + ((index * 37) % 23)}%`
+    bar.style.transitionDelay = `${index * 14}ms`
+    column.append(bar)
+    column.addEventListener('mouseenter', () => showTip(index))
+    column.addEventListener('focus', () => showTip(index))
+    column.addEventListener('mouseleave', hideTip)
+    column.addEventListener('blur', hideTip)
+    bars.append(column)
+    columns.push({ column, bar })
+    axis.append(el('span', '', index === USAGE_DAYS - 1 ? 'Today' : index % 7 === 0 ? dayLabel(localDayString(date)) : ''))
+  }
+  plot.append(bars)
+  chart.append(plot, axis, tip)
+  const note = el('p', 'usage-note', '')
+  usageEl.replaceChildren(head, chart, note)
+
+  function showTip(index) {
+    const day = days[index]
+    if (!day) return
+    hovered = index
+    tip.replaceChildren(el('div', 'usage-tip-date', dayLabel(day.day, 'long')), el('div', 'usage-tip-value', money(day.usd)))
+    const source = day.billed && day.tracked ? 'Google billing, plus the latest hours tracked live'
+      : day.billed ? 'From Google billing'
+      : day.tracked ? 'Tracked live by Outreach'
+      : billingConnected ? 'No spend' : 'Before Outreach tracked calls; appears once Google billing is connected'
+    tip.append(el('div', 'usage-tip-meta', source))
+    if (day.requests != null) tip.append(el('div', 'usage-tip-meta', `${requestCount.format(day.requests)} API requests`))
+    tip.hidden = false
+    for (const [other, { column }] of columns.entries()) column.classList.toggle('hover', other === index)
+    const box = columns[index].column.getBoundingClientRect()
+    const area = chart.getBoundingClientRect()
+    const center = box.left - area.left + box.width / 2
+    if (center > area.width / 2) {
+      tip.style.left = ''
+      tip.style.right = `${area.width - center + box.width / 2 + 8}px`
+    } else {
+      tip.style.right = ''
+      tip.style.left = `${center + box.width / 2 + 8}px`
+    }
+  }
+
+  function hideTip() {
+    hovered = -1
+    tip.hidden = true
+    for (const { column } of columns) column.classList.remove('hover')
+  }
+
+  let billingConnected = false
+
+  function update(data) {
+    days = (data.days || []).slice(-USAGE_DAYS)
+    billingConnected = Boolean(data.billing?.connected)
+    today.textContent = money(data.today)
+    week.textContent = money(data.week)
+    month.textContent = money(data.month)
+    const top = niceMax(Math.max(0, ...days.map((day) => day.usd)))
+    for (const { fraction, label } of gridLabels) label.textContent = money(top * fraction)
+    days.forEach((day, index) => {
+      const slot = columns[index]
+      if (!slot) return
+      slot.bar.style.height = day.usd > 0 ? `max(3px, ${(day.usd / top) * 100}%)` : '0%'
+      slot.column.setAttribute('aria-label', `${dayLabel(day.day, 'long')}: ${money(day.usd)}`)
+    })
+    const since = billingConnected ? 'from Google billing' : 'Google billing not connected yet, so days before tracking show only live-tracked spend'
+    note.replaceChildren(el('span', 'usage-live', 'Live'), document.createTextNode(` Gemini · ${data.computers > 1 ? 'both Macs' : 'this Mac'} · ${since}`))
+    if (usageEl.classList.contains('loading')) {
+      usageEl.classList.remove('loading')
+      // After the first fill, updates move without the stagger.
+      setTimeout(() => { for (const { bar } of columns) bar.style.transitionDelay = '0ms' }, 1200)
+    }
+    if (hovered >= 0) showTip(hovered)
+  }
+
+  return { update }
+})()
 
 async function pollUsage() {
   clearTimeout(usageTimer)
   try {
-    renderUsage(await api('/api/usage-cost', null, 20000))
-  } catch {
-    if (!usageEl.childElementCount) renderUsage(null)
-  }
+    usageCard.update(await api('/api/usage-cost', null, 30000))
+  } catch {}
   if (route === 'home') usageTimer = setTimeout(pollUsage, 15000)
 }
 
