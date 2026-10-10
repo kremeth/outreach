@@ -465,6 +465,77 @@ function emptyState(main, footer, title, text) {
   footer.append(actions)
 }
 
+// ---------- Pick predictor gauge ----------
+
+// Light green (unlikely) to deep green (likely), by each comment's share of the most likely one. The
+// light end still clears 2:1 against the white surface (checked with the dataviz palette validator).
+const LOW = [150, 182, 88]
+const HIGH = [61, 110, 0]
+function chanceColor(value, top) {
+  const t = top ? Math.min(1, value / top) : 0
+  const rgb = LOW.map((low, index) => Math.round(low + (HIGH[index] - low) * t))
+  return { background: `rgb(${rgb.join(',')})`, ink: t > 0.7 ? '#ffffff' : 'var(--ink)' }
+}
+
+function percentLabel(value) {
+  return `${Math.round(value * 100)}%`
+}
+
+// One bar, split into the 5 comments' chances (adding to 100), in comment order, with the most
+// likely one named above it and how good the model has been underneath.
+function pickGauge(percent, model) {
+  const top = Math.max(...percent)
+  const best = percent.indexOf(top)
+  const box = el('div', 'predict')
+  const head = el('div', 'predict-head')
+  head.append(el('span', 'predict-label', 'Most likely pick'), el('strong', 'predict-top', `#${best + 1}`), el('span', 'predict-top-value', `${top}%`))
+  box.append(head)
+  const bar = el('div', 'predict-bar')
+  bar.setAttribute('role', 'img')
+  bar.setAttribute('aria-label', `Chance of each comment being picked: ${percent.map((value, index) => `#${index + 1} ${value}%`).join(', ')}`)
+  percent.forEach((value, index) => {
+    if (!value) return
+    const color = chanceColor(value, top)
+    const segment = el('div', `predict-seg${index === best ? ' best' : ''}`)
+    segment.style.flex = `${value} 1 0`
+    segment.style.background = color.background
+    segment.style.color = color.ink
+    segment.title = `Comment ${index + 1}: ${value}% likely`
+    if (value >= 9) segment.append(el('span', 'predict-seg-key', `#${index + 1}`), el('span', 'predict-seg-value', String(value)))
+    else if (value >= 5) segment.append(el('span', 'predict-seg-value', String(value)))
+    bar.append(segment)
+  })
+  box.append(bar)
+  const scale = el('div', 'predict-scale')
+  scale.append(el('span', '', '0'), el('span', '', '100'))
+  box.append(scale)
+  box.append(el('p', 'predict-note', modelLine(model)))
+  return box
+}
+
+function modelLine(model) {
+  if (!model?.ready) return ''
+  const mine = model.cv?.byMachine?.[model.machine]
+  const right = mine?.rounds ? `${percentLabel(mine.correct / mine.rounds)} on your past picks` : percentLabel(model.cv.accuracy)
+  return `Right first guess ${right} (random guessing: 20%) · learned from ${model.rounds} rounds · retrains itself as you pick`
+}
+
+// Each option shows its own chance, the most likely one highlighted.
+function markChances(options, percent) {
+  const top = Math.max(...percent)
+  options.forEach((option, index) => {
+    const chance = el('span', 'option-chance')
+    const meter = el('span', 'option-meter')
+    const fill = el('i', '')
+    fill.style.width = `${percent[index]}%`
+    fill.style.background = chanceColor(percent[index], top).background
+    meter.append(fill)
+    chance.append(meter, el('span', 'option-chance-value', `${percent[index]}%`))
+    option.append(chance)
+    if (percent[index] === top) option.classList.add('likely')
+  })
+}
+
 // What the comments are based on: the whole reel (and what is said in it), every carousel slide, or the photo.
 function postRead(drafted) {
   const box = el('div', 'post-read')
@@ -512,6 +583,7 @@ function hustleScreen() {
   let picked = 0
   let lastPick = null
   const draftCache = new Map()
+  const scoreCache = new Map()
 
   // Training data: every round of 5 suggestions and what was done with it goes to the
   // "HUSTLING Training Data" tab. A round starts when its comments appear on screen.
@@ -533,6 +605,7 @@ function hustleScreen() {
         description: drafted.description || '',
         transcript: drafted.transcript || '',
         format: drafted.format || '',
+        predicted: scoreCache.get(scoreKey(drafted))?.done || null,
         round: item.round || 1,
         guidance: item.roundGuidance || '',
         comments: drafted.comments || [],
@@ -557,11 +630,37 @@ function hustleScreen() {
     return draftCache.get(item.username)
   }
 
-  // Drafting takes a few seconds, so the next three creators are always being prepared, photos included.
+  // Drafting takes a few seconds, so the next three creators are always being prepared, photos
+  // and pick predictions included.
   function prefetch() {
     for (const next of queue.slice(index + 1, index + 4)) {
-      draftsFor(next).then((drafted) => { new Image().src = mediaUrl(drafted.image) }).catch(() => {})
+      draftsFor(next).then((drafted) => {
+        new Image().src = mediaUrl(drafted.image)
+        scoresFor(drafted).catch(() => {})
+      }).catch(() => {})
     }
+  }
+
+  const scoreKey = (drafted) => (drafted.comments || []).join('\n')
+
+  // The pick model's chance (whole percent, adding to 100) for each of the 5 comments shown.
+  function scoresFor(drafted) {
+    const key = scoreKey(drafted)
+    if (!scoreCache.has(key)) {
+      const entry = {}
+      entry.promise = api('/api/comment-scores', {
+        comments: drafted.comments,
+        description: drafted.description || '',
+        caption: drafted.caption || '',
+        transcript: drafted.transcript || '',
+      }, 90000).then((result) => {
+        entry.done = result.percent
+        return result
+      })
+      entry.promise.catch(() => scoreCache.delete(key))
+      scoreCache.set(key, entry)
+    }
+    return scoreCache.get(key).promise
   }
 
   // Five fresh options for the same post: text only, reusing the description and transcript, so it is quick.
@@ -683,13 +782,28 @@ function hustleScreen() {
   function commentPicker(item, drafted) {
     const wrap = el('div', 'picker')
     wrap.append(postRead(drafted))
+    const gauge = el('div', 'predict loading')
+    gauge.append(el('div', 'predict-head', 'Predicting your pick…'), el('div', 'predict-bar'))
+    wrap.append(gauge)
     wrap.append(el('div', 'section-label', 'Pick one · Launch posts it later, with a like'))
-    drafted.comments.forEach((text, position) => {
+    const options = drafted.comments.map((text, position) => {
       const option = button('', 'comment-option', () => choose(item, drafted, text, option))
-      option.append(el('span', 'option-key', String(position + 1)), el('span', '', text))
+      option.append(el('span', 'option-key', String(position + 1)), el('span', 'option-text', text))
       option.dataset.text = text
       wrap.append(option)
+      return option
     })
+    scoresFor(drafted)
+      .then((result) => {
+        if (!gauge.isConnected) return
+        if (!result.percent) {
+          gauge.replaceWith(el('p', 'predict-note', result.model?.ready ? 'No prediction for these.' : 'The pick predictor is still learning (it needs more picks).'))
+          return
+        }
+        gauge.replaceWith(pickGauge(result.percent, result.model))
+        markChances(options, result.percent)
+      })
+      .catch(() => gauge.isConnected && gauge.replaceWith(el('p', 'predict-note', 'The pick predictor did not answer for these.')))
     const own = el('form', 'own-comment')
     const input = document.createElement('input')
     input.type = 'text'

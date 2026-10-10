@@ -16,6 +16,7 @@ const autopilot = require('./lib/autopilot')
 const training = require('./lib/training-log')
 const migrations = require('./lib/row-migrations')
 const replyCheck = require('./lib/reply-check')
+const pickModel = require('./lib/pick-model')
 
 const ROOT = __dirname
 const WEB = path.join(ROOT, 'web')
@@ -840,6 +841,37 @@ const server = http.createServer(async (req, res) => {
       }
       return
     }
+    // How likely this computer's person is to pick each of the 5 (whole percent, adding to 100).
+    if (req.method === 'POST' && url.pathname === '/api/comment-scores') {
+      const body = await readBody(req)
+      const clip = (value, max) => String(value || '').slice(0, max)
+      try {
+        const comments = (Array.isArray(body.comments) ? body.comments : []).map((text) => clip(text, 300))
+        const scored = await pickModel.score({
+          comments,
+          description: clip(body.description, 1500),
+          caption: clip(body.caption, 1500),
+          transcript: clip(body.transcript, 3000),
+          machine: log.MACHINE,
+        })
+        sendJson(res, 200, { percent: scored?.percent || null, model: { ...pickModel.summary(), machine: log.MACHINE } })
+      } catch (error) {
+        sendJson(res, 502, { error: error.message || 'Could not score the comments.' })
+      }
+      return
+    }
+    if (req.method === 'GET' && url.pathname === '/api/pick-model') {
+      sendJson(res, 200, { ...pickModel.summary(), machine: log.MACHINE })
+      return
+    }
+    if (req.method === 'POST' && url.pathname === '/api/pick-model/retrain') {
+      try {
+        sendJson(res, 200, await pickModel.retrain('manual'))
+      } catch (error) {
+        sendJson(res, 502, { error: error.message || 'Could not retrain.' })
+      }
+      return
+    }
     if (req.method === 'POST' && url.pathname === '/api/comment') {
       const body = await readBody(req)
       try {
@@ -1090,6 +1122,7 @@ async function boot() {
   }
   writer.start()
   autopilot.resume()
+  pickModel.startAutoRetrain()
   mediaServer.listen(MEDIA_PORT, '127.0.0.1')
   server.listen(PORT, '127.0.0.1', () => {
     console.log(`Open http://127.0.0.1:${PORT}`)
