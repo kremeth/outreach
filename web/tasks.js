@@ -185,7 +185,7 @@ function renderSafety() {
   if (guard.blocked) {
     safetyEl.classList.add('stopped')
     safetyEl.append(el('strong', '', `Instagram actions stopped until ${untilLabel(guard.blocked.until)}`))
-    safetyEl.append(el('span', '', `Instagram showed a warning${guard.blocked.machine ? ` on ${guard.blocked.machine}` : ''}: ${guard.blocked.reason}. Every computer has stopped commenting, DMs and voicenotes so the account can recover.`))
+    safetyEl.append(el('span', '', `Instagram showed a warning${guard.blocked.machine ? ` on ${guard.blocked.machine}` : ''}: ${guard.blocked.reason}. Every computer has stopped all Instagram actions so the account can recover.`))
     return
   }
   if (!guard.loggedIn) {
@@ -194,7 +194,7 @@ function renderSafety() {
     return
   }
   const kinds = guard.kinds
-  safetyEl.append(el('span', '', `Instagram today · ${kinds.comment.today} / ${kinds.comment.limit} comments · ${kinds.dm.today} / ${kinds.dm.limit} DMs · ${kinds.voice.today} / ${kinds.voice.limit} voicenotes`))
+  safetyEl.append(el('span', '', `Instagram today · ${kinds.comment.today} / ${kinds.comment.limit} comments · ${kinds.dm.today} / ${kinds.dm.limit} DMs · ${kinds.voice.today} / ${kinds.voice.limit} voicenotes${kinds.unfollow ? ` · ${kinds.unfollow.today} / ${kinds.unfollow.limit} unfollows` : ''}`))
 }
 
 function renderSync() {
@@ -232,7 +232,7 @@ function renderHomeWarn() {
 
 let launchData = null
 let launchTimer = null
-const launchTasks = { voice: true, comment: true, relaunch1: true, relaunch2: true }
+const launchTasks = { voice: true, comment: true, relaunch1: true, relaunch2: true, unfollow: true }
 
 function timeLabel(ms) {
   return new Date(ms).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' })
@@ -260,11 +260,21 @@ function launchPlan(data) {
     voice: launchTasks.voice ? Math.min(counts.voice, left ? left.voice : counts.voice) : 0,
     comment: launchTasks.comment ? Math.min(counts.comment, left ? left.comment : counts.comment) : 0,
     dm: Math.min(first + second, left ? left.dm : first + second),
+    unfollow: launchTasks.unfollow ? Math.min(counts.unfollow || 0, left ? left.unfollow : 20) : 0,
   }
-  const total = today.voice + today.comment + today.dm
+  const total = today.voice + today.comment + today.dm + today.unfollow
   const startAt = Math.max(now, windowStart)
   const minutes = total ? Math.round((windowEnd - startAt) / total / 60000) : 0
   return { today, dmWanted, total, startAt, windowEnd, minutes, later: startAt > now + 60000 }
+}
+
+function unfollowNote(counts) {
+  const declined = counts.unfollowDeclined || 0
+  const quiet = (counts.unfollow || 0) - declined
+  const parts = []
+  if (quiet) parts.push(`${number(quiet)} no reply 3 days after the 2nd relaunch`)
+  if (declined) parts.push(`${number(declined)} said no`)
+  return parts.length ? `${parts.join(', ')} · the chat is checked first` : 'no reply 3 days after the 2nd relaunch, or said no'
 }
 
 function launchCheckbox(key, label, count, extra) {
@@ -292,7 +302,7 @@ function renderLaunch() {
     const head = el('div', 'launch-head')
     head.append(el('span', 'launch-pill', 'Running'), el('strong', '', data.current || waitingLabel(data)))
     card.append(head)
-    card.append(el('p', 'launch-line', `Sent so far: ${data.sent.voice} voicenotes · ${data.sent.comment} comments · ${data.sent.dm} relaunches. Runs until ${data.window.endHour}:00, then continues tomorrow.`))
+    card.append(el('p', 'launch-line', `Sent so far: ${data.sent.voice} voicenotes · ${data.sent.comment} comments · ${data.sent.dm} relaunches · ${data.sent.unfollow || 0} unfollows. Runs until ${data.window.endHour}:00, then continues tomorrow.`))
     const stop = button('Stop', 'ghost small', async () => {
       stop.disabled = true
       launchData = { ...launchData, ...(await api('/api/autopilot/stop', {}).catch(() => ({}))) }
@@ -312,12 +322,14 @@ function renderLaunch() {
       launchCheckbox('comment', 'picked comments, each with a like', counts.comment, counts.comment ? '' : 'pick them in Hustling'),
       launchCheckbox('relaunch1', 'relaunches', counts.relaunch1),
       launchCheckbox('relaunch2', '2nd relaunches', counts.relaunch2),
+      launchCheckbox('unfollow', 'unfollows', counts.unfollow || 0, unfollowNote(counts)),
     )
     card.append(list)
     let summary = 'Nothing to send right now.'
     if (plan.total) {
       const when = plan.later ? `from ${timeLabel(plan.startAt)}` : 'from now'
-      summary = `Today: ${plan.today.voice} voicenotes, ${plan.today.comment} comments, ${plan.today.dm} relaunch DMs, spread ${when} until ${timeLabel(plan.windowEnd)}, about one every ${plan.minutes} min.`
+      summary = `Today: ${plan.today.voice} voicenotes, ${plan.today.comment} comments, ${plan.today.dm} relaunch DMs, ${plan.today.unfollow} unfollows, spread ${when} until ${timeLabel(plan.windowEnd)}, about one every ${plan.minutes} min.`
+      if ((counts.unfollow || 0) > plan.today.unfollow && launchTasks.unfollow) summary += ` Unfollows go out at most 20 a day; the other ${number(counts.unfollow - plan.today.unfollow)} follow on the next days.`
       if (plan.dmWanted > plan.today.dm) summary += ` Relaunches go out at 20 first and 10 second relaunches a day, so the other ${number(plan.dmWanted - plan.today.dm)} follow on the next days.`
     }
     card.append(el('p', 'launch-line', summary))

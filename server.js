@@ -15,6 +15,7 @@ const log = require('./lib/shared-log')
 const autopilot = require('./lib/autopilot')
 const training = require('./lib/training-log')
 const migrations = require('./lib/row-migrations')
+const replyCheck = require('./lib/reply-check')
 
 const ROOT = __dirname
 const WEB = path.join(ROOT, 'web')
@@ -593,6 +594,24 @@ async function sendRelaunch(stage, sheetRow, message) {
   } catch (error) {
     if (error.kind === 'replied' || error.kind === 'mismatch') {
       await relaunch.leaveOut(stage, row.sheetRow).catch((logError) => console.error(logError))
+      // They wrote back: read what they said. A clear no is marked No and unfollowed on a later
+      // Launch step; anything else (or no verdict) is marked Replied as before.
+      if (error.kind === 'replied') {
+        const verdict = await replyCheck.classify(error.thread).catch((checkError) => {
+          console.error('reply check', checkError.message)
+          return null
+        })
+        if (verdict?.verdict === 'no') {
+          await relaunch.queueUnfollow(row.sheetRow, verdict.reason).catch((logError) => console.error(logError))
+          try {
+            await relaunch.markClosed(row, 'No', verdict.reason)
+            return { ok: false, replied: true, error: `@${username} said no (${verdict.reason}). Marked No in the sheet; Launch will unfollow them.` }
+          } catch (writeError) {
+            console.error(writeError)
+            return { ok: false, replied: true, error: `@${username} said no, so no relaunch was sent and Launch will unfollow them, but the sheet could not be updated: ${writeError.message}` }
+          }
+        }
+      }
       // Only a chat with a message from them is marked Replied; any other mismatch just leaves them out.
       if (error.kind === 'replied') {
         try {
@@ -627,6 +646,85 @@ async function sendRelaunch(stage, sheetRow, message) {
   }
 }
 
+// Closing a creator out: unfollow after no reply to the 2nd relaunch (checking the chat first), or
+// after they said no. Held with a claim and re-checked against the live sheet, like relaunches.
+async function closeOut(sheetRow, mode) {
+  const row = yesRows.find((item) => item.sheetRow === Number(sheetRow))
+  if (!row) throw new Error('This creator is no longer in the sheet.')
+  const username = data.usernameFrom(row.link)
+  const claimed = await log.claim(`close:${row.sheetRow}`, CREATOR_CLAIM_MS)
+  if (!claimed.ok) return { ok: false, taken: true, error: `${claimed.by} is working on @${username}. Nothing was done.` }
+  const [liveLink, liveAccepted] = (await writer.getValues([`${outreachColumns.link}${row.sheetRow}`, `${outreachColumns.accepted}${row.sheetRow}`]))
+    .map((values) => String(values?.[0]?.[0] || '').trim())
+  if (!sameLink(liveLink, row.link)) return { ok: false, taken: true, error: `Row ${row.sheetRow} no longer holds @${username} in the sheet. Nothing was done.` }
+  if (mode === 'no-reply' && liveAccepted.toLowerCase() !== relaunch.STAGES[2].to.toLowerCase()) {
+    row.accepted = liveAccepted
+    return { ok: false, taken: true, error: `@${username} is now "${liveAccepted || 'blank'}" in the sheet, so they were not unfollowed.` }
+  }
+  // A no that someone has since changed by hand (they came back, it was a misread...) is left alone.
+  if (mode === 'declined' && liveAccepted.toLowerCase() !== 'no') {
+    await relaunch.closeWithoutUnfollow(row.sheetRow, `sheet says ${liveAccepted || 'blank'}, not No`)
+    return { ok: false, error: `@${username} is "${liveAccepted || 'blank'}" in the sheet, not No, so they were not unfollowed.` }
+  }
+  let result
+  try {
+    result = await instagram.unfollow({ username, sheetRow: row.sheetRow, checkChat: mode === 'no-reply' })
+  } catch (error) {
+    if (error.kind === 'missing') {
+      await relaunch.closeWithoutUnfollow(row.sheetRow, 'account no longer exists').catch((logError) => console.error(logError))
+      await relaunch.markUnreachable(row, 3, error.message).catch((writeError) => console.error(writeError))
+      return { ok: false, error: `@${username}'s Instagram account no longer exists. Marked NA in the sheet.` }
+    }
+    if (error.kind === 'mismatch') {
+      await relaunch.closeWithoutUnfollow(row.sheetRow, error.message).catch((logError) => console.error(logError))
+      return { ok: false, error: `@${username}: ${error.message} Left out of unfollows.` }
+    }
+    throw error
+  }
+  const sheetWrite = async (value, reason) => {
+    try {
+      await relaunch.markClosed(row, value, reason)
+      return ''
+    } catch (writeError) {
+      console.error(writeError)
+      return ` The sheet could not be updated: ${writeError.message}`
+    }
+  }
+  if (result.replied) {
+    // Without a verdict nothing changes; Launch tries again later (and gives up after 2 tries).
+    const verdict = await replyCheck.classify(result.thread).catch((error) => {
+      throw Object.assign(new Error(`Could not judge @${username}'s reply: ${error.message}`), { kind: 'notsent' })
+    })
+    if (verdict.verdict === 'no') {
+      await relaunch.queueUnfollow(row.sheetRow, verdict.reason)
+      const note = await sheetWrite('No', verdict.reason)
+      return { ok: false, declined: true, error: `@${username} said no (${verdict.reason}). Marked No; unfollowing them next.${note}` }
+    }
+    await relaunch.closeWithoutUnfollow(row.sheetRow, `replied: ${verdict.reason}`)
+    try {
+      await relaunch.markReplied(row, 3, verdict.reason)
+    } catch (writeError) {
+      console.error(writeError)
+    }
+    return { ok: false, replied: true, error: `@${username} replied and it's still going (${verdict.reason}). Marked Replied, not unfollowed.` }
+  }
+  const value = mode === 'declined' ? 'No' : 'unfollowed'
+  const reason = mode === 'declined' ? 'said no' : 'no reply 3 days after the 2nd relaunch'
+  if (result.notFollowing) {
+    await relaunch.closeWithoutUnfollow(row.sheetRow, 'was not following them')
+    const note = String(liveAccepted).toLowerCase() === value.toLowerCase() ? '' : await sheetWrite(value, `${reason} (was not following)`)
+    return { ok: false, error: `@${username}: we were not following them, nothing to unfollow. Marked ${value}.${note}` }
+  }
+  const note = String(liveAccepted).toLowerCase() === value.toLowerCase() ? '' : await sheetWrite(value, reason)
+  return { ok: true, warning: note.trim() }
+}
+
+async function closeQueue() {
+  await refreshSheet(false).catch((error) => console.error(error))
+  await log.refresh(0).catch((error) => console.error(error))
+  return relaunch.closeDue(yesRows).filter((item) => !log.claimedByOther(`close:${item.sheetRow}`))
+}
+
 // Relaunch and 2nd relaunch work for Launch: freshest leads first across both steps, undated ones last,
 // skipping creators the other computer is working on.
 async function relaunchQueue(tasks) {
@@ -655,6 +753,8 @@ autopilot.init({
   postComment,
   sendRelaunch,
   relaunchQueue,
+  closeOut,
+  closeQueue,
   refreshSheet: () => refreshSheet(true).catch((error) => console.error(error)),
   sheetReady: () => Boolean(sheetRefreshedAt),
   voiceCount: () => voiceQueue().length,

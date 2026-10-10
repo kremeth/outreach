@@ -413,7 +413,7 @@ const THREAD = String.raw`(() => {
       return {
         ours: box.left + box.width / 2 > area.left + area.width / 2,
         voice: Boolean(bubble.querySelector(voiceMark)) || /view transcription/i.test(bubble.innerText || ''),
-        text: (bubble.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 120),
+        text: (bubble.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 600),
         top: Math.round(box.top),
       }
     })
@@ -493,8 +493,12 @@ async function dmSteps(wc, { username, message, expect }, progress) {
   if (expect) {
     const messages = await readThread(wc)
     const verdict = threadAllows(messages, expect, message)
-    // 'replied' only when they actually wrote something; any other mismatch is 'mismatch'.
-    if (!verdict.ok) throw fail(verdict.reason, messages.some((item) => !item.ours) ? 'replied' : 'mismatch')
+    // 'replied' only when they actually wrote something (the chat goes along, so their reply can be
+    // read); any other mismatch is 'mismatch'.
+    if (!verdict.ok) {
+      const replied = messages.some((item) => !item.ours)
+      throw Object.assign(fail(verdict.reason, replied ? 'replied' : 'mismatch'), replied ? { thread: messages } : {})
+    }
   }
 
   await click(wc, state)
@@ -526,4 +530,82 @@ async function dmSteps(wc, { username, message, expect }, progress) {
   return { ok: true }
 }
 
-module.exports = { openUrl, run, click, key, sleep, aborted, comment, dm, pageProblem, readThread, threadAllows, lastVoiceWaveform }
+// Opens the chat and reads it, without touching anything. The chat has to show at least one message.
+async function openThread(wc, username) {
+  await openUrl(wc, `https://ig.me/m/${encodeURIComponent(username)}`)
+  const state = await waitFor(async () => {
+    const value = await run(wc, DM_STATE).catch(() => ({ waiting: true }))
+    return { ...value, done: Boolean(value.problem) || !value.waiting }
+  }, 20000, 500)
+  if (state?.problem === 'missing') throw fail('This Instagram account no longer exists.', 'missing')
+  if (state?.problem && state.problem !== 'unreachable') throw problemError(state)
+  const messages = await readThread(wc)
+  if (!messages.length) throw fail('Could not read the chat, so nothing was done.', 'mismatch')
+  return messages
+}
+
+const UNFOLLOW_START = 'window.__unfollowStart()'
+
+async function followState(wc) {
+  return waitFor(async () => {
+    const value = await run(wc, UNFOLLOW_START).catch(() => ({}))
+    const page = await pageProblem(wc)
+    return { ...value, problem: page.problem, warning: page.warning, done: Boolean(page.problem) || Boolean(value.ok) }
+  }, 15000, 500)
+}
+
+// Unfollows from the profile page: Following → Unfollow (→ confirm), then checks the button says
+// Follow, and reloads the profile to be sure Instagram kept it.
+async function unfollowSteps(wc, { username }, progress) {
+  await openUrl(wc, `https://www.instagram.com/${encodeURIComponent(username)}/`)
+  const start = await followState(wc)
+  if (start?.problem === 'missing') throw fail('This Instagram account no longer exists.', 'missing')
+  if (start?.problem) throw problemError(start)
+  if (start?.notFollowing) return { ok: true, unfollowed: false, notFollowing: true }
+  if (!start?.click) throw fail(start?.error || 'The profile did not load.')
+  await click(wc, start)
+  const choice = await waitFor(async () => {
+    const value = await run(wc, 'window.__unfollowChoice()').catch(() => ({}))
+    return { ...value, done: Boolean(value.ok) }
+  }, 6000, 300)
+  if (!choice?.ok) {
+    await key(wc, 'Escape')
+    throw fail('The Following menu did not show an Unfollow option.')
+  }
+  progress.pressed = true
+  await click(wc, choice)
+  await sleep(1500)
+  // Private accounts and follow requests ask to confirm.
+  const confirm = await run(wc, 'window.__unfollowChoice()').catch(() => ({}))
+  if (confirm?.ok) {
+    await click(wc, confirm)
+    await sleep(1500)
+  }
+  const problem = problemError(await pageProblem(wc))
+  if (problem) throw problem
+  const after = await waitFor(async () => {
+    const value = await run(wc, UNFOLLOW_START).catch(() => ({}))
+    return { ...value, done: Boolean(value.notFollowing) }
+  }, 6000, 400)
+  if (!after?.notFollowing) throw fail('Tapped Unfollow, but the profile still shows Following. Check the Instagram panel.')
+  await sleep(2000)
+  await openUrl(wc, `https://www.instagram.com/${encodeURIComponent(username)}/`)
+  const kept = await followState(wc)
+  if (kept?.problem) throw problemError(kept) || fail('The profile did not reload.')
+  if (!kept?.notFollowing) throw fail('Instagram did not keep the unfollow: the profile shows Following again.')
+  return { ok: true, unfollowed: true }
+}
+
+// Closing a creator out. With checkChat, reads the chat first and stops (nothing touched) if they
+// ever wrote back, handing their messages over to be judged.
+function unfollow(wc, { username, checkChat }) {
+  return untilSent(async (progress) => {
+    if (checkChat) {
+      const messages = await openThread(wc, username)
+      if (messages.some((item) => !item.ours)) return { ok: true, replied: true, thread: messages }
+    }
+    return unfollowSteps(wc, { username }, progress)
+  })
+}
+
+module.exports = { openUrl, run, click, key, sleep, aborted, comment, dm, unfollow, pageProblem, readThread, threadAllows, lastVoiceWaveform }

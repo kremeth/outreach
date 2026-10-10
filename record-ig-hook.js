@@ -267,6 +267,28 @@
     return { ok: true, click: true, label: follow.label, ...pointOf(follow.el) }
   }
 
+  // Unfollow, step 1: the profile's Following (or Requested) button. notFollowing when it already says Follow.
+  window.__unfollowStart = () => {
+    const blocked = window.__igPageState()
+    if (blocked.kind !== 'ok') return { ok: false, ...blocked }
+    const items = headerButtons()
+    if (items.some((item) => /^follow( back)?$/i.test(item.label))) return { ok: true, notFollowing: true }
+    const following = items.find((item) => /^(following|requested)\b/i.test(item.label))
+    if (!following) return { ok: false, error: 'No Following button on this profile.', labels: items.map((item) => item.label).slice(0, 12) }
+    return { ok: true, click: true, label: following.label, ...pointOf(following.el) }
+  }
+
+  // Unfollow, step 2: the "Unfollow" choice in the menu or confirmation dialog that opened, newest dialog first.
+  window.__unfollowChoice = () => {
+    for (const dialog of [...document.querySelectorAll('[role="dialog"]')].reverse()) {
+      const target = [...dialog.querySelectorAll('button, [role="button"], div, span')]
+        .filter((el) => visible(el) && el.children.length < 4 && /^unfollow$/i.test((el.innerText || '').trim()))
+        .pop()
+      if (target) return { ok: true, ...pointOf(target.closest('button, [role="button"]') || target) }
+    }
+    return { ok: false }
+  }
+
   window.__canMessage = () => {
     const blocked = window.__igPageState()
     if (blocked.kind !== 'ok') return { ok: false, ...blocked }

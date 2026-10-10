@@ -346,6 +346,11 @@ function startControl() {
       if (url.pathname === '/dm') {
         return reply(200, await inPanel('dm', 'sending a DM', () => ({ target: body.username || '', detail: body.detail || 'dm' }), (wc) => ig.dm(wc, body)))
       }
+      if (url.pathname === '/unfollow') {
+        // Counted only once Unfollow was tapped; reading the chat or a profile we don't follow is not an action.
+        const describe = (result, failure) => (result?.unfollowed || failure ? { target: body.username || '', detail: `close:${body.sheetRow || ''}` } : null)
+        return reply(200, await inPanel('unfollow', 'unfollowing', describe, (wc) => ig.unfollow(wc, body)))
+      }
       if (url.pathname === '/voice/status') return reply(200, voice.getStatus())
       if (url.pathname === '/voice/next') {
         const describe = (result, failure) => {
@@ -357,7 +362,7 @@ function startControl() {
       reply(404, { error: 'Not found' })
     } catch (error) {
       console.error(error)
-      reply(502, { error: error.message || 'Instagram action failed.', kind: error.kind || 'error', waitMs: error.waitMs || 0 })
+      reply(502, { error: error.message || 'Instagram action failed.', kind: error.kind || 'error', waitMs: error.waitMs || 0, thread: error.thread || undefined })
     }
   })
   control.listen(CONTROL_PORT, '127.0.0.1')

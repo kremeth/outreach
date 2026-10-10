@@ -1,6 +1,6 @@
 # Outreach
 
-Our influencer outreach app: prospecting (Yes / No), Hustling (pick comments), and Launch, which sends voicenotes, posts the picked comments with a like, and sends relaunches in the background, spread over the day within Instagram-safe limits.
+Our influencer outreach app: prospecting (Yes / No), Hustling (pick comments), and Launch, which sends voicenotes, posts the picked comments with a like, sends relaunches, and unfollows creators who never replied or said no, in the background, spread over the day within Instagram-safe limits.
 
 It runs on the shared Google Sheet, so both of us can use it at the same time on our own computers without overwriting each other.
 
@@ -29,6 +29,8 @@ Optional: put a short name for your computer in `data/machine-name.txt` (e.g. `R
 2. **Hustling:** pick a comment for each new post (1–5 keys, R for 5 new ones). Picks are saved for Launch.
    Every round of 5 suggestions and what you did with it (picked, own comment, rewrote and how, skipped, later, undo) is saved to the **HUSTLING Training Data** tab, to train a model later.
 3. **Launch** on the To do page. It runs from 8:00 to 21:00 and carries anything left over to the next morning. Outreach just has to be open; it can sit on another desktop or behind other windows, and it keeps the Mac awake while it runs. Launch stays on until you press Stop: if Outreach, its server or the Mac restarts, it picks up again by itself.
+
+   Before each relaunch the chat is read. If they wrote back, Gemini judges the reply: a clear no is marked **No** and they are unfollowed; anything still going is marked **Replied**. Three days after the 2nd relaunch, the chat is checked again: no reply means unfollow and **unfollowed** in the sheet (at most 20 unfollows a day).
 
 ## Working together
 
