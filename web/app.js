@@ -610,6 +610,63 @@ function send(item, choice, device) {
     })
 }
 
+// ---------- The wearable model prospecting alongside ----------
+// After each answer, what the model would have chosen for that profile (it never shows before you
+// decide, so your answers stay your own). Every answer is logged next to the model's on the server.
+const modelCard = document.createElement('div')
+modelCard.className = 'model-verdict'
+modelCard.hidden = true
+document.getElementById('view-prospect').append(modelCard)
+let modelTimer = null
+
+function modelLine(prediction) {
+  if (prediction.decision === 'Yes') {
+    const brands = prediction.brands.length ? prediction.brands : prediction.possibleBrands
+    return `Yes${brands.length ? ` · ${brands.join(', ')}` : ' · device not identified'}`
+  }
+  if (prediction.decision === 'No') return 'No'
+  return prediction.profileStatus && prediction.profileStatus !== 'ok' ? `Unknown (profile ${prediction.profileStatus})` : 'Unsure (no wrists or hands visible)'
+}
+
+async function revealModel(item, choice, device) {
+  if (!item.username) return
+  let prediction
+  try {
+    prediction = await api(`/api/model-prediction?username=${encodeURIComponent(item.username)}`, null, 8000)
+  } catch {
+    return
+  }
+  if (prediction.status === 'none') return
+  clearTimeout(modelTimer)
+  modelCard.replaceChildren()
+  const head = el('div', 'model-verdict-head')
+  head.append(el('span', 'model-verdict-label', `Model on @${item.username}`))
+  if (prediction.status === 'pending') {
+    head.append(el('span', 'model-verdict-badge pending', 'Still checking'))
+    modelCard.append(head, el('div', 'model-verdict-line', 'It has not looked at this profile yet.'))
+  } else {
+    const modelYes = prediction.decision === 'Yes'
+    const sure = prediction.decision !== 'Unknown'
+    const agree = sure && modelYes === (choice === 'yes')
+    const deviceMatch = !modelYes || choice !== 'yes' || prediction.brands.includes(device) || prediction.possibleBrands.includes(device)
+    const badge = !sure ? ['Unsure', 'pending'] : agree ? [deviceMatch ? 'Agrees' : 'Agrees · other device', deviceMatch ? 'agree' : 'partial'] : ['Disagrees', 'disagree']
+    head.append(el('span', `model-verdict-badge ${badge[1]}`, badge[0]))
+    modelCard.append(head, el('div', 'model-verdict-line', `${modelLine(prediction)}  ·  you: ${choice === 'yes' ? `Yes · ${device}` : 'No'}`))
+    const evidence = (prediction.devices || []).map((d) => d.evidence).filter(Boolean)[0] || (prediction.textMentions.length ? `Named in bio or captions: ${prediction.textMentions.join(', ')}` : '')
+    if (evidence) modelCard.append(el('div', 'model-verdict-evidence', evidence))
+  }
+  const tally = el('div', 'model-verdict-tally', '')
+  modelCard.append(tally)
+  modelCard.hidden = false
+  modelTimer = setTimeout(() => { modelCard.hidden = true }, 7000)
+  setTimeout(async () => {
+    try {
+      const stats = await api('/api/model-agreement', null, 8000)
+      if (stats.compared) tally.textContent = `Agreed ${stats.agree} of ${stats.compared} · caught ${stats.yesCaught} of your ${stats.yes} Yes · right device ${stats.deviceRight}`
+    } catch {}
+  }, 1200)
+}
+
 function choose(choice, device) {
   if (mode !== 'review') return
   const item = queue[0]
@@ -625,6 +682,7 @@ function choose(choice, device) {
   history.push({ item: { ...item, choice, device: device || '' }, previous: item.choice || null })
   queue = queue.slice(1)
   save(item, choice, device)
+  revealModel(item, choice, device)
   show()
   refill()
 }

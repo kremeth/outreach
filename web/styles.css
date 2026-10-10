@@ -1459,3 +1459,30 @@ a.person.current {
   .usage-side { justify-content: flex-start; }
   .usage-stat { justify-items: start; }
 }
+
+/* The wearable model's answer, shown for a few seconds after each Prospecting decision */
+.model-verdict {
+  position: fixed;
+  left: 24px;
+  bottom: 140px;
+  z-index: 20;
+  width: min(380px, calc(100vw - 48px));
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: 0 10px 30px rgba(20, 20, 19, 0.12);
+  font-size: 14px;
+}
+.model-verdict-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.model-verdict-label { font-size: 12px; color: var(--muted); }
+.model-verdict-badge { padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 650; }
+.model-verdict-badge.agree { background: var(--yes); color: var(--yes-ink); }
+.model-verdict-badge.partial { background: #f3e7c8; color: var(--warn); }
+.model-verdict-badge.disagree { background: var(--danger-bg); color: var(--danger-ink); }
+.model-verdict-badge.pending { background: var(--chip); color: var(--ink-2); }
+.model-verdict-line { font-weight: 650; color: var(--ink); }
+.model-verdict-evidence { color: var(--muted); font-size: 13px; }
+.model-verdict-tally { color: var(--muted); font-size: 12px; min-height: 0; }

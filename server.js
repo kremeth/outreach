@@ -19,6 +19,7 @@ const migrations = require('./lib/row-migrations')
 const replyCheck = require('./lib/reply-check')
 const pickModel = require('./lib/pick-model')
 const apiUsage = require('./lib/api-usage')
+const modelProspect = require('./lib/model-prospect')
 
 const ROOT = __dirname
 const WEB = path.join(ROOT, 'web')
@@ -297,6 +298,12 @@ async function decide(sheetRow, choice, device, link) {
     return { ok: false, retry: true, error: 'Could not check the sheet before saving. It will retry.', ...counts(), writeNote: writeNote() }
   }
   decisions = sheet.record(decisions, row, choice)
+  // The wearable model's answer for this profile, kept next to the person's (local log only).
+  try {
+    modelProspect.record({ sheetRow: row.sheetRow, username: data.usernameFrom(row['DIRECT LINK']), choice, device: choice === 'yes' ? device : '' })
+  } catch (error) {
+    console.error('model compare', error.message)
+  }
   // Already in the sheet (a save that landed before a restart, re-sent from the outbox): done.
   if (liveChoice === choice) {
     if (choice === 'yes' && !yesRows.some((item) => item.sheetRow === row.sheetRow)) rememberYes(row, device)
@@ -846,6 +853,24 @@ const server = http.createServer(async (req, res) => {
         console.error(error)
         sendJson(res, 503, { error: 'Could not reach the Google Sheet to pick profiles.', kind: 'server' })
       }
+      return
+    }
+    // The wearable model prospecting alongside: the next undecided profiles in queue order, its answer
+    // for one profile, and how often it has agreed so far.
+    if (req.method === 'GET' && url.pathname === '/api/model-prospect/upcoming') {
+      const count = Math.min(1000, Math.max(1, Number(url.searchParams.get('count')) || 300))
+      const upcoming = rows.filter((row) => !choiceFor(row)).slice(0, count).map((row) => ({ sheetRow: row.sheetRow, username: data.usernameFrom(row['DIRECT LINK']) })).filter((item) => item.username)
+      fs.mkdirSync(path.dirname(modelProspect.LIST), { recursive: true })
+      fs.writeFileSync(modelProspect.LIST, JSON.stringify(upcoming))
+      sendJson(res, 200, { count: upcoming.length, upcoming })
+      return
+    }
+    if (req.method === 'GET' && url.pathname === '/api/model-prediction') {
+      sendJson(res, 200, modelProspect.prediction(url.searchParams.get('username')))
+      return
+    }
+    if (req.method === 'GET' && url.pathname === '/api/model-agreement') {
+      sendJson(res, 200, modelProspect.agreement())
       return
     }
     if (req.method === 'POST' && url.pathname === '/api/decide') {
