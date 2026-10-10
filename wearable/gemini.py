@@ -60,8 +60,13 @@ class Gemini:
         config.GEMINI_CACHE.mkdir(parents=True, exist_ok=True)
 
     @staticmethod
-    def _parts(images, text):
-        parts = [{"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(image).decode()}} for image in images]
+    def _parts(images, text, labels=None):
+        """Images then the instructions; with labels, each image comes right after its own label."""
+        parts = []
+        for index, image in enumerate(images):
+            if labels:
+                parts.append({"text": labels[index]})
+            parts.append({"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(image).decode()}})
         return parts + [{"text": text}]
 
     def cache_key(self, model, prompt_version, images, text, extra=""):
@@ -72,9 +77,9 @@ class Gemini:
             digest.update(hashlib.sha256(image).digest())
         return digest.hexdigest()
 
-    def generate(self, model, prompt_version, images, text, schema, max_output_tokens=900, media_resolution=None, thinking=0):
-        """Structured JSON answer. images: list of JPEG bytes."""
-        key = self.cache_key(model, prompt_version, images, text, f"{media_resolution}|{thinking}|{max_output_tokens}")
+    def generate(self, model, prompt_version, images, text, schema, max_output_tokens=900, media_resolution=None, thinking=0, labels=None):
+        """Structured JSON answer. images: list of JPEG bytes; labels: optional text before each image."""
+        key = self.cache_key(model, prompt_version, images, text, f"{media_resolution}|{thinking}|{max_output_tokens}|{labels}")
         cached = config.GEMINI_CACHE / f"{key}.json"
         if cached.exists():
             self.cache_hits += 1
@@ -84,7 +89,7 @@ class Gemini:
             generation["mediaResolution"] = media_resolution
         if thinking is not None:
             generation["thinkingConfig"] = {"thinkingBudget": thinking}
-        body = {"contents": [{"role": "user", "parts": self._parts(images, text)}], "generationConfig": generation}
+        body = {"contents": [{"role": "user", "parts": self._parts(images, text, labels)}], "generationConfig": generation}
         if self.dry_run:
             counted = _post(f"{API}/{model}:countTokens", {"generateContentRequest": {"model": f"models/{model}", **body}})
             estimate = cost_of(model, counted.get("totalTokens", 0), max_output_tokens // 3)

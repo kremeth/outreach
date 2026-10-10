@@ -73,7 +73,7 @@ ZOOM_SCHEMA = {
     "required": ["devices", "wearable"],
 }
 
-ZOOM_PROMPT = """These are full-resolution photos from one Instagram creator (photo numbers given before each). A first look at a small grid suggested a possible fitness wearable in them.
+ZOOM_PROMPT = """These are full-resolution photos from one Instagram creator, each labelled with its photo number just before it. A first look at a small grid suggested a possible fitness wearable in them.
 Look closely at every wrist, upper arm and finger. Report each smartwatch, fitness band or smart ring you can see, with the brand only if the visual evidence supports it (Apple Watch: rectangular, rounded corners, digital crown; Garmin: round with side buttons; WHOOP: screenless band with sensor pod; Polar: round sports watch, Polar logo; Oura: thick smooth rounded ring). Otherwise use the Unknown types.
 wearable: "yes" if one is clearly visible, "possible" if still unsure, "no" if the suspected object is not a wearable, "insufficient" if it cannot be seen."""
 
@@ -130,8 +130,9 @@ def detect(username, gemini, model="gemini-3.1-flash-lite", zoom=True, zoom_mode
         paths = post_images(profile)
         chosen = [(tile, paths[tile - 1]) for tile in tiles if tile - 1 < len(paths)][:4]
         if chosen:
-            listing = "\n".join(f"Photo {tile} follows." for tile, _ in chosen)
-            second = gemini.generate(zoom_model or model, "zoom-v1", [path.read_bytes() for _, path in chosen], f"{ZOOM_PROMPT}\n{listing}", ZOOM_SCHEMA, max_output_tokens=700)
+            # Each photo is preceded by its own label, so "Photo 4" in the answer means that photo.
+            labels = [f"Photo {tile}:" for tile, _ in chosen]
+            second = gemini.generate(zoom_model or model, "zoom-v2", [path.read_bytes() for _, path in chosen], f"{ZOOM_PROMPT}\nUse these photo numbers in tiles and evidence: {', '.join(str(tile) for tile, _ in chosen)}.", ZOOM_SCHEMA, max_output_tokens=700, labels=labels)
             record["zoomed"] = True
             record["stage2"] = second.get("answer", {})
             record["cost"] += second.get("usd", 0.0)
