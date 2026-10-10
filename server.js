@@ -891,6 +891,23 @@ const server = http.createServer(async (req, res) => {
       }
       return
     }
+    // Gemini tokens by purpose since midnight (from data/gemini-usage.jsonl).
+    if (req.method === 'GET' && url.pathname === '/api/gemini-usage') {
+      const since = new Date()
+      since.setHours(0, 0, 0, 0)
+      const totals = {}
+      const lines = fs.existsSync(drafts.USAGE_PATH) ? fs.readFileSync(drafts.USAGE_PATH, 'utf8').split('\n').filter(Boolean) : []
+      for (const line of lines) {
+        let entry
+        try { entry = JSON.parse(line) } catch { continue }
+        if (Date.parse(entry.at) < since.getTime()) continue
+        const row = (totals[entry.purpose] ||= { calls: 0, input: 0, cached: 0, output: 0, cacheWrite: 0 })
+        row.calls++
+        for (const key of ['input', 'cached', 'output', 'cacheWrite']) row[key] += entry[key] || 0
+      }
+      sendJson(res, 200, { since: since.toISOString(), totals })
+      return
+    }
     if (req.method === 'GET' && url.pathname === '/api/version') {
       sendJson(res, 200, { version: webVersion() })
       return
