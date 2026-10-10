@@ -453,6 +453,24 @@ function emptyState(main, footer, title, text) {
   footer.append(actions)
 }
 
+// What the comments are based on: the whole reel (and what is said in it), every carousel slide, or the photo.
+function postRead(drafted) {
+  const box = el('div', 'post-read')
+  const what = drafted.format === 'video' ? `Reel · watched in full${drafted.transcript ? ', with what they say' : ''}`
+    : drafted.format === 'carousel' ? `Carousel · all ${drafted.slides} slides`
+    : 'Photo'
+  box.append(el('div', 'post-format', what))
+  if (drafted.readNote) box.append(el('p', 'warn post-note', drafted.readNote))
+  if (drafted.description) box.append(el('p', 'post-description', drafted.description))
+  if (drafted.transcript) {
+    const said = document.createElement('details')
+    said.className = 'post-transcript'
+    said.append(el('summary', '', 'What they say'), el('p', '', drafted.transcript))
+    box.append(said)
+  }
+  return box
+}
+
 function postCard(image, full, caption, alt) {
   const card = el('div', 'post-card')
   if (image) {
@@ -501,6 +519,8 @@ function hustleScreen() {
         code: drafted.code || item.latest?.code || '',
         caption: drafted.caption || '',
         description: drafted.description || '',
+        transcript: drafted.transcript || '',
+        format: drafted.format || '',
         round: item.round || 1,
         guidance: item.roundGuidance || '',
         comments: drafted.comments || [],
@@ -518,7 +538,7 @@ function hustleScreen() {
 
   function draftsFor(item) {
     if (!draftCache.has(item.username)) {
-      const promise = api('/api/comment-drafts', { username: item.username }, 90000)
+      const promise = api('/api/comment-drafts', { username: item.username }, 300000)
       promise.catch(() => draftCache.delete(item.username))
       draftCache.set(item.username, promise)
     }
@@ -532,7 +552,7 @@ function hustleScreen() {
     }
   }
 
-  // Five fresh options for the same post: text only, reusing the photo description, so it is quick.
+  // Five fresh options for the same post: text only, reusing the description and transcript, so it is quick.
   // The photo and current options stay on screen meanwhile. Avoids everything already rejected.
   async function reload(item, guidance = '') {
     if (busy || !item.drafted || item.rewriting) return
@@ -552,6 +572,7 @@ function hustleScreen() {
         bio: item.notes || '',
         caption: drafted.caption,
         description: drafted.description,
+        transcript: drafted.transcript || '',
         avoid: item.rejected,
         guidance: item.guidance,
       }, 60000)
@@ -649,7 +670,7 @@ function hustleScreen() {
 
   function commentPicker(item, drafted) {
     const wrap = el('div', 'picker')
-    if (drafted.description) wrap.append(el('p', 'post-description', drafted.description))
+    wrap.append(postRead(drafted))
     wrap.append(el('div', 'section-label', 'Pick one · Launch posts it later, with a like'))
     drafted.comments.forEach((text, position) => {
       const option = button('', 'comment-option', () => choose(item, drafted, text, option))

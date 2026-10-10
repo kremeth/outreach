@@ -399,19 +399,78 @@ function taken(message) {
   return Object.assign(new Error(message), { kind: 'taken' })
 }
 
+// Everything Gemini should see of a post: the full video (with sound) for a reel, every slide for a
+// carousel, the photo otherwise. Read logged out, never through the Instagram account. If the post
+// page can't be read, the cover photo alone is used and the reply says so.
+const INLINE_BYTES = 12 * 1024 * 1024
+const MAX_VIDEO_BYTES = 200 * 1024 * 1024
+const MAX_SLIDES = 20
+
+async function readPost(post, photo) {
+  const cover = async (note) => ({
+    format: 'photo',
+    media: [await preview.downloadImage(photo.full || photo.src)],
+    caption: photo.alt || '',
+    slides: 0,
+    note,
+  })
+  let full
+  try {
+    full = await preview.post(post.code)
+  } catch (error) {
+    console.error('post page', post.code, error.message)
+    return cover(error.kind === 'missing' ? '' : 'Read from the cover photo only: the full post did not load.')
+  }
+  const caption = full.caption.length > (photo.alt || '').length ? full.caption : (photo.alt || '')
+  try {
+    if (full.mediaType === 2 && full.video) {
+      const video = await preview.downloadImage(full.video, MAX_VIDEO_BYTES)
+      const media = video.bytes > INLINE_BYTES ? await drafts.upload(video) : video
+      return { format: 'video', media: [media], caption, slides: 0, note: '' }
+    }
+    if (full.mediaType === 8 && full.slides.length) {
+      const slides = full.slides.slice(0, MAX_SLIDES)
+      let budget = INLINE_BYTES
+      const media = []
+      // Photos first so they always fit; a video slide is sent whole if there is room, else its cover.
+      const images = await Promise.all(slides.map((slide) => (slide.image ? preview.downloadImage(slide.image).catch(() => null) : null)))
+      for (const image of images) if (image) budget -= image.bytes
+      for (let index = 0; index < slides.length; index++) {
+        let item = images[index]
+        if (slides[index].video && budget > 0) {
+          const video = await preview.downloadImage(slides[index].video, budget).catch(() => null)
+          if (video) {
+            budget -= video.bytes - (item?.bytes || 0)
+            item = video
+          }
+        }
+        if (item) media.push(item)
+      }
+      if (!media.length) throw new Error('No slide could be downloaded.')
+      return { format: 'carousel', media, caption, slides: slides.length, note: full.slides.length > MAX_SLIDES ? `Read the first ${MAX_SLIDES} of ${full.slides.length} slides.` : '' }
+    }
+    if (full.image) return { format: 'photo', media: [await preview.downloadImage(full.image)], caption, slides: 0, note: '' }
+  } catch (error) {
+    console.error('post media', post.code, error.message)
+    return cover(error.kind === 'too-big' ? 'Read from the cover photo only: the video is too long to watch.' : 'Read from the cover photo only: the full post could not be downloaded.')
+  }
+  return cover('')
+}
+
 async function commentDrafts(username, avoid = [], guidance = '') {
   const claimed = await log.claim(`hustle:${String(username).toLowerCase()}`, CREATOR_CLAIM_MS)
   if (!claimed.ok) throw taken(`${claimed.by} is working on @${username} right now.`)
   const { profile, post, permalink } = await latestPost(username)
   if (hustle.alreadyHandled(username, post.pk)) throw taken(`@${username}'s newest post was already commented on or skipped.`)
   const photo = post.image
-  const image = await preview.downloadImage(photo.full || photo.src)
+  const read = await readPost(post, photo)
   const drafted = await drafts.generate({
     name: profile.name,
     username: profile.username || username,
     bio: profile.bio,
-    caption: photo.alt || '',
-    image,
+    caption: read.caption,
+    format: read.format,
+    media: read.media,
     avoid: avoid.map((text) => String(text).slice(0, 300)).slice(0, 15),
     guidance: String(guidance || '').replace(/\s+/g, ' ').trim().slice(0, 200),
   })
@@ -421,13 +480,17 @@ async function commentDrafts(username, avoid = [], guidance = '') {
     code: post.code,
     kind: post.kind,
     postedAt: post.at,
-    caption: photo.alt || '',
+    caption: read.caption,
+    format: read.format,
+    slides: read.slides,
+    readNote: read.note,
     bio: profile.bio || '',
     name: profile.name || '',
     followers: profile.followers || '',
     image: photo.src,
     full: photo.full || photo.src,
     description: drafted.description,
+    transcript: drafted.transcript,
     comments: drafted.comments,
   }
 }
@@ -667,7 +730,8 @@ const server = http.createServer(async (req, res) => {
           username: clip(body.username, 60),
           bio: clip(body.bio, 600),
           caption: clip(body.caption, 1500),
-          description: clip(body.description, 800),
+          description: clip(body.description, 1500),
+          transcript: clip(body.transcript, 6000),
           avoid: (Array.isArray(body.avoid) ? body.avoid : []).map((text) => clip(text, 300)).slice(-20),
           guidance: clip(body.guidance, 200).replace(/\s+/g, ' ').trim(),
         }))

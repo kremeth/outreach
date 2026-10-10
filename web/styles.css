@@ -835,6 +835,18 @@ button:disabled { opacity: 0.35; cursor: default; }
   line-height: 1.45;
 }
 
+.post-read { display: grid; gap: 6px; }
+.post-format {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+.post-transcript { font-size: 14px; color: var(--muted); }
+.post-transcript summary { cursor: pointer; font-weight: 600; color: var(--ink-2); }
+.post-transcript p { margin: 6px 0 0; line-height: 1.45; max-height: 160px; overflow-y: auto; white-space: pre-wrap; }
+
 .comment-option.sending { border-color: var(--fill); background: #f7fde4; }
 
 .own-comment input {
@@ -1350,3 +1362,4 @@ a.person.current {
 }
 
 .rewrite-go:hover { border-color: var(--line-focus); }
+.post-note { margin: 0; font-size: 13px; }
