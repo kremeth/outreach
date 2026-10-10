@@ -590,6 +590,7 @@ function hustleScreen() {
         transcript: drafted.transcript || '',
         format: drafted.format || '',
         predicted: scoreCache.get(scoreKey(drafted))?.done || null,
+        judge: scoreCache.get(scoreKey(drafted))?.judge || null,
         round: item.round || 1,
         guidance: item.roundGuidance || '',
         comments: drafted.comments || [],
@@ -632,7 +633,7 @@ function hustleScreen() {
   function scoresFor(drafted) {
     const key = scoreKey(drafted)
     if (!scoreCache.has(key) && Array.isArray(drafted.scores) && drafted.scores.length === 5) {
-      scoreCache.set(key, { done: drafted.scores, promise: Promise.resolve({ percent: drafted.scores }) })
+      scoreCache.set(key, { done: drafted.scores, judge: drafted.judge || null, promise: Promise.resolve({ percent: drafted.scores, judge: drafted.judge }) })
     }
     if (!scoreCache.has(key)) {
       const entry = {}
@@ -643,6 +644,7 @@ function hustleScreen() {
         transcript: drafted.transcript || '',
       }, 90000).then((result) => {
         entry.done = result.percent
+        entry.judge = result.judge || null
         return result
       })
       entry.promise.catch(() => scoreCache.delete(key))
@@ -675,7 +677,7 @@ function hustleScreen() {
         avoid: item.rejected,
         guidance: item.guidance,
       }, 60000)
-      item.drafted = { ...drafted, comments: result.comments, scores: result.scores || null }
+      item.drafted = { ...drafted, comments: result.comments, scores: result.scores || null, judge: result.judge || null }
       shown(item)
       draftCache.set(item.username, Promise.resolve(item.drafted))
     } catch (error) {

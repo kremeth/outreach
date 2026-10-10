@@ -500,6 +500,9 @@ async function commentDrafts(username, avoid = [], guidance = '') {
     caption: read.caption,
     format: read.format,
     media: read.media,
+    // Photos and carousel slides at Gemini's low resolution: ~77% fewer tokens, comments just as
+    // specific in a side-by-side test (slide text still read). Reels keep the default, for on-screen text.
+    mediaResolution: read.format === 'video' ? '' : 'MEDIA_RESOLUTION_LOW',
     avoid: avoid.map((text) => String(text).slice(0, 300)).slice(0, 15),
     guidance: String(guidance || '').replace(/\s+/g, ' ').trim().slice(0, 200),
   })
@@ -524,9 +527,9 @@ async function commentDrafts(username, avoid = [], guidance = '') {
   }
   // The pick predictor's chances come back with the comments, so they show on load (it takes about
   // 3 seconds; if it is ever slower, the page gets the comments now and the chances right after).
-  result.scores = await withTimeout(scoreFor({ comments: result.comments, description: result.description, caption: result.caption, transcript: result.transcript }), 10000)
-    .then((scored) => scored?.percent || null)
-    .catch(() => null)
+  const scored = await withTimeout(scoreFor({ comments: result.comments, description: result.description, caption: result.caption, transcript: result.transcript }), 10000).catch(() => null)
+  result.scores = scored?.percent || null
+  result.judge = scored?.judge || null
   return result
 }
 
@@ -874,7 +877,7 @@ const server = http.createServer(async (req, res) => {
           guidance: clip(body.guidance, 200).replace(/\s+/g, ' ').trim(),
         })
         const scored = await withTimeout(scoreFor({ comments: result.comments, description: body.description, caption: body.caption, transcript: body.transcript }), 10000).catch(() => null)
-        sendJson(res, 200, { ...result, scores: scored?.percent || null })
+        sendJson(res, 200, { ...result, scores: scored?.percent || null, judge: scored?.judge || null })
       } catch (error) {
         sendJson(res, 502, { error: error.message || 'Could not rewrite the comments.' })
       }
@@ -885,7 +888,7 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req)
       try {
         const scored = await scoreFor(body)
-        sendJson(res, 200, { percent: scored?.percent || null, model: { ...pickModel.summary(), machine: log.MACHINE } })
+        sendJson(res, 200, { percent: scored?.percent || null, judge: scored?.judge || null, model: { ...pickModel.summary(), machine: log.MACHINE } })
       } catch (error) {
         sendJson(res, 502, { error: error.message || 'Could not score the comments.' })
       }
