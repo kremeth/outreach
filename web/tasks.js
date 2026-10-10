@@ -478,74 +478,102 @@ function dayLabel(day, style = 'short') {
     : date.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })
 }
 
-// 28 days of spend, one bar per day (today darkest). Hover or focus a day for its numbers.
-function usageChart(data) {
-  const days = data.days || []
-  const top = niceMax(Math.max(0, ...days.map((day) => day.usd)))
-  const chart = el('div', 'usage-chart')
+// A 28-day bar chart, one bar per day (today darkest). hover is shared between charts, so pointing at
+// a day highlights it in every chart and one tooltip shows all its numbers.
+function barChart({ title, days, valueOf, format, kind, hover }) {
+  const values = days.map(valueOf)
+  const top = kind === 'money' ? niceMax(Math.max(0, ...values.filter(Number.isFinite))) : niceCount(Math.max(0, ...values.filter(Number.isFinite)))
+  const chart = el('div', `usage-chart ${kind}`)
+  chart.append(el('div', 'usage-chart-title', title))
   const plot = el('div', 'usage-plot')
   for (const fraction of [1, 0.5, 0]) {
     const line = el('div', 'usage-grid')
     line.style.bottom = `${fraction * 100}%`
-    line.append(el('span', 'usage-grid-label', money(top * fraction)))
+    line.append(el('span', 'usage-grid-label', format(top * fraction)))
     plot.append(line)
   }
   const bars = el('div', 'usage-bars')
-  const tip = el('div', 'usage-tip')
-  tip.hidden = true
-  const show = (index, column) => {
-    usageHover = index
-    const day = days[index]
-    tip.replaceChildren()
-    tip.append(el('div', 'usage-tip-date', dayLabel(day.day, 'long')))
-    if (!day.tracked) {
-      tip.append(el('div', 'usage-tip-value', 'Not tracked'), el('div', 'usage-tip-meta', 'Before Outreach logged its calls. Google AI Studio has this day.'))
-    } else {
-      tip.append(el('div', 'usage-tip-value', money(day.usd)))
-      tip.append(el('div', 'usage-tip-meta', `${day.calls} call${day.calls === 1 ? '' : 's'} · ${compact.format(day.input)} tokens in · ${compact.format(day.output)} out`))
-    }
-    tip.hidden = false
-    const box = column.getBoundingClientRect()
-    const area = chart.getBoundingClientRect()
-    // Beside the bar, inside the chart: to its left on the right half, to its right on the left half.
-    const center = box.left - area.left + box.width / 2
-    if (center > area.width / 2) {
-      tip.style.left = ''
-      tip.style.right = `${area.width - center + box.width / 2 + 8}px`
-    } else {
-      tip.style.right = ''
-      tip.style.left = `${center + box.width / 2 + 8}px`
-    }
-    for (const other of bars.children) other.classList.toggle('hover', other === column)
-  }
-  const hide = () => {
-    usageHover = -1
-    tip.hidden = true
-    for (const other of bars.children) other.classList.remove('hover')
-  }
   days.forEach((day, index) => {
-    const column = el('div', `usage-col${index === days.length - 1 ? ' today' : ''}${day.tracked ? '' : ' untracked'}`)
+    const value = values[index]
+    const known = Number.isFinite(value)
+    const column = el('div', `usage-col${index === days.length - 1 ? ' today' : ''}${known ? '' : ' untracked'}`)
     column.tabIndex = 0
+    column.dataset.index = String(index)
     column.setAttribute('role', 'img')
-    column.setAttribute('aria-label', day.tracked ? `${dayLabel(day.day, 'long')}: ${money(day.usd)}, ${day.calls} calls` : `${dayLabel(day.day, 'long')}: not tracked`)
+    column.setAttribute('aria-label', `${dayLabel(day.day, 'long')}: ${known ? format(value) : 'not tracked'}`)
     const bar = el('div', 'usage-bar')
-    bar.style.height = day.tracked ? (day.usd > 0 ? `max(3px, ${(day.usd / top) * 100}%)` : '0') : '100%'
+    bar.style.height = known ? (value > 0 ? `max(3px, ${(value / top) * 100}%)` : '0') : '100%'
     column.append(bar)
-    column.addEventListener('mouseenter', () => show(index, column))
-    column.addEventListener('focus', () => show(index, column))
-    column.addEventListener('mouseleave', hide)
-    column.addEventListener('blur', hide)
+    column.addEventListener('mouseenter', () => hover.show(index, column))
+    column.addEventListener('focus', () => hover.show(index, column))
+    column.addEventListener('mouseleave', hover.hide)
+    column.addEventListener('blur', hover.hide)
     bars.append(column)
   })
   plot.append(bars)
-  const axis = el('div', 'usage-axis')
-  days.forEach((day, index) => {
-    const label = el('span', '', index === days.length - 1 ? 'Today' : index % 7 === 0 ? dayLabel(day.day) : '')
-    axis.append(label)
-  })
-  chart.append(plot, axis, tip)
-  if (usageHover >= 0 && usageHover < days.length) requestAnimationFrame(() => show(usageHover, bars.children[usageHover]))
+  chart.append(plot)
   return chart
+}
+
+function niceCount(value) {
+  if (value <= 0) return 10
+  const magnitude = 10 ** Math.floor(Math.log10(value))
+  return [1, 2, 2.5, 5, 10].map((step) => step * magnitude).find((step) => step >= value)
+}
+
+const requestCount = new Intl.NumberFormat('en-US')
+
+function usageCharts(data) {
+  const days = data.days || []
+  const wrap = el('div', 'usage-charts')
+  const tip = el('div', 'usage-tip')
+  tip.hidden = true
+  const hover = {
+    show(index, column) {
+      usageHover = index
+      const day = days[index]
+      tip.replaceChildren(el('div', 'usage-tip-date', dayLabel(day.day, 'long')))
+      if (day.tracked) {
+        tip.append(el('div', 'usage-tip-value', money(day.usd)))
+        tip.append(el('div', 'usage-tip-meta', `${day.calls} call${day.calls === 1 ? '' : 's'} by Outreach · ${compact.format(day.input)} tokens in · ${compact.format(day.output)} out`))
+      } else {
+        tip.append(el('div', 'usage-tip-value', 'Cost not tracked'), el('div', 'usage-tip-meta', 'Before Outreach logged its calls; AI Studio has the cost.'))
+      }
+      if (day.requests != null) tip.append(el('div', 'usage-tip-meta', `${requestCount.format(day.requests)} API requests (Google)`))
+      tip.hidden = false
+      for (const other of wrap.querySelectorAll('.usage-col')) other.classList.toggle('hover', other.dataset.index === String(index))
+      const box = column.getBoundingClientRect()
+      const area = wrap.getBoundingClientRect()
+      const center = box.left - area.left + box.width / 2
+      tip.style.top = `${box.top - area.top}px`
+      if (center > area.width / 2) {
+        tip.style.left = ''
+        tip.style.right = `${area.width - center + box.width / 2 + 8}px`
+      } else {
+        tip.style.right = ''
+        tip.style.left = `${center + box.width / 2 + 8}px`
+      }
+    },
+    hide() {
+      usageHover = -1
+      tip.hidden = true
+      for (const other of wrap.querySelectorAll('.usage-col')) other.classList.remove('hover')
+    },
+  }
+  wrap.append(barChart({ title: 'Cost', days, valueOf: (day) => (day.tracked ? day.usd : NaN), format: money, kind: 'money', hover }))
+  if (days.some((day) => day.requests != null)) {
+    wrap.append(barChart({ title: 'Total API requests · from Google', days, valueOf: (day) => (day.requests == null ? NaN : day.requests), format: (value) => compact.format(value), kind: 'count', hover }))
+  }
+  const axis = el('div', 'usage-axis')
+  days.forEach((day, index) => axis.append(el('span', '', index === days.length - 1 ? 'Today' : index % 7 === 0 ? dayLabel(day.day) : '')))
+  wrap.append(axis, tip)
+  if (usageHover >= 0 && usageHover < days.length) {
+    requestAnimationFrame(() => {
+      const column = wrap.querySelector(`.usage-col[data-index="${usageHover}"]`)
+      if (column) hover.show(usageHover, column)
+    })
+  }
+  return wrap
 }
 
 function renderUsage(data) {
@@ -556,7 +584,7 @@ function renderUsage(data) {
   side.append(usageStat('This week', data?.week), el('span', 'usage-divider'), usageStat('This month', data?.month))
   head.append(primary, side)
   const parts = [head]
-  if (data?.days) parts.push(usageChart(data))
+  if (data?.days) parts.push(usageCharts(data))
   if (data) {
     const since = new Date(data.trackedSince)
     const sinceText = Number.isNaN(since.getTime()) ? '' : ` · tracked since ${since.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}, ${since.toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' })}`

@@ -1400,8 +1400,13 @@ a.person.current {
 .usage-stat-label { font-size: 12px; color: var(--muted); }
 .usage-stat-value { font-size: 17px; font-weight: 600; color: var(--ink-2); font-variant-numeric: tabular-nums; }
 
-.usage-chart { position: relative; }
-.usage-plot { position: relative; height: 96px; margin-right: 52px; }
+.usage-charts { position: relative; display: grid; gap: 12px; }
+.usage-chart { position: relative; display: grid; gap: 6px; }
+.usage-chart-title { font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+.usage-plot { position: relative; height: 84px; margin-right: 52px; }
+.usage-chart.count .usage-plot { height: 56px; }
+.usage-chart.count .usage-bar { background: #8d9aa6; }
+.usage-chart.count .usage-col.today .usage-bar { background: #4f5c68; }
 .usage-grid { position: absolute; left: 0; right: -52px; border-top: 1px solid var(--line); }
 .usage-grid-label { position: absolute; right: 0; top: -8px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; background: var(--surface); padding-left: 6px; }
 .usage-bars { position: absolute; inset: 0; display: flex; align-items: flex-end; gap: 2px; }
@@ -1414,13 +1419,13 @@ a.person.current {
   border-radius: 4px;
   background: repeating-linear-gradient(135deg, transparent 0 3px, var(--sunken) 3px 6px);
 }
-.usage-axis { display: flex; gap: 2px; margin: 6px 52px 0 0; font-size: 11px; color: var(--muted); }
+.usage-axis { display: flex; gap: 2px; margin: -4px 52px 0 0; font-size: 11px; color: var(--muted); }
 .usage-axis span { flex: 1; white-space: nowrap; overflow: visible; }
 .usage-axis span:last-child { text-align: right; }
 .usage-tip {
   position: absolute;
   top: 0;
-  min-width: 160px;
+  min-width: 180px;
   padding: 8px 10px;
   border: 1px solid var(--line);
   border-radius: 10px;
