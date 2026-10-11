@@ -382,8 +382,9 @@ async function autoComment() {
   if (autoCommentBusy || !autoCommentStatus().on) return
   autoCommentBusy = true
   try {
+    await log.refresh(5000) // the shared log first: the picks waiting for Launch come from it
+    if (!log.list(() => true).length) return // not loaded yet (just restarted)
     if (autoCommentStatus().pickedToday >= DAILY_PICKS || hustle.picks().length >= AUTO_AHEAD) return
-    await log.refresh(5000)
     const next = hustle.queue().find((item) => !autoCommentPassed.has(`${item.username}:${item.latest.pk}`))
     if (!next) return
     const key = `${next.username}:${next.latest.pk}`
