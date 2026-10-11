@@ -733,6 +733,14 @@ function paintModel(item, prediction) {
     if (prediction.device && Number.isFinite(prediction.device.score)) {
       const value = Math.max(0, Math.min(100, Math.round(prediction.device.score)))
       gaugeRow('Device', value, shade(value), prediction.device.fromText ? `${prediction.device.brand}: named in the bio or captions, not seen worn in a photo` : `${value}/100: how sure the model is that it is ${prediction.device.brand}`)
+      // Named, not seen: say so right under the gauges.
+      if (prediction.device.fromText) {
+        const mention = (prediction.mentions || []).find((item) => item.brand === prediction.device.brand)
+        const where = mention ? (mention.where === 'bio' || mention.where === 'name' ? `in the ${mention.where}` : `in ${mention.where}`) : 'in the bio or captions'
+        const info = el('div', 'model-side-info')
+        info.append(el('span', 'model-side-info-icon', 'i'), el('span', '', `${prediction.device.brand} is not seen worn in any photo. It is named ${where}${mention?.paid ? ' (a paid partnership)' : ''}, so both gauges are set to 60: likely, not confirmed.`))
+        modelPanel.append(info)
+      }
     }
     // Profile match: an active person whose content is their own life. Red low, orange medium, green high.
     if (prediction.match && Number.isFinite(prediction.match.score)) {
