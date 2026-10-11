@@ -150,25 +150,23 @@ function waitingLine(summary) {
 const PROSPECT_TASK = {
   id: 'prospect',
   title: 'Prospecting',
-  hint: 'For you to judge · the model decides the clear Yes and No',
+  hint: 'For you to judge',
   count: (data) => data.prospecting.forYou ?? data.prospecting.remaining,
   side: (data) => `${data.prospecting.yesToday} / ${data.prospecting.yesTarget} yes today`,
 }
 
-// Under the Prospecting card: how far the model is with the profiles left.
+// Under the Prospecting card: how far the model is with the profiles left, and what it decided so far.
 function modelProgressBar(data) {
-  const { remaining = 0, judging = 0, auto = 0 } = data.prospecting || {}
+  const { remaining = 0, judging = 0, forYou = 0, modelYes = 0, modelNo = 0 } = data.prospecting || {}
   if (!remaining) return null
   const checked = remaining - judging
-  const box = el('div', 'model-progress')
+  const box = el('div', `model-progress${judging ? ' working' : ''}`)
   const bar = el('div', 'meter')
   const fill = el('div', 'meter-fill')
   fill.style.width = `${Math.max(2, Math.round((checked / remaining) * 100))}%`
   bar.append(fill)
-  const text = judging
-    ? `Model checked ${number(checked)} of ${number(remaining)} left · ${number(judging)} to go`
-    : `Model has checked all ${number(remaining)} profiles left`
-  box.append(bar, el('div', 'model-progress-text', `${text}${auto ? ` · ${number(auto)} being saved` : ''}`))
+  const lead = judging ? `Model checked ${number(checked)} of ${number(remaining)} left` : `Model checked all ${number(remaining)} left`
+  box.append(bar, el('div', 'model-progress-text', `${lead} · Yes ${number(modelYes)} · No ${number(modelNo)} · For you ${number(forYou)}`))
   return box
 }
 

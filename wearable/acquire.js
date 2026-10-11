@@ -27,10 +27,15 @@ const sharp = require('sharp')
 const MAX_SIDE = 768
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 let watchMode = false
+const HOURLY = 60
+const QUIET_AFTER_WALL_MS = 10 * 60 * 1000
+const loads = []
 
 function args() {
   const list = []
-  let pause = [2500, 5500]
+  // Slow on purpose: logged-out profile loads from one internet connection are what make Instagram put
+  // up a login wall, and the Prospecting screen needs the same connection.
+  let pause = [30000, 60000]
   let watch = false
   const argv = process.argv.slice(2)
   for (let index = 0; index < argv.length; index++) {
@@ -143,11 +148,14 @@ async function round() {
   console.log(`${list.length} profiles, ${needed.length} to fetch, ${todo.length} now`)
   const counts = {}
   for (const [index, username] of todo.entries()) {
-    const wall = preview.loginWall()
-    if (wall) {
-      console.log(`login wall: waiting until ${new Date(wall).toLocaleTimeString('en-AU')}`)
-      await sleep(wall - Date.now() + 15000)
+    // A login wall anywhere on this computer (shared file): wait it out, plus a quiet 10 minutes.
+    for (let wall = preview.loginWall(); wall; wall = preview.loginWall()) {
+      console.log(`login wall: waiting until ${new Date(wall + QUIET_AFTER_WALL_MS).toLocaleTimeString('en-AU')}`)
+      await sleep(wall - Date.now() + QUIET_AFTER_WALL_MS)
     }
+    // At most HOURLY profile loads in any hour.
+    while (loads.filter((at) => Date.now() - at < 3600 * 1000).length >= HOURLY) await sleep(60 * 1000)
+    loads.push(Date.now())
     const record = await acquire(username)
     counts[record.status] = (counts[record.status] || 0) + 1
     if (record.status === 'login-wall') todo.push(username)
