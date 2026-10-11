@@ -636,7 +636,7 @@ function modelDecision(prediction) {
   if (prediction.verdict === 'unverified') {
     return { label: 'Unsure', detail: 'The quick look thought it saw a wearable, but the closer look at those photos could not find one', tone: 'unsure' }
   }
-  if (prediction.decision === 'No') return { label: 'No', detail: 'No wearable on any wrist, arm or finger it could see', tone: 'no' }
+  if (prediction.decision === 'No') return { label: 'No', detail: 'No fitness wearable (smartwatch, band or smart ring) on the owner', tone: 'no' }
   return { label: 'Unsure', detail: prediction.profileStatus && prediction.profileStatus !== 'ok' ? `Profile ${prediction.profileStatus}` : 'No wrists or hands visible enough to tell', tone: 'unsure' }
 }
 
@@ -664,6 +664,9 @@ function paintModel(item, prediction) {
       modelPanel.append(button, el('div', 'model-side-where', `Photo ${prediction.evidence.photo} · ${prediction.evidence.brand} (${prediction.evidence.certainty})${who}${checked}${also} · ${prediction.evidence.where}`))
     } else if (prediction.textMentions?.length) {
       modelPanel.append(el('div', 'model-side-where', `Named in the bio or captions: ${prediction.textMentions.join(', ')}`))
+    }
+    if (!prediction.evidence && prediction.notes) {
+      modelPanel.append(el('div', 'model-side-where', `What it saw: ${prediction.notes}`))
     }
   }
   if (modelTally) modelPanel.append(el('div', 'model-side-tally', modelTally))
