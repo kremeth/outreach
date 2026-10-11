@@ -707,6 +707,12 @@ function paintModel(item, prediction) {
     const decision = modelDecision(prediction)
     const head = el('div', `model-side-decision ${decision.tone}`, decision.label)
     modelPanel.append(head, el('div', 'model-side-detail', decision.detail))
+    // Shadow mode: what the automatic decision would be (auto-Yes is not on yet; you still decide).
+    if (prediction.auto && !prediction.autoYesOn) {
+      const auto = prediction.auto
+      const text = auto.verdict === 'yes' ? `Auto would say: Yes (${auto.device})` : auto.verdict === 'review' ? `Auto would leave it to you: ${auto.reasons.join(', ')}` : `Auto would say: No (${auto.reasons.join(', ')})`
+      modelPanel.append(el('div', `model-side-auto ${auto.verdict}`, text))
+    }
     // Three gauges: is there a wearable on the owner, which exact device, and does the profile fit.
     const gaugeRow = (label, value, color, title) => {
       const gauge = el('div', 'model-side-confidence')

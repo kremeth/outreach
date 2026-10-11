@@ -1502,3 +1502,5 @@ a.person.current {
 .model-side-confidence { display: flex; align-items: center; gap: 8px; margin: 10px 0 2px; }
 .model-side-confidence .option-meter { flex: 1; width: auto; }
 .model-side-confidence-label { width: 60px; font-size: 13px; color: var(--muted); }
+.model-side-auto { margin: 8px 0 2px; padding: 6px 10px; border-radius: 8px; font-size: 13px; background: var(--chip); color: var(--ink-2); }
+.model-side-auto.yes { background: #e8f5d6; color: #2f5d0a; }
