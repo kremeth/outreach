@@ -155,18 +155,22 @@ const PROSPECT_TASK = {
   side: (data) => `${data.prospecting.yesToday} / ${data.prospecting.yesTarget} yes today`,
 }
 
-// Under the Prospecting card: how far the model is with the profiles left, and what it decided so far.
+// Under the Prospecting card, one consistent picture of every profile the model has had: what it
+// decided on its own (Yes, No), what it left for the person, and what it has not checked yet. The four
+// add up; the bar fills with the share already done.
 function modelProgressBar(data) {
-  const { remaining = 0, judging = 0, forYou = 0, modelYes = 0, modelNo = 0 } = data.prospecting || {}
-  if (!remaining) return null
-  const checked = remaining - judging
+  const { judging = 0, forYou = 0, auto = 0, modelYes = 0, modelNo = 0 } = data.prospecting || {}
+  const done = modelYes + modelNo + auto + forYou
+  const total = done + judging
+  if (!total) return null
   const box = el('div', `model-progress${judging ? ' working' : ''}`)
   const bar = el('div', 'meter')
   const fill = el('div', 'meter-fill')
-  fill.style.width = `${Math.max(2, Math.round((checked / remaining) * 100))}%`
+  fill.style.width = `${Math.max(2, Math.round((done / total) * 100))}%`
   bar.append(fill)
-  const lead = judging ? `Model checked ${number(checked)} of ${number(remaining)} left` : `Model checked all ${number(remaining)} left`
-  box.append(bar, el('div', 'model-progress-text', `${lead} · Yes ${number(modelYes)} · No ${number(modelNo)} · For you ${number(forYou)}`))
+  const parts = [`${number(modelYes)} Yes`, `${number(modelNo + auto)} No`, `${number(forYou)} for you`]
+  if (judging) parts.push(`${number(judging)} still to check`)
+  box.append(bar, el('div', 'model-progress-text', `Model: ${parts.join(' · ')}`))
   return box
 }
 
