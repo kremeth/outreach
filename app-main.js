@@ -351,6 +351,33 @@ function startControl() {
         const describe = (result, failure) => (result?.unfollowed || failure ? { target: body.username || '', detail: `close:${body.sheetRow || ''}` } : null)
         return reply(200, await inPanel('unfollow', 'unfollowing', describe, (wc) => ig.unfollow(wc, body)))
       }
+      // An ongoing conversation that went quiet: the chat read only (no action), then, when due, a reply
+      // relaunch (a DM: counted and paced like the other relaunches).
+      if (url.pathname === '/chat-state') {
+        if (panelTask) return reply(409, { error: `Instagram is busy (${panelTask}).`, kind: 'busy' })
+        panelTask = 'reading a chat'
+        try {
+          await ensurePanelLive()
+          return reply(200, await ig.chatState(panel.webContents, body))
+        } finally {
+          panelTask = ''
+        }
+      }
+      if (url.pathname === '/reply-relaunch') {
+        const describe = () => ({ target: body.username || '', detail: `reply${Number(body.step) === 2 ? 2 : 1}:${body.sheetRow || ''}` })
+        return reply(200, await inPanel('dm', 'sending a reply relaunch', describe, (wc) => ig.replyRelaunch(wc, body)))
+      }
+      // Read-only look at a chat (no action, nothing sent), to build on.
+      if (url.pathname === '/probe-chat') {
+        if (panelTask) return reply(409, { error: `Instagram is busy (${panelTask}).`, kind: 'busy' })
+        panelTask = 'reading a chat'
+        try {
+          await ensurePanelLive()
+          return reply(200, await ig.probeChat(panel.webContents, body))
+        } finally {
+          panelTask = ''
+        }
+      }
       if (url.pathname === '/voice/status') return reply(200, voice.getStatus())
       if (url.pathname === '/voice/next') {
         const describe = (result, failure) => {

@@ -17,6 +17,7 @@ const autopilot = require('./lib/autopilot')
 const training = require('./lib/training-log')
 const migrations = require('./lib/row-migrations')
 const replyCheck = require('./lib/reply-check')
+const replyRelaunch = require('./lib/reply-relaunch')
 const pickModel = require('./lib/pick-model')
 const apiUsage = require('./lib/api-usage')
 const modelProspect = require('./lib/model-prospect')
@@ -917,6 +918,11 @@ async function closeOut(sheetRow, mode) {
   const [liveLink, liveAccepted] = (await writer.getValues([`${outreachColumns.link}${row.sheetRow}`, `${outreachColumns.accepted}${row.sheetRow}`]))
     .map((values) => String(values?.[0]?.[0] || '').trim())
   if (!sameLink(liveLink, row.link)) return { ok: false, taken: true, error: `Row ${row.sheetRow} no longer holds @${username} in the sheet. Nothing was done.` }
+  // A quiet conversation after both reply relaunches: only while it is still "Replied".
+  if (mode === 'reply-stale' && liveAccepted.toLowerCase() !== 'replied') {
+    row.accepted = liveAccepted
+    return { ok: false, taken: true, error: `@${username} is now "${liveAccepted || 'blank'}" in the sheet, so they were not unfollowed.` }
+  }
   if (mode === 'no-reply' && liveAccepted.toLowerCase() !== relaunch.STAGES[2].to.toLowerCase()) {
     row.accepted = liveAccepted
     return { ok: false, taken: true, error: `@${username} is now "${liveAccepted || 'blank'}" in the sheet, so they were not unfollowed.` }
@@ -982,7 +988,7 @@ async function closeOut(sheetRow, mode) {
     return { ok: false, replied: true, error: `@${username} replied and it's still going (${verdict.reason}). Marked Replied, not unfollowed.` }
   }
   const value = mode === 'declined' ? 'No' : 'unfollowed'
-  const reason = mode === 'declined' ? 'said no' : 'no reply 3 days after the 2nd relaunch'
+  const reason = mode === 'declined' ? 'said no' : mode === 'reply-stale' ? 'no answer 3 days after both reply relaunches' : 'no reply 3 days after the 2nd relaunch'
   if (result.notFollowing) {
     await relaunch.closeWithoutUnfollow(row.sheetRow, 'was not following them')
     const note = (String(liveAccepted).toLowerCase() === value.toLowerCase() ? '' : await sheetWrite(value, `${reason} (was not following)`)) + await keepNo()
@@ -990,6 +996,68 @@ async function closeOut(sheetRow, mode) {
   }
   const note = (String(liveAccepted).toLowerCase() === value.toLowerCase() ? '' : await sheetWrite(value, reason)) + await keepNo()
   return { ok: true, warning: note.trim() }
+}
+
+// Reply relaunches (lib/reply-relaunch.js): the Replied conversations due for a look.
+async function replyQueue() {
+  await refreshSheet(false).catch((error) => console.error(error))
+  await log.refresh(0).catch((error) => console.error(error))
+  // With today's reply relaunches used up, chats that only wait for one are left until tomorrow.
+  const guard = await guardStatus().catch(() => null)
+  const allowance = guard?.relaunch?.reply
+  const sendsLeft = !allowance || allowance.today < allowance.limit
+  return replyRelaunch.queue(yesRows, data).filter((item) => sendsLeft || !['reply1', 'reply2'].includes(replyRelaunch.pending(item.sheetRow)))
+}
+
+// One Replied conversation: read the chat (no action), decide, and when due send reply relaunch 1 (the
+// Travolta GIF) or 2 (text), or close out (unfollow, Keep hustling No). Re-checked against the live
+// sheet first, held with a claim so the other computer never does the same one.
+async function replyStep(item) {
+  const row = yesRows.find((entry) => entry.sheetRow === Number(item.sheetRow))
+  if (!row) return { ok: false, error: 'This creator is no longer in the sheet.' }
+  const username = data.usernameFrom(row.link)
+  const claimed = await log.claim(`reply:${row.sheetRow}`, CREATOR_CLAIM_MS)
+  if (!claimed.ok) return { ok: false, error: `${claimed.by} is working on @${username}.` }
+  const [liveLink, liveAccepted] = (await writer.getValues([`${outreachColumns.link}${row.sheetRow}`, `${outreachColumns.accepted}${row.sheetRow}`]))
+    .map((values) => String(values?.[0]?.[0] || '').trim())
+  if (!sameLink(liveLink, row.link) || liveAccepted.toLowerCase() !== 'replied') {
+    row.accepted = liveAccepted
+    return { ok: false, error: `@${username} is no longer "Replied" in the sheet.` }
+  }
+  let chat
+  try {
+    chat = await instagram.chatState({ username })
+  } catch (error) {
+    // Instagram busy, paused, logged out, warning...: try again later as usual. Anything else about
+    // this chat (gone, unreadable): looked at again tomorrow, not every few minutes.
+    if (['busy', 'wait', 'hidden', 'login', 'blocked', 'app', 'timeout', 'limit'].includes(error.kind)) throw error
+    replyRelaunch.remember(row.sheetRow, username, { action: 'none', reason: error.message })
+    return { ok: false, error: `@${username}: ${error.message}` }
+  }
+  const decision = replyRelaunch.decide(row.sheetRow, chat.messages)
+  replyRelaunch.remember(row.sheetRow, username, decision)
+  if (decision.action === 'none') return { ok: true, checked: true, username, reason: decision.reason || `waiting on them since ${new Date(decision.since).toLocaleDateString('en-AU')}`, dueAt: decision.dueAt }
+  if (decision.action === 'close') {
+    const result = await closeOut(row.sheetRow, 'reply-stale')
+    if (result.ok || result.warning) replyRelaunch.remember(row.sheetRow, username, { ...decision, action: 'none', reason: 'closed out' })
+    return { ...result, closed: true, username }
+  }
+  // A reply relaunch: within today's allowance of reply relaunches (10).
+  const guard = await guardStatus()
+  const allowance = guard.relaunch?.reply
+  if (allowance && allowance.today >= allowance.limit) return { ok: false, limit: true, username, error: `Today's ${allowance.limit} reply relaunches are used up.` }
+  const step = decision.action === 'reply2' ? 2 : 1
+  try {
+    await instagram.replyRelaunch({ username, sheetRow: row.sheetRow, step, text: step === 2 ? replyRelaunch.TEXT_2 : '', expectLast: { text: decision.last.text } })
+  } catch (error) {
+    if (error.kind === 'replied' || error.kind === 'mismatch') {
+      replyRelaunch.remember(row.sheetRow, username, { action: 'none', reason: error.message, last: error.thread?.[error.thread.length - 1] })
+      return { ok: false, username, error: error.message }
+    }
+    throw error
+  }
+  replyRelaunch.remember(row.sheetRow, username, { action: 'none', last: { ours: true, text: step === 2 ? replyRelaunch.TEXT_2 : '', at: Date.now() }, firstSeen: Date.now(), dueAt: Date.now() + (step === 2 ? replyRelaunch.WAIT.close : replyRelaunch.WAIT[2]) })
+  return { ok: true, sent: step, username }
 }
 
 async function closeQueue() {
@@ -1028,6 +1096,9 @@ autopilot.init({
   relaunchQueue,
   closeOut,
   closeQueue,
+  replyQueue,
+  replyStep,
+  replySummary: () => replyRelaunch.summary(yesRows, data),
   refreshSheet: () => refreshSheet(true).catch((error) => console.error(error)),
   sheetReady: () => Boolean(sheetRefreshedAt),
   voiceCount: () => voiceQueue().length,

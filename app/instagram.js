@@ -402,8 +402,50 @@ const DM_STATE = String.raw`(() => {
 
 // The newest messages in the open chat, oldest first: who sent each one (by side of the chat) and
 // whether it is a voicenote. Messages are role="article" bubbles; ours sit on the right half.
+// Each message also gets "at": the time of the timestamp shown above its group in the chat (e.g.
+// "21 May 2026, 17:35", "Today 10:12", "Fri 15:17"), or null when none is in view.
 const THREAD = String.raw`(() => {
   const voiceMark = '[aria-label="Waveform for audio message"], [aria-label="Voice clip"], [aria-label="Audio progress bar"]'
+  const months = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 }
+  const parse = (raw) => {
+    const t = String(raw || '').trim().toLowerCase().replace(/[  ]/g, ' ')
+    const clock = t.match(/(\d{1,2}):(\d{2})\s*(am|pm)?/)
+    if (!clock || t.length > 40) return null
+    let hour = Number(clock[1])
+    const minute = Number(clock[2])
+    if (clock[3] === 'pm' && hour < 12) hour += 12
+    if (clock[3] === 'am' && hour === 12) hour = 0
+    const now = new Date()
+    let date = null
+    let m
+    if ((m = t.match(/^(\d{1,2})\s+([a-z]{3})[a-z]*\.?(?:\s+(\d{4}))?/)) && months[m[2]] != null) {
+      date = new Date(m[3] ? Number(m[3]) : now.getFullYear(), months[m[2]], Number(m[1]), hour, minute)
+      if (!m[3] && date > now) date.setFullYear(date.getFullYear() - 1)
+    } else if ((m = t.match(/^([a-z]{3})[a-z]*\.?\s+(\d{1,2})(?:,?\s+(\d{4}))?/)) && months[m[1]] != null) {
+      date = new Date(m[3] ? Number(m[3]) : now.getFullYear(), months[m[1]], Number(m[2]), hour, minute)
+      if (!m[3] && date > now) date.setFullYear(date.getFullYear() - 1)
+    } else if (/^today/.test(t) || /^\d{1,2}:\d{2}/.test(t)) {
+      date = new Date(now)
+      date.setHours(hour, minute, 0, 0)
+    } else if (/^yesterday/.test(t)) {
+      date = new Date(now)
+      date.setDate(date.getDate() - 1)
+      date.setHours(hour, minute, 0, 0)
+    } else {
+      const day = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'].indexOf(t.slice(0, 3))
+      if (day < 0) return null
+      date = new Date(now)
+      date.setDate(date.getDate() - ((date.getDay() - day + 7) % 7 || 7))
+      date.setHours(hour, minute, 0, 0)
+    }
+    return date && !Number.isNaN(date.getTime()) ? date.getTime() : null
+  }
+  const main = document.querySelector('[role="main"]') || document.body
+  const stamps = [...main.querySelectorAll('span, div, time')]
+    .filter((el) => el.children.length === 0 && !el.closest('[role="article"]') && el.getBoundingClientRect().height > 0)
+    .map((el) => ({ top: el.getBoundingClientRect().top, at: parse(el.innerText) }))
+    .filter((stamp) => stamp.at)
+    .sort((a, b) => a.top - b.top)
   return [...document.querySelectorAll('[role="main"] [role="article"]')]
     .filter((bubble) => bubble.getBoundingClientRect().height > 0)
     .map((bubble) => {
@@ -415,6 +457,7 @@ const THREAD = String.raw`(() => {
         voice: Boolean(bubble.querySelector(voiceMark)) || /view transcription/i.test(bubble.innerText || ''),
         text: (bubble.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 600),
         top: Math.round(box.top),
+        at: stamps.filter((stamp) => stamp.top < box.top).pop()?.at || null,
       }
     })
     .sort((a, b) => a.top - b.top)
@@ -649,4 +692,171 @@ function unfollow(wc, { username, checkChat }) {
   })
 }
 
-module.exports = { openUrl, run, click, key, sleep, aborted, comment, dm, unfollow, pageProblem, readThread, threadAllows, lastVoiceWaveform }
+// Reply relaunches (an ongoing conversation that went quiet): 1 is the "confused Travolta" GIF, picked
+// in Instagram's GIF picker by its exact image (pinned), 2 a short text. Sent only if the chat still
+// ends with the same message of ours that was checked (expectLast), so a reply in between stops it.
+const REPLY_GIF = { query: 'confused travolta', ref: '602658373_1585123589145481_2547763527474712447_n' }
+
+function lastMatches(messages, expectLast) {
+  const last = messages[messages.length - 1]
+  if (!last || !last.ours) return false
+  if (!expectLast) return true
+  return last.text.slice(0, 40) === String(expectLast.text || '').slice(0, 40)
+}
+
+async function replyRelaunchSteps(wc, { username, step, text, expectLast }, progress) {
+  const messages = await openThread(wc, username)
+  if (!lastMatches(messages, expectLast)) {
+    const replied = !messages[messages.length - 1]?.ours
+    throw Object.assign(fail(replied ? 'They wrote back, so no reply relaunch.' : 'The chat changed since it was checked, so nothing was sent.', replied ? 'replied' : 'mismatch'), replied ? { thread: messages } : {})
+  }
+  if (Number(step) === 2) return dmSteps(wc, { username, message: text }, progress)
+  // The GIF: open the picker, search, click only the pinned image.
+  const opener = await run(wc, String.raw`(() => {
+    const el = [...document.querySelectorAll('[aria-label]')].find((node) => /gif or sticker/i.test(node.getAttribute('aria-label')) && node.getBoundingClientRect().top > window.innerHeight * 0.6)
+    if (!el) return null
+    const r = (el.closest('button, [role="button"]') || el).getBoundingClientRect()
+    return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }
+  })()`)
+  if (!opener) throw fail('The GIF button was not found, so nothing was sent.')
+  await click(wc, opener)
+  const search = await waitFor(async () => {
+    const value = await run(wc, String.raw`(() => {
+      const el = [...document.querySelectorAll('input')].filter((node) => node.getBoundingClientRect().width && /search (stickers|gifs)/i.test([node.placeholder, node.getAttribute('aria-label')].join(' '))).pop()
+      if (!el) return null
+      const r = el.getBoundingClientRect()
+      return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }
+    })()`).catch(() => null)
+    return { ...(value || {}), done: Boolean(value) }
+  }, 6000, 300)
+  if (!search?.x) throw fail('The GIF search did not open, so nothing was sent.')
+  await click(wc, search)
+  await sleep(250)
+  const focused = await run(wc, `(() => { const el = document.activeElement; return Boolean(el && el.tagName === 'INPUT' && /search (stickers|gifs)/i.test([el.placeholder, el.getAttribute('aria-label')].join(' '))) })()`)
+  if (!focused) {
+    await key(wc, 'Escape')
+    throw fail('Could not type into the GIF search, so nothing was sent.')
+  }
+  await wc.insertText(REPLY_GIF.query)
+  const pick = await waitFor(async () => {
+    const value = await run(wc, String.raw`(() => {
+      const img = [...document.querySelectorAll('img')].find((el) => (el.currentSrc || el.src || '').includes(${JSON.stringify(REPLY_GIF.ref)}) && el.getBoundingClientRect().width > 20)
+      const holder = img && img.closest('button, [role="button"]')
+      if (!holder || !/send/i.test(holder.getAttribute('aria-label') || '')) return null
+      const r = holder.getBoundingClientRect()
+      return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }
+    })()`).catch(() => null)
+    return { ...(value || {}), done: Boolean(value) }
+  }, 8000, 400)
+  if (!pick?.x) {
+    await key(wc, 'Escape')
+    throw fail('The Travolta GIF was not among the results, so nothing was sent.')
+  }
+  const before = messages.length
+  progress.pressed = true
+  await click(wc, pick)
+  const sent = await waitFor(async () => {
+    const now = await readThread(wc)
+    return { done: now.length > before && now[now.length - 1].ours }
+  }, 10000, 500)
+  if (!sent?.done) throw fail('The GIF was tapped but never showed in the chat. Check the Instagram panel before sending again.')
+  await sleep(1500)
+  const after = problemError(await pageProblem(wc))
+  if (after?.kind === 'blocked') throw after
+  return { ok: true }
+}
+
+function replyRelaunch(wc, options) {
+  return untilSent((progress) => replyRelaunchSteps(wc, options, progress))
+}
+
+// The chat as it is, read only (no action): who sent each message and when.
+async function chatState(wc, { username }) {
+  return { messages: await openThread(wc, username) }
+}
+
+// Read-only look at a chat page, to build on: what timestamps it shows, which buttons sit by the
+// message box, and (with gifQuery) what the GIF picker shows for a search. Never presses Send or a
+// GIF; the picker is closed again and the message box is left empty.
+async function probeChat(wc, { username, gifQuery }) {
+  const messages = await openThread(wc, username)
+  const page = await run(wc, String.raw`(() => {
+    const main = document.querySelector('[role="main"]') || document.body
+    const timeLike = /\b(today|yesterday|mon|tue|wed|thu|fri|sat|sun|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\b.*\d|\d{1,2}:\d{2}|\d{1,2}\/\d{1,2}\/\d{2,4}/i
+    const stamps = [...main.querySelectorAll('div, span, time, h4, h5')]
+      .filter((el) => !el.closest('[role="article"]') && el.children.length === 0 && timeLike.test(el.innerText || '') && (el.innerText || '').length < 40)
+      .map((el) => ({ text: el.innerText.trim(), tag: el.tagName, datetime: el.getAttribute('datetime') || '', top: Math.round(el.getBoundingClientRect().top) }))
+    const times = [...document.querySelectorAll('time')].slice(-10).map((el) => ({ text: el.innerText, datetime: el.getAttribute('datetime'), title: el.getAttribute('title') }))
+    const controls = [...document.querySelectorAll('button, [role="button"], svg[aria-label]')]
+      .filter((el) => { const r = el.getBoundingClientRect(); return r.width && r.top > window.innerHeight * 0.6 })
+      .map((el) => ({ label: el.getAttribute('aria-label') || (el.querySelector('svg[aria-label]') || {}).getAttribute?.('aria-label') || (el.innerText || '').trim().slice(0, 30), tag: el.tagName }))
+    return { stamps: stamps.slice(-15), times, controls: controls.slice(0, 30) }
+  })()`)
+  const result = { username, messages: messages.slice(-6).map((m) => ({ ours: m.ours, voice: m.voice, text: m.text.slice(0, 80), top: m.top })), ...page }
+  if (!gifQuery) return result
+  const opener = await run(wc, String.raw`(() => {
+    const el = [...document.querySelectorAll('[aria-label]')].find((node) => /gif|sticker/i.test(node.getAttribute('aria-label')) && node.getBoundingClientRect().top > window.innerHeight * 0.6)
+    if (!el) return null
+    const r = (el.closest('button, [role="button"]') || el).getBoundingClientRect()
+    return { label: el.getAttribute('aria-label'), x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }
+  })()`)
+  result.gifButton = opener
+  if (!opener) return result
+  await click(wc, opener)
+  await sleep(1500)
+  // The picker's tabs (GIFs / Stickers): switch to GIFs when there is such a tab.
+  result.pickerTabs = await run(wc, String.raw`(() => {
+    const input = [...document.querySelectorAll('input')].find((el) => el.getBoundingClientRect().width && /search/i.test([el.placeholder, el.getAttribute('aria-label')].join(' ')))
+    let box = input
+    for (let i = 0; i < 6 && box && box.parentElement; i++) box = box.parentElement
+    const scope = box || document
+    return [...scope.querySelectorAll('button, [role="button"], [role="tab"], div, span')]
+      .filter((el) => el.children.length === 0 && /^(gifs?|stickers?)$/i.test((el.innerText || '').trim()))
+      .map((el) => { const r = el.getBoundingClientRect(); return { text: el.innerText.trim(), role: el.getAttribute('role') || el.tagName, x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) } })
+  })()`)
+  const gifTab = (result.pickerTabs || []).find((tab) => /^gifs?$/i.test(tab.text))
+  if (gifTab) {
+    await click(wc, gifTab)
+    await sleep(1200)
+  }
+  const search = await run(wc, String.raw`(() => {
+    const inputs = [...document.querySelectorAll('input')].filter((el) => el.getBoundingClientRect().width && /search/i.test([el.placeholder, el.getAttribute('aria-label')].join(' ')))
+    const el = inputs[inputs.length - 1]
+    if (!el) return null
+    const r = el.getBoundingClientRect()
+    return { placeholder: el.placeholder, label: el.getAttribute('aria-label'), x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }
+  })()`)
+  result.gifSearch = search
+  if (search) {
+    await click(wc, search)
+    await sleep(300)
+    const focused = await run(wc, `(() => { const el = document.activeElement; return el && el.tagName === 'INPUT' && /search/i.test([el.placeholder, el.getAttribute('aria-label')].join(' ')) })()`)
+    result.searchFocused = focused
+    if (focused) {
+      await wc.insertText(gifQuery)
+      await sleep(2500)
+      result.gifResults = await run(wc, String.raw`(() => {
+        // The picker: the closest ancestor of the search box that holds at least 3 pictures.
+        const input = document.activeElement
+        let box = input
+        const media = (node) => [...node.querySelectorAll('img, video')].filter((el) => el.getBoundingClientRect().width > 30)
+        while (box && box.parentElement && media(box).length < 3) box = box.parentElement
+        if (!box) return { found: false }
+        const r0 = box.getBoundingClientRect()
+        const texts = [...box.querySelectorAll('*')].filter((el) => el.children.length === 0 && (el.innerText || '').trim()).map((el) => el.innerText.trim()).slice(0, 20)
+        const items = media(box).slice(0, 8).map((el) => { const r = el.getBoundingClientRect(); const holder = el.closest('button, [role="button"], [tabindex]'); return { tag: el.tagName, alt: el.alt || '', label: holder?.getAttribute('aria-label') || '', src: el.currentSrc || el.src || '', x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), w: Math.round(r.width), h: Math.round(r.height), clickable: Boolean(holder) } })
+        return { found: true, box: { x: Math.round(r0.left), y: Math.round(r0.top), w: Math.round(r0.width), h: Math.round(r0.height) }, texts, items }
+      })()`)
+    }
+  }
+  await key(wc, 'Escape')
+  await sleep(400)
+  await key(wc, 'Escape')
+  await sleep(600)
+  const after = await run(wc, DM_STATE).catch(() => ({}))
+  result.composerAfter = after.text || ''
+  result.lastAfter = (await readThread(wc)).slice(-1).map((m) => ({ ours: m.ours, text: m.text.slice(0, 60) }))
+  return result
+}
+
+module.exports = { openUrl, run, click, key, sleep, aborted, comment, dm, unfollow, pageProblem, readThread, threadAllows, lastVoiceWaveform, probeChat, chatState, replyRelaunch }

@@ -270,7 +270,7 @@ function renderHomeWarn() {
 
 let launchData = null
 let launchTimer = null
-const launchTasks = { voice: true, comment: true, relaunch1: true, relaunch2: true, unfollow: true }
+const launchTasks = { voice: true, comment: true, relaunch1: true, relaunch2: true, unfollow: true, reply: true }
 
 function timeLabel(ms) {
   return new Date(ms).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' })
@@ -315,6 +315,12 @@ function unfollowNote(counts) {
   return parts.length ? `${parts.join(', ')} · the chat is checked first` : 'no reply 3 days after the 2nd relaunch, or said no'
 }
 
+// Reply relaunches (ongoing conversations that went quiet): how far the checks are.
+function repliesNote(replies) {
+  if (!replies) return ''
+  return `${number(replies.checked)} of ${number(replies.conversations)} Replied chats checked · ${number(replies.waitingOnThem)} waiting on them · ${number(replies.sentToday)} / ${number(replies.limit)} reply relaunches today`
+}
+
 function launchCheckbox(key, label, count, extra) {
   const row = el('label', 'launch-task')
   const box = document.createElement('input')
@@ -341,6 +347,8 @@ function renderLaunch() {
     head.append(el('span', 'launch-pill', 'Running'), el('strong', '', data.current || waitingLabel(data)))
     card.append(head)
     card.append(el('p', 'launch-line', `Sent so far: ${data.sent.voice} voicenotes · ${data.sent.comment} comments · ${data.sent.dm} relaunches · ${data.sent.unfollow || 0} unfollows. Runs until ${data.window.endHour}:00, then continues tomorrow.`))
+    const replies = repliesNote(data.preview?.replies)
+    if (replies) card.append(el('p', 'launch-line', `Quiet conversations: ${replies}`))
     const stop = button('Stop', 'ghost small', async () => {
       stop.disabled = true
       launchData = { ...launchData, ...(await api('/api/autopilot/stop', {}).catch(() => ({}))) }
@@ -361,13 +369,14 @@ function renderLaunch() {
       launchCheckbox('relaunch1', 'relaunches', counts.relaunch1),
       launchCheckbox('relaunch2', '2nd relaunches', counts.relaunch2),
       launchCheckbox('unfollow', 'unfollows', counts.unfollow || 0, unfollowNote(counts)),
+      launchCheckbox('reply', 'quiet conversations to check (reply relaunches)', counts.reply || 0, repliesNote(data.preview.replies)),
     )
     card.append(list)
     let summary = 'Nothing to send right now.'
     if (plan.total) {
       const when = plan.later ? `from ${timeLabel(plan.startAt)}` : 'from now'
       summary = `Today: ${plan.today.voice} voicenotes, ${plan.today.comment} comments, ${plan.today.dm} relaunch DMs, ${plan.today.unfollow} unfollows, spread ${when} until ${timeLabel(plan.windowEnd)}, about one every ${plan.minutes} min.`
-      if ((counts.unfollow || 0) > plan.today.unfollow && launchTasks.unfollow) summary += ` Unfollows go out at most 20 a day; the other ${number(counts.unfollow - plan.today.unfollow)} follow on the next days.`
+      if ((counts.unfollow || 0) > plan.today.unfollow && launchTasks.unfollow) summary += ` Unfollows go out at most 40 a day; the other ${number(counts.unfollow - plan.today.unfollow)} follow on the next days.`
       if (plan.dmWanted > plan.today.dm) summary += ` Relaunches go out at 20 first and 10 second relaunches a day, so the other ${number(plan.dmWanted - plan.today.dm)} follow on the next days.`
     }
     card.append(el('p', 'launch-line', summary))
