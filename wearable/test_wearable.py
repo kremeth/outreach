@@ -129,6 +129,28 @@ class WearableTests(unittest.TestCase):
         self.assertEqual(record["verdict"], "possible")
         self.assertEqual(record["brands"], [])
 
+    def test_photo_numbers_are_the_profile_order_even_with_a_failed_download(self):
+        self.make_profile("h", 6)
+        profile_path = self.tmp / "profiles" / "h.json"
+        profile = json.loads(profile_path.read_text())
+        profile["posts"][2] = {"index": 3, "error": "download failed"}  # photo 3 missing
+        profile_path.write_text(json.dumps(profile))
+        first = {"notes": "Photo 5: watch", "wearable": "yes", "sightings": [{"photo": 5, "brand": "Garmin", "wearer": "owner", "certainty": "confirmed", "evidence": "Photo 5"}]}
+        second = {"photos": [{"photo": 5, "seen": "yes", "brand": "Garmin", "wearer": "owner", "certainty": "confirmed", "evidence": "left wrist"}]}
+        replies = [{"candidates": [{"content": {"parts": [{"text": json.dumps(reply)}]}}], "usageMetadata": {"promptTokenCount": 1000, "candidatesTokenCount": 50}} for reply in (first, second)]
+        client = gemini.Gemini(budget=1.0)
+        with mock.patch.object(gemini, "_post", side_effect=replies) as post:
+            record = detect.detect_photos("h", client)
+        labels = [part["text"] for part in post.call_args_list[0][0][1]["contents"][0]["parts"] if "text" in part][:-1]
+        self.assertEqual(labels, ["Photo 1:", "Photo 2:", "Photo 4:", "Photo 5:", "Photo 6:"])
+        sent = [part for part in post.call_args_list[1][0][1]["contents"][0]["parts"] if "inline_data" in part]
+        self.assertEqual(len(sent), 1)
+        import base64
+        self.assertEqual(base64.b64decode(sent[0]["inline_data"]["data"]), (self.tmp / "images" / "h" / "5.jpg").read_bytes())
+        self.assertEqual(record["decision"], "Yes")
+        self.assertEqual(record["devices"][0]["best_tile"], 5)
+        self.assertTrue(record["devices"][0]["verified"])
+
     def test_network_has_two_logits_and_softmax(self):
         import torch
         from wearable.train import SmallNet

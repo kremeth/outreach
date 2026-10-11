@@ -136,18 +136,19 @@ def best_tile(device, count):
 
 def verify(profile, answer, count, gemini, model, record):
     """The closer look: each device's best photo at full resolution. Returns the final answer."""
-    paths = post_images(profile)
+    # Photo n is the profile's n-th photo (data/wearable/images/<user>/<n>.jpg), whatever failed to download.
+    files = {post["index"]: config.IMAGES_ROOT / post["file"] for post in profile.get("posts", []) if post.get("file")}
     rank = {"confirmed": 0, "probable": 1, "possible": 2}
     chosen = []
     for device in sorted(answer.get("devices", []), key=lambda d: rank.get(d.get("certainty"), 3)):
         tile = best_tile(device, count)
-        if tile and tile <= len(paths) and tile not in [t for t, _ in chosen]:
+        if tile and tile in files and tile not in [t for t, _ in chosen]:
             chosen.append((tile, device))
     chosen = chosen[:4]
     if not chosen:
         return {**answer, "wearable": "possible"}
     labels = [f"Photo {tile} (thumbnail guess: {device.get('brand')}; {str(device.get('evidence', ''))[:160]}):" for tile, device in chosen]
-    second = gemini.generate(model, ZOOM_VERSION, [paths[tile - 1].read_bytes() for tile, _ in chosen], ZOOM_PROMPT, ZOOM_SCHEMA, max_output_tokens=2000, labels=labels)
+    second = gemini.generate(model, ZOOM_VERSION, [files[tile].read_bytes() for tile, _ in chosen], ZOOM_PROMPT, ZOOM_SCHEMA, max_output_tokens=2000, labels=labels)
     record["zoomed"] = True
     record["stage2"] = second.get("answer", {})
     record["cost"] += second.get("usd", 0.0)
@@ -177,6 +178,107 @@ def verify(profile, answer, count, gemini, model, record):
         # The first look pointed at photos where the closer look sees nothing: kept (never No), unverified.
         return {**answer, "wearable": "unverified", "devices": [{**d, "certainty": "possible"} for d in answer.get("devices", [])]}
     return {**answer, "wearable": "yes" if any(d["certainty"] != "possible" for d in found) else "possible", "devices": found}
+
+
+PHOTOS_VERSION = "photos-v1"
+
+PHOTOS_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "notes": {"type": "STRING"},
+        "wearable": {"type": "STRING", "enum": ["yes", "possible", "no", "insufficient"]},
+        "sightings": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "photo": {"type": "INTEGER"},
+                    "brand": {"type": "STRING", "enum": DEVICE_ENUM},
+                    "wearer": {"type": "STRING", "enum": WEARER},
+                    "certainty": {"type": "STRING", "enum": CERTAINTY},
+                    "evidence": {"type": "STRING"},
+                },
+                "required": ["photo", "brand", "wearer", "certainty", "evidence"],
+            },
+        },
+    },
+    "required": ["notes", "wearable", "sightings"],
+}
+
+PHOTOS_PROMPT = """Above are all {count} photos from one Instagram creator's profile, in the order they appear on the profile (carousel slides included). Each photo comes right after its own label, "Photo n:". These are exactly the photos a person reviewing this creator looks at.
+
+Task: find fitness wearables worn by the account owner: smartwatches and sports watches (Apple Watch, Garmin, Polar and others), screenless fitness bands (WHOOP, worn on the wrist or upper arm), and smart rings (Oura and others).
+
+Inspect every photo closely: every wrist, forearm, upper arm, hand and finger, including small, blurry, background, mirror-selfie and partly hidden ones.
+
+notes: short facts, only for photos where a wrist, upper arm or hand is visible, e.g. "Photo 3: left wrist bare. Photo 7: mirror selfie, white band on left wrist". Use the label numbers exactly.
+
+wearable:
+- "yes": the account owner clearly wears a smartwatch, fitness band or smart ring in at least one photo.
+- "possible": something could be one but you cannot be sure (e.g. a dark band on a wrist, a thick ring), or you cannot tell whether the person wearing it is the owner.
+- "no": people's wrists and hands are visible and the owner wears none.
+- "insufficient": no people, or wrists and hands are not visible enough to tell.
+Only the account owner counts: the person who appears most often, in selfies or as the main subject. A device worn only by someone else does not make it "yes".
+Being athletic, running or being in a gym is NOT evidence. Ordinary bracelets, bangles, jewellery rings and analogue dress watches without a screen do not count.
+
+sightings: one entry per photo in which you can actually see a device (the same device in several photos: one entry each, at most 8 entries, clearest first). photo is the number from that photo's label. Never list a photo you did not see the device in.
+brand from visual evidence only:
+- Apple Watch: rectangular face with rounded corners, digital crown and side button.
+- Garmin: round face, usually five side buttons, sometimes GARMIN text on the bezel.
+- WHOOP: screenless fabric or knit band with a small sensor pod, on the wrist or upper arm.
+- Polar: round sports watch, Polar logo.
+- Oura: thick, smooth, rounded ring (matte black, silver, gold), often on the index or ring finger.
+Otherwise "Unknown smartwatch", "Unknown fitness band" or "Unknown smart ring" (or "Other brand" if another brand is identifiable).
+wearer: "owner", "someone else" or "unclear".
+certainty: "confirmed" when the brand is clear, "probable" when the shape strongly suggests it, "possible" when unsure.
+evidence: one sentence about that photo, e.g. "Mirror selfie, white Apple Watch on her left wrist holding the phone"."""
+
+
+def detect_photos(username, gemini, model="gemini-3.1-flash-lite", zoom_model="gemini-3.8-flash"):
+    """Every profile photo sent on its own, labelled with its number (the numbers are the profile's
+    photo order, the same as on the Prospecting screen and in data/wearable/images/<user>/<n>.jpg);
+    then the closer look checks the photos it named at full size. Only checked photos are evidence."""
+    profile = load_profile(username)
+    if not profile or profile.get("status") != "ok":
+        return {"username": username, "decision": "Unknown", "status": (profile or {}).get("status", "not acquired"), "devices": [], "cost": 0.0, "prompt": PHOTOS_VERSION}
+    text = signals.mentions(profile)
+    photos = [(post["index"], config.IMAGES_ROOT / post["file"]) for post in profile.get("posts", []) if post.get("file")]
+    numbers = {n for n, _ in photos}
+    first = gemini.generate(
+        model, PHOTOS_VERSION, [path.read_bytes() for _, path in photos], PHOTOS_PROMPT.format(count=len(photos)), PHOTOS_SCHEMA,
+        max_output_tokens=2500, media_resolution="MEDIA_RESOLUTION_LOW", labels=[f"Photo {n}:" for n, _ in photos],
+    )
+    answer = first.get("answer", {})
+    record = {
+        "username": username,
+        "status": "ok",
+        "prompt": PHOTOS_VERSION,
+        "model": model,
+        "images": len(photos),
+        "stage1": answer,
+        "text_mentions": text,
+        "cost": first.get("usd", 0.0),
+        "tokens": [first.get("input_tokens", 0), first.get("output_tokens", 0)],
+        "zoomed": False,
+    }
+    sightings = [s for s in answer.get("sightings", []) if s.get("photo") in numbers] if "_unparsed" not in answer else []
+    final = answer
+    if answer.get("wearable") in ("yes", "possible") and sightings:
+        devices = [{**s, "best_tile": s["photo"], "tiles": [s["photo"]]} for s in sightings]
+        final = verify(profile, {**answer, "devices": devices}, max(numbers), gemini, zoom_model, record)
+    elif answer.get("wearable") in ("yes", "possible"):
+        final = {**answer, "wearable": "possible"}
+    devices = final.get("devices", [])
+    verdict = final.get("wearable", "insufficient")
+    brands = sorted({d["brand"] for d in _strong(devices) if d["brand"] in config.BRANDS} | set(text))
+    record.update({
+        "verdict": verdict,
+        "decision": "Yes" if verdict in ("yes", "possible") or text else ("No" if verdict == "no" else "Unknown"),
+        "brands": brands,
+        "possible_brands": sorted({d["brand"] for d in devices if d["brand"] in config.BRANDS} | set(text)),
+        "devices": devices,
+    })
+    return record
 
 
 def detect(username, gemini, model="gemini-3.1-flash-lite", zoom=True, zoom_model=None, per_grid=9, limit=None):
