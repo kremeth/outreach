@@ -717,21 +717,20 @@ function paintModel(item, prediction) {
       gauge.append(el('span', 'model-side-confidence-label', 'Wearable'), meter, el('span', 'option-chance-value', String(value)))
       modelPanel.append(gauge)
     }
-    // Profile match: cosine similarity to the creators you did collabs with. Red low, orange medium, green high.
+    // Profile match: an active person whose content is their own life. Red low, orange medium, green high.
     if (prediction.match && Number.isFinite(prediction.match.score)) {
       const value = Math.max(0, Math.min(100, Math.round(prediction.match.score)))
-      const colors = { high: '#3fa34d', medium: '#e8912c', low: '#d64545' }
+      const colors = { high: '#3fa34d', medium: '#e8912c', low: '#d64545' } // high 65+, medium 40-64
       const gauge = el('div', 'model-side-confidence')
       const meter = el('span', 'option-meter')
       const fill = el('i', '')
       fill.style.width = `${Math.max(4, value)}%`
       fill.style.background = colors[prediction.match.level] || colors.low
       meter.append(fill)
-      gauge.title = `Profile match ${value}/100 (${prediction.match.level}): cosine similarity ${prediction.match.cosine} to the creators you did collabs with; 50 is as close as a typical collab creator`
+      gauge.title = `Profile match ${value}/100 (${prediction.match.level}): active ${prediction.match.active}, own lifestyle content ${prediction.match.lifestyle}`
       gauge.append(el('span', 'model-side-confidence-label', 'Profile'), meter, el('span', 'option-chance-value', String(value)))
       modelPanel.append(gauge)
-      const closest = (prediction.match.closest || []).map((name) => `@${name}`).join(', ')
-      const line = [prediction.match.niche, closest && `closest collabs: ${closest}`].filter(Boolean).join(' · ')
+      const line = [prediction.match.niche, prediction.match.evidence].filter(Boolean).join(' · ')
       if (line) modelPanel.append(el('div', 'model-side-where', line))
     }
     if (prediction.evidence) {

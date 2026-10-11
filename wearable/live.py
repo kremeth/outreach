@@ -110,7 +110,7 @@ def run_once(args, out, gemini):
     # Profiles judged before this profile match (or with an older one) get it now (a new line; the latest counts).
     for item in items:
         record = latest.get(item["username"])
-        if record and shown(record) and (record.get("match") or {}).get("version") != style.MATCH_VERSION and style.MODEL_PATH.exists():
+        if record and shown(record) and (record.get("match") or {}).get("version") != style.MATCH_VERSION:
             try:
                 add_match(record, gemini)
             except BudgetExceeded:
@@ -130,8 +130,8 @@ def shown(record):
 
 
 def add_match(record, gemini):
-    """How close the profile is to the creators we did collabs with (wearable.style), for the ones shown."""
-    if not shown(record) or not style.MODEL_PATH.exists():
+    """Profile match (wearable.style): an active person whose content is their own life, for the ones shown."""
+    if not shown(record):
         return
     try:
         match = style.score(record["username"], gemini)
