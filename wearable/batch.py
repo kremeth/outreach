@@ -181,13 +181,14 @@ def step():
     return written, sent
 
 
-def spent_today():
-    """USD of batch answers logged today (for the daily cap)."""
-    today = time.strftime("%Y-%m-%d")
+def spent_today(run="live-prospecting"):
+    """USD the live prospecting spent today, live calls and batches, across restarts (for the daily cap).
+    Days are UTC, like the spend log."""
+    today = time.strftime("%Y-%m-%d", time.gmtime())
     total = 0.0
     if config.SPEND.exists():
         for line in config.SPEND.read_text().split("\n"):
-            if '"batch": true' in line:
+            if line.strip() and f'"run": "{run}"' in line:
                 entry = json.loads(line)
                 if entry["at"][:10] == today:
                     total += entry["usd"]

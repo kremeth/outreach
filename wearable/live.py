@@ -42,7 +42,7 @@ def main():
             day = time.strftime("%Y-%m-%d")
             live = Gemini(budget=args.budget, run="live-prospecting", purpose="wearable model, live prospecting")
             later = Gemini(budget=args.budget, run="live-prospecting", purpose="wearable model, batch", defer=True)
-        spent = live.spent + batch.spent_today()
+        spent = batch.spent_today()  # live calls and batches today, whatever restarts happened
         worked = "budget" if spent >= args.budget else run_once(args, out, live, later)
         if worked != "budget":
             try:
