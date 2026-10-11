@@ -63,8 +63,9 @@ def record_answer(key, payload, model, prompt_version, purpose, run, batch=False
     with open(config.SPEND, "a") as log:
         log.write(json.dumps({"at": now, "run": run, "model": model, "prompt": prompt_version, "input": input_tokens, "output": output_tokens, "usd": usd, **({"batch": True} if batch else {})}) + "\n")
     text_out = "".join(part.get("text", "") for part in (payload.get("candidates") or [{}])[0].get("content", {}).get("parts", []) if not part.get("thought"))
+    blocked = (payload.get("promptFeedback") or {}).get("blockReason") or ((payload.get("candidates") or [{}])[0].get("finishReason") in ("SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST") and not text_out and (payload.get("candidates") or [{}])[0].get("finishReason"))
     try:
-        answer = json.loads(text_out)
+        answer = {"_blocked": blocked} if blocked else json.loads(text_out)
     except json.JSONDecodeError:
         answer = {"_unparsed": text_out[:2000]}
     result = {"answer": answer, "model": model, "prompt": prompt_version, "input_tokens": input_tokens, "output_tokens": output_tokens, "usd": usd, "at": now, **({"batch": True} if batch else {})}

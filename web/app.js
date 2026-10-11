@@ -636,6 +636,9 @@ function modelDecision(prediction) {
     const brands = prediction.brands.length ? prediction.brands : prediction.possibleBrands
     return { label: 'Yes', detail: brands.length ? brands.join(', ') : 'Wearable, brand not identified', tone: 'yes' }
   }
+  if (prediction.verdict === 'blocked') {
+    return { label: 'Unsure', detail: "Google's content filter would not let the model look at these photos", tone: 'unsure' }
+  }
   if (prediction.verdict === 'unverified') {
     return { label: 'Unsure', detail: 'The quick look thought it saw a wearable, but the closer look at those photos could not find one', tone: 'unsure' }
   }

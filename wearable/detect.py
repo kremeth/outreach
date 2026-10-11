@@ -332,11 +332,11 @@ def detect_photos(username, gemini, model="gemini-3.1-flash-lite", zoom_model="g
         "tokens": [first.get("input_tokens", 0), first.get("output_tokens", 0)],
         "zoomed": False,
     }
-    parsed = "_unparsed" not in answer
+    parsed = "_unparsed" not in answer and "_blocked" not in answer
     sightings = [s for s in answer.get("sightings", []) if s.get("photo") in numbers] if parsed else []
     sightings.sort(key=lambda s: -int(s.get("confidence") or 0))
     # An unreadable answer says nothing about the profile: "unreadable" (judged again later, never a No).
-    verdict = answer.get("wearable", "insufficient") if parsed else "unreadable"
+    verdict = answer.get("wearable", "insufficient") if parsed else ("blocked" if "_blocked" in answer else "unreadable")
     devices, confidence = [], 0
     if sightings:
         chosen = list({s["photo"]: s for s in reversed(sightings)}.items())[::-1]

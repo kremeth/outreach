@@ -123,6 +123,9 @@ def run_once(args, out, live, later):
         except Exception as error:  # one bad profile never stops the run
             record = {"username": username, "decision": "Unknown", "status": "error", "error": str(error)[:300], "devices": [], "brands": [], "cost": 0.0}
         record["sheetRow"] = item.get("sheetRow")
+        # Every answer is tied to the photos it was made on (private or missing profiles too), so it
+        # counts as current until the profile is fetched again.
+        record.setdefault("acquired_at", saved.get("acquiredAt", ""))
         with open(out, "a") as handle:
             handle.write(json.dumps(record) + "\n")
         worked = True

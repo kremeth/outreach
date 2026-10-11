@@ -77,7 +77,7 @@ def describe(username, gemini):
     text = PROMPT.format(username=username, name=profile.get("name", ""), followers=profile.get("followers", "") or "followers unknown", bio=str(profile.get("bio", ""))[:400], captions=captions or "none")
     result = gemini.generate(DESCRIBE_MODEL, VERSION, [path.read_bytes() for path in files], text, SCHEMA, max_output_tokens=500, media_resolution="MEDIA_RESOLUTION_LOW")
     answer = result.get("answer", {})
-    return None if "_unparsed" in answer else answer
+    return None if "_unparsed" in answer or "_blocked" in answer else answer
 
 
 def level(score):

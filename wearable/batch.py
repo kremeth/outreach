@@ -169,6 +169,8 @@ def collect():
             written += 1
         job["state"], job["finished"] = "done", time.time()
     _save_jobs(jobs)
+    global _known
+    _known = None  # a request whose answer did not come back usable can be queued again
     return written
 
 
