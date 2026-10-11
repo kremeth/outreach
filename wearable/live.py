@@ -73,6 +73,7 @@ def run_once(args, out, gemini):
     current = {
         username for username, record in latest.items()
         if record.get("prompt") == detect.PHOTOS_VERSION and record.get("acquired_at") == (profile_of(username) or {}).get("acquiredAt")
+        and record.get("verdict") != "unreadable" and record.get("status") != "error"
     }
     worked = False
     for position, item in enumerate(items, 1):
