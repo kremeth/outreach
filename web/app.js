@@ -714,8 +714,23 @@ function paintModel(item, prediction) {
       fill.style.background = value >= 75 ? 'var(--fill)' : value >= 45 ? '#d9a21b' : 'var(--line-strong)'
       meter.append(fill)
       gauge.title = `${value}/100: how sure the model is about this wearable`
-      gauge.append(el('span', 'model-side-confidence-label', 'Confidence'), meter, el('span', 'option-chance-value', String(value)))
+      gauge.append(el('span', 'model-side-confidence-label', 'Wearable'), meter, el('span', 'option-chance-value', String(value)))
       modelPanel.append(gauge)
+    }
+    // Profile match: how much this profile looks like the ones you say Yes to. Red low, orange medium, green high.
+    if (prediction.match && Number.isFinite(prediction.match.score)) {
+      const value = Math.max(0, Math.min(100, Math.round(prediction.match.score)))
+      const colors = { high: '#3fa34d', medium: '#e8912c', low: '#d64545' }
+      const gauge = el('div', 'model-side-confidence')
+      const meter = el('span', 'option-meter')
+      const fill = el('i', '')
+      fill.style.width = `${Math.max(4, value)}%`
+      fill.style.background = colors[prediction.match.level] || colors.low
+      meter.append(fill)
+      gauge.title = `Profile match ${value}/100 (${prediction.match.level}): 50 is a typical profile you said Yes to${prediction.match.niche ? ` · ${prediction.match.niche}` : ''}`
+      gauge.append(el('span', 'model-side-confidence-label', 'Profile'), meter, el('span', 'option-chance-value', String(value)))
+      modelPanel.append(gauge)
+      if (prediction.match.niche) modelPanel.append(el('div', 'model-side-where', prediction.match.niche))
     }
     if (prediction.evidence) {
       const button = document.createElement('button')

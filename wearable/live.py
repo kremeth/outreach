@@ -14,7 +14,7 @@ import json
 import sys
 import time
 
-from . import config, detect
+from . import config, detect, style
 from .gemini import BudgetExceeded, Gemini
 
 SCREEN_MODEL = "gemini-3.1-flash-lite"
@@ -102,11 +102,46 @@ def run_once(args, out, gemini):
         except Exception as error:  # one bad profile never stops the run
             record = {"username": username, "decision": "Unknown", "status": "error", "error": str(error)[:300], "devices": [], "brands": [], "cost": 0.0}
         record["sheetRow"] = item.get("sheetRow")
+        add_match(record, gemini)
         with open(out, "a") as handle:
             handle.write(json.dumps(record) + "\n")
         worked = True
         print(f"{position}/{len(items)} @{username}: {record['decision']} {record.get('brands') or ''} (${gemini.spent:.3f} today)", flush=True)
+    # Profiles judged before the profile match existed get it now (a new line; the latest one counts).
+    for item in items:
+        record = latest.get(item["username"])
+        if record and shown(record) and "match" not in record and style.MODEL_PATH.exists():
+            try:
+                add_match(record, gemini)
+            except BudgetExceeded:
+                return "budget"
+            if "match" in record:
+                with open(out, "a") as handle:
+                    handle.write(json.dumps(record) + "\n")
+                worked = True
     return worked
+
+
+def shown(record):
+    """The profiles a person still looks at: the model's Yes and Unsure (its No goes to the sheet)."""
+    if record.get("status") != "ok":
+        return False
+    return record.get("decision") == "Yes" or (record.get("decision") == "Unknown" and record.get("verdict") != "insufficient")
+
+
+def add_match(record, gemini):
+    """How much the profile looks like the ones we say Yes to (wearable.style), for the ones shown."""
+    if not shown(record) or not style.MODEL_PATH.exists():
+        return
+    try:
+        match = style.score(record["username"], gemini)
+    except BudgetExceeded:
+        raise
+    except Exception as error:  # the match is extra: never lose the wearable answer over it
+        print(f"profile match @{record['username']}: {error}", flush=True)
+        return
+    if match:
+        record["match"] = match
 
 
 if __name__ == "__main__":

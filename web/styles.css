@@ -1501,4 +1501,4 @@ a.person.current {
 .ig-filter:hover { color: var(--ink, inherit); }
 .model-side-confidence { display: flex; align-items: center; gap: 8px; margin: 10px 0 2px; }
 .model-side-confidence .option-meter { flex: 1; width: auto; }
-.model-side-confidence-label { font-size: 13px; color: var(--muted); }
+.model-side-confidence-label { width: 60px; font-size: 13px; color: var(--muted); }
