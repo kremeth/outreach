@@ -122,7 +122,7 @@ const TASKS = [
     title: 'Hustling',
     hint: 'New posts to pick a comment for',
     count: (data) => data.hustle.toDo,
-    side: (data) => `${number(data.hustle.picked || 0)} picked`,
+    side: (data) => (data.hustle.auto?.on ? (data.hustle.auto.until ? `Auto-commenting · ${number(data.hustle.auto.pickedToday)} today` : `Auto-commenting starts after ${number(data.hustle.auto.waiting)} waiting picks`) : `${number(data.hustle.picked || 0)} picked`),
   },
   {
     id: 'relaunch/1',
@@ -626,7 +626,7 @@ function shell({ kicker, title, meta, corner }) {
   who.append(el('h1', '', title || ''))
   if (meta) who.append(el('p', 'meta', meta))
   const cornerEl = el('div', 'status task-corner')
-  if (corner) for (const line of [].concat(corner)) cornerEl.append(el('div', '', line))
+  if (corner) for (const line of [].concat(corner)) cornerEl.append(line instanceof Node ? line : el('div', '', line))
   top.append(who, cornerEl)
   header.append(top)
   const main = el('main', 'task-main')
@@ -873,6 +873,17 @@ function hustleScreen() {
     const item = queue[index]
     const corner = [`${picked} / ${DAILY_COMMENTS} picked`]
     if (note) corner.push(note)
+    // Auto-commenting: the pick model picks the top comment on its own; one click stops it.
+    const auto = todoData?.hustle?.auto
+    if (auto?.on) {
+      const until = auto.until ? `until ${new Date(auto.until).toLocaleString('en-AU', { weekday: 'short', hour: 'numeric', minute: '2-digit' })}` : `for ${auto.hours} h from its first pick (after the ${auto.waiting} picks waiting)`
+      const stop = button(`Auto-commenting ${until} · ${auto.pickedToday} picked today · Stop`, 'ghost', async () => {
+        await api('/api/hustle/auto', { hours: 0 }).catch(() => {})
+        if (todoData?.hustle?.auto) todoData.hustle.auto.on = false
+        render()
+      })
+      corner.push(stop)
+    }
     const parts = shell({
       kicker: item ? `Hustling · ${index + 1} of ${queue.length}` : 'Hustling',
       title: item ? item.name : (picked ? `${picked} comments picked` : 'All caught up'),

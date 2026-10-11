@@ -342,6 +342,84 @@ async function autoNo() {
 // Saving is idempotent and never overwrites: an answer the sheet already holds counts as saved, someone
 // else's answer is never replaced, and a temporary failure is retried (retry: true becomes a 503).
 // by = 'model': the wearable model's own decision (auto No or auto Yes), from autoYes or the Prospecting screen.
+// Auto-commenting (trial, 11 Oct): for each creator with a new post, the 5 comments are drafted as
+// usual and the pick model's top one is picked, exactly like a person's pick; Launch then posts it with
+// a like within the usual limits. On for a set time (data/hustle/auto-comment.json). It keeps at most
+// AUTO_AHEAD picks waiting for Launch (the posts stay fresh and nothing is drafted for nothing) and at
+// most DAILY_PICKS a day. Logged in the training tab as 'auto picked' (never used to train the model).
+const AUTO_COMMENT_PATH = path.join(__dirname, 'data', 'hustle', 'auto-comment.json')
+const AUTO_AHEAD = 6
+const DAILY_PICKS = 50
+let autoCommentBusy = false
+const autoCommentPassed = new Set()
+
+function autoCommentState() {
+  try {
+    return JSON.parse(fs.readFileSync(AUTO_COMMENT_PATH, 'utf8'))
+  } catch {
+    return { until: 0 }
+  }
+}
+
+function setAutoComment(state) {
+  fs.mkdirSync(path.dirname(AUTO_COMMENT_PATH), { recursive: true })
+  fs.writeFileSync(AUTO_COMMENT_PATH, JSON.stringify(state, null, 1))
+  return autoCommentStatus()
+}
+
+function autoCommentStatus() {
+  const state = autoCommentState()
+  const today = new Date().toDateString()
+  const picks = (state.picks || []).filter((pick) => new Date(pick.at).toDateString() === today)
+  // Armed: the trial's hours start counting at its first automatic pick (the person's own picks waiting
+  // for Launch go first).
+  const on = Boolean(state.armed) && (!state.until || Date.now() < state.until)
+  return { on, armed: Boolean(state.armed), until: state.until || 0, hours: state.hours || 0, pickedToday: picks.length, waiting: hustle.picks().length, last: (state.picks || []).slice(-5).reverse(), note: state.note || '' }
+}
+
+async function autoComment() {
+  const state = autoCommentState()
+  if (autoCommentBusy || !autoCommentStatus().on) return
+  autoCommentBusy = true
+  try {
+    if (autoCommentStatus().pickedToday >= DAILY_PICKS || hustle.picks().length >= AUTO_AHEAD) return
+    await log.refresh(5000)
+    const next = hustle.queue().find((item) => !autoCommentPassed.has(`${item.username}:${item.latest.pk}`))
+    if (!next) return
+    const key = `${next.username}:${next.latest.pk}`
+    let drafted
+    try {
+      drafted = await commentDrafts(next.username)
+    } catch (error) {
+      autoCommentPassed.add(key) // taken by the other computer, already handled, unreadable: next one
+      console.error('auto comment', next.username, error.message)
+      return
+    }
+    const scores = drafted.scores
+    if (!Array.isArray(scores) || scores.length !== drafted.comments.length) {
+      autoCommentPassed.add(key)
+      setAutoComment({ ...state, note: 'The pick model did not score the comments, so nothing was picked.' })
+      return
+    }
+    const index = scores.indexOf(Math.max(...scores))
+    const text = drafted.comments[index]
+    if (hustle.alreadyHandled(next.username, drafted.pk)) return
+    await hustle.pick(next.username, { pk: String(drafted.pk), code: String(drafted.code), text })
+    training.record({
+      username: next.username, name: drafted.name, followers: drafted.followers, bio: drafted.bio, pk: drafted.pk, code: drafted.code,
+      caption: drafted.caption, description: drafted.description, transcript: drafted.transcript, format: drafted.format,
+      predicted: scores, comments: drafted.comments, outcome: 'auto picked', pickedIndex: index + 1, pickedText: text, seconds: 0,
+    })
+    const fresh = autoCommentState()
+    setAutoComment({ ...fresh, note: '', until: fresh.until || Date.now() + (fresh.hours || 24) * 3600 * 1000, picks: [...(fresh.picks || []), { at: new Date().toISOString(), username: next.username, text, score: scores[index], code: drafted.code }].slice(-500) })
+    console.log(`auto comment @${next.username}: "${text}" (${scores[index]}%)`)
+  } catch (error) {
+    console.error('auto comment', error.message)
+  } finally {
+    autoCommentBusy = false
+  }
+}
+
 // The wearable model's automatic Yes (all three gauges pass: wearable 85+, profile 65+, device 80+):
 // written through decide like a person's Yes (live check, never over an answer, device for the
 // voicenote), a few per minute, only for rows nobody is looking at.
@@ -723,7 +801,7 @@ async function todo() {
     guard,
     prospecting: { remaining: counts().remaining, total: rows.length, yesToday: counts().yesToday, yesTarget: sendQueue.DAILY_LIMIT },
     voice: { toSend: voice.length, sentToday: Math.max(sendQueue.sentToday(), guard.app ? guard.kinds.voice.today : 0), limit: sendQueue.DAILY_LIMIT },
-    hustle: hustle.status(),
+    hustle: { ...hustle.status(), auto: autoCommentStatus() },
     relaunch: { 1: relaunch.summary(yesRows, 1), 2: relaunch.summary(yesRows, 2) },
     warnings: [loadError, refreshError, writeNote()].filter(Boolean),
     sheetRefreshedAt: sheetRefreshedAt ? new Date(sheetRefreshedAt).toISOString() : '',
@@ -1208,6 +1286,16 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, { ...autopilot.status(), preview: await autopilot.preview(guard), guard })
       return
     }
+    if (req.method === 'GET' && url.pathname === '/api/hustle/auto') {
+      sendJson(res, 200, autoCommentStatus())
+      return
+    }
+    if (req.method === 'POST' && url.pathname === '/api/hustle/auto') {
+      const body = await readBody(req)
+      const hours = Math.max(0, Math.min(72, Number(body.hours) || 0))
+      sendJson(res, 200, setAutoComment({ ...autoCommentState(), armed: hours > 0, hours, until: 0, note: '' }))
+      return
+    }
     if (req.method === 'POST' && url.pathname === '/api/hustle/training') {
       const body = await readBody(req)
       sendJson(res, 200, { ok: training.record(body) })
@@ -1350,6 +1438,7 @@ async function boot() {
     await autoNo()
     await autoYes()
   }, 60 * 1000).unref()
+  setInterval(autoComment, 90 * 1000).unref()
   // Keeps the model's list ahead of the person (it moves on as profiles get decided).
   setInterval(() => { if (rows.length) writeUpcoming() }, 5 * 60 * 1000).unref()
   apiUsage.startSync()
