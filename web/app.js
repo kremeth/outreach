@@ -704,32 +704,32 @@ function paintModel(item, prediction) {
     const decision = modelDecision(prediction)
     const head = el('div', `model-side-decision ${decision.tone}`, decision.label)
     modelPanel.append(head, el('div', 'model-side-detail', decision.detail))
-    // How sure it is about the wearable it picked (0-100), when it picked one.
-    if (prediction.decision === 'Yes' && Number.isFinite(prediction.confidence)) {
-      const value = Math.max(0, Math.min(100, Math.round(prediction.confidence)))
+    // Three gauges: is there a wearable on the owner, which exact device, and does the profile fit.
+    const gaugeRow = (label, value, color, title) => {
       const gauge = el('div', 'model-side-confidence')
       const meter = el('span', 'option-meter')
       const fill = el('i', '')
-      fill.style.width = `${value}%`
-      fill.style.background = value >= 75 ? 'var(--fill)' : value >= 45 ? '#d9a21b' : 'var(--line-strong)'
+      fill.style.width = `${Math.max(4, value)}%`
+      fill.style.background = color
       meter.append(fill)
-      gauge.title = `${value}/100: how sure the model is about this wearable`
-      gauge.append(el('span', 'model-side-confidence-label', 'Wearable'), meter, el('span', 'option-chance-value', String(value)))
+      gauge.title = title
+      gauge.append(el('span', 'model-side-confidence-label', label), meter, el('span', 'option-chance-value', String(value)))
       modelPanel.append(gauge)
+    }
+    const shade = (value) => (value >= 75 ? 'var(--fill)' : value >= 45 ? '#d9a21b' : 'var(--line-strong)')
+    if (prediction.decision === 'Yes' && Number.isFinite(prediction.confidence)) {
+      const value = Math.max(0, Math.min(100, Math.round(prediction.confidence)))
+      gaugeRow('Wearable', value, shade(value), `${value}/100: how sure the model is that the owner wears a fitness wearable`)
+    }
+    if (prediction.device && Number.isFinite(prediction.device.score)) {
+      const value = Math.max(0, Math.min(100, Math.round(prediction.device.score)))
+      gaugeRow('Device', value, shade(value), `${value}/100: how sure the model is that it is ${prediction.device.brand}`)
     }
     // Profile match: an active person whose content is their own life. Red low, orange medium, green high.
     if (prediction.match && Number.isFinite(prediction.match.score)) {
       const value = Math.max(0, Math.min(100, Math.round(prediction.match.score)))
       const colors = { high: '#3fa34d', medium: '#e8912c', low: '#d64545' } // high 65+, medium 40-64
-      const gauge = el('div', 'model-side-confidence')
-      const meter = el('span', 'option-meter')
-      const fill = el('i', '')
-      fill.style.width = `${Math.max(4, value)}%`
-      fill.style.background = colors[prediction.match.level] || colors.low
-      meter.append(fill)
-      gauge.title = `Profile match ${value}/100 (${prediction.match.level}): active ${prediction.match.active}, own lifestyle content ${prediction.match.lifestyle}`
-      gauge.append(el('span', 'model-side-confidence-label', 'Profile'), meter, el('span', 'option-chance-value', String(value)))
-      modelPanel.append(gauge)
+      gaugeRow('Profile', value, colors[prediction.match.level] || colors.low, `Profile match ${value}/100 (${prediction.match.level}): active ${prediction.match.active}, own lifestyle content ${prediction.match.lifestyle}`)
       const line = [prediction.match.niche, prediction.match.evidence].filter(Boolean).join(' · ')
       if (line) modelPanel.append(el('div', 'model-side-where', line))
     }

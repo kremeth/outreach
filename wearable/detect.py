@@ -181,6 +181,8 @@ def verify(profile, answer, count, gemini, model, record):
 
 
 PHOTOS_VERSION = "photos-v3"
+# The closer look: v2 rates the wearable (any brand) and the exact device separately.
+CHECK_VERSION = "check-v2"
 
 SIGHTING = {
     "type": "OBJECT",
@@ -246,7 +248,7 @@ evidence: one sentence about that photo, e.g. "Mirror selfie, white Apple Watch 
 
 CHECK_SCHEMA = {
     "type": "OBJECT",
-    "properties": {"photos": {"type": "ARRAY", "items": {**ZOOM_SCHEMA["properties"]["photos"]["items"], "properties": {**ZOOM_SCHEMA["properties"]["photos"]["items"]["properties"], "confidence": {"type": "INTEGER"}}, "required": ZOOM_SCHEMA["properties"]["photos"]["items"]["required"] + ["confidence"]}}},
+    "properties": {"photos": {"type": "ARRAY", "items": {**ZOOM_SCHEMA["properties"]["photos"]["items"], "properties": {**ZOOM_SCHEMA["properties"]["photos"]["items"]["properties"], "confidence": {"type": "INTEGER"}, "brand_confidence": {"type": "INTEGER"}}, "required": ZOOM_SCHEMA["properties"]["photos"]["items"]["required"] + ["confidence", "brand_confidence"]}}},
     "required": ["photos"],
 }
 
@@ -259,7 +261,8 @@ seen: "yes" if a smartwatch, fitness band or smart ring is clearly visible, "pos
 brand: from visual evidence only (Apple Watch: rectangular, rounded corners, digital crown; Garmin: round with side buttons; WHOOP: screenless band with sensor pod; Polar: round sports watch, Polar logo; Oura: thick smooth rounded ring), otherwise an Unknown type.
 wearer: "owner" if the account owner wears it, "someone else", or "unclear".
 certainty: "confirmed" when the brand is clear, "probable" when the shape strongly suggests it, "possible" when unsure.
-confidence: 0-100, how sure you are that the account owner wears this device (brand included) in this photo. 90+ only when it is unmistakable.
+confidence: 0-100, how sure you are that the account owner wears a fitness wearable (any brand) in this photo. 90+ only when it is unmistakable.
+brand_confidence: 0-100, how sure you are of the exact device named in brand (Apple Watch, Garmin, WHOOP, Polar, Oura...). Low when the shape fits several brands; 10 or less for an Unknown type. 90+ only when a logo, the typical design and details make it unmistakable.
 evidence: one sentence on where the device is in that photo, or why there is none."""
 
 
@@ -284,7 +287,7 @@ def check_photos(profile, username, chosen, gemini, model, record, owner):
     avatar = avatar_part(profile)
     images = ([avatar[0]] if avatar else []) + [files[n].read_bytes() for n, _ in chosen]
     labels = ([avatar[1]] if avatar else []) + [f"Photo {n} (thumbnail guess: {s.get('brand')}; {str(s.get('evidence', ''))[:160]}):" for n, s in chosen]
-    second = gemini.generate(model, PHOTOS_VERSION + "-check", images, CHECK_PROMPT.format(owner_text=owner), CHECK_SCHEMA, max_output_tokens=2000, labels=labels)
+    second = gemini.generate(model, CHECK_VERSION, images, CHECK_PROMPT.format(owner_text=owner), CHECK_SCHEMA, max_output_tokens=2000, labels=labels)
     record["zoomed"] = True
     record["stage2"] = second.get("answer", {})
     record["cost"] += second.get("usd", 0.0)
@@ -347,10 +350,11 @@ def detect_photos(username, gemini, model="gemini-3.1-flash-lite", zoom_model="g
                 if not item or item.get("seen") not in ("yes", "possible") or item.get("wearer") == "someone else":
                     continue
                 score = max(0, min(100, int(item.get("confidence") or 0)))
+                brand_score = max(0, min(100, int(item.get("brand_confidence") or 0)))
                 certainty = item.get("certainty", "possible") if item.get("seen") == "yes" else "possible"
                 if item.get("wearer") != "owner":
                     certainty, score = "possible", min(score, 50)
-                devices.append({"brand": item.get("brand") or s.get("brand"), "best_tile": n, "tiles": [n], "wearer": item.get("wearer"), "certainty": certainty, "confidence": score, "evidence": item.get("evidence", ""), "verified": True})
+                devices.append({"brand": item.get("brand") or s.get("brand"), "best_tile": n, "tiles": [n], "wearer": item.get("wearer"), "certainty": certainty, "confidence": score, "brand_confidence": brand_score, "evidence": item.get("evidence", ""), "verified": True})
             devices.sort(key=lambda d: -d["confidence"])
             if devices:
                 verdict = "yes" if any(d["certainty"] != "possible" for d in devices) else "possible"
@@ -370,6 +374,7 @@ def detect_photos(username, gemini, model="gemini-3.1-flash-lite", zoom_model="g
         "verdict": verdict,
         "decision": "Yes" if verdict in ("yes", "possible") or text else ("No" if verdict == "no" else "Unknown"),
         "confidence": confidence if devices else (60 if text else 0),
+        "brand_confidence": devices[0].get("brand_confidence", 0) if devices else 0,
         "brands": brands,
         "possible_brands": sorted({d["brand"] for d in devices if d["brand"] in config.BRANDS} | set(text)),
         "devices": devices,

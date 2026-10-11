@@ -32,6 +32,10 @@ class BudgetExceeded(RuntimeError):
     pass
 
 
+class Deferred(RuntimeError):
+    """Batch mode: the answer is not cached yet; the request was queued for the next batch (wearable.batch)."""
+
+
 def _key():
     return config.KEY_PATH.read_text().strip()
 
@@ -47,9 +51,34 @@ def cost_of(model, input_tokens, output_tokens):
     return (input_tokens * price_in + output_tokens * price_out) / 1e6
 
 
+def record_answer(key, payload, model, prompt_version, purpose, run, batch=False):
+    """Prices and logs one answer (half price from a batch), caches it when readable, returns it."""
+    usage = payload.get("usageMetadata", {})
+    input_tokens = usage.get("promptTokenCount", 0)
+    output_tokens = usage.get("candidatesTokenCount", 0) + usage.get("thoughtsTokenCount", 0)
+    usd = cost_of(model, input_tokens, output_tokens) * (0.5 if batch else 1)
+    now = datetime.now(timezone.utc).isoformat()
+    with open(config.USAGE_LOG, "a") as log:
+        log.write(json.dumps({"at": now, "purpose": purpose, "model": model, "input": input_tokens, "cached": usage.get("cachedContentTokenCount", 0), "output": output_tokens, "cacheWrite": 0, **({"batch": True} if batch else {})}) + "\n")
+    with open(config.SPEND, "a") as log:
+        log.write(json.dumps({"at": now, "run": run, "model": model, "prompt": prompt_version, "input": input_tokens, "output": output_tokens, "usd": usd, **({"batch": True} if batch else {})}) + "\n")
+    text_out = "".join(part.get("text", "") for part in (payload.get("candidates") or [{}])[0].get("content", {}).get("parts", []) if not part.get("thought"))
+    try:
+        answer = json.loads(text_out)
+    except json.JSONDecodeError:
+        answer = {"_unparsed": text_out[:2000]}
+    result = {"answer": answer, "model": model, "prompt": prompt_version, "input_tokens": input_tokens, "output_tokens": output_tokens, "usd": usd, "at": now, **({"batch": True} if batch else {})}
+    if "_unparsed" not in answer:
+        (config.GEMINI_CACHE / f"{key}.json").write_text(json.dumps(result))
+    return result
+
+
 class Gemini:
-    def __init__(self, budget=config.DEFAULT_BUDGET, dry_run=False, run="wearable", purpose="wearable detection"):
+    def __init__(self, budget=config.DEFAULT_BUDGET, dry_run=False, run="wearable", purpose="wearable detection", defer=False):
         self.budget = budget
+        # defer: a cache miss queues the request for a batch (half price) and raises Deferred.
+        self.defer = defer
+        self.deferred = 0
         self.dry_run = dry_run
         self.run = run
         self.purpose = purpose
@@ -90,6 +119,12 @@ class Gemini:
         if thinking is not None:
             generation["thinkingConfig"] = {"thinkingBudget": thinking}
         body = {"contents": [{"role": "user", "parts": self._parts(images, text, labels)}], "generationConfig": generation}
+        if self.defer:
+            from . import batch
+
+            batch.queue(key, model, prompt_version, body, self.purpose, self.run)
+            self.deferred += 1
+            raise Deferred(key)
         if self.dry_run:
             counted = _post(f"{API}/{model}:countTokens", {"generateContentRequest": {"model": f"models/{model}", **body}})
             estimate = cost_of(model, counted.get("totalTokens", 0), max_output_tokens // 3)
@@ -114,23 +149,7 @@ class Gemini:
                     time.sleep(2 ** attempt + 0.5)
                     continue
                 raise
-        usage = payload.get("usageMetadata", {})
-        input_tokens = usage.get("promptTokenCount", 0)
-        output_tokens = usage.get("candidatesTokenCount", 0) + usage.get("thoughtsTokenCount", 0)
-        usd = cost_of(model, input_tokens, output_tokens)
-        self.spent += usd
+        result = record_answer(key, payload, model, prompt_version, self.purpose, self.run)
+        self.spent += result["usd"]
         self.calls += 1
-        now = datetime.now(timezone.utc).isoformat()
-        with open(config.USAGE_LOG, "a") as log:
-            log.write(json.dumps({"at": now, "purpose": self.purpose, "model": model, "input": input_tokens, "cached": usage.get("cachedContentTokenCount", 0), "output": output_tokens, "cacheWrite": 0}) + "\n")
-        with open(config.SPEND, "a") as log:
-            log.write(json.dumps({"at": now, "run": self.run, "model": model, "prompt": prompt_version, "input": input_tokens, "output": output_tokens, "usd": usd}) + "\n")
-        text_out = "".join(part.get("text", "") for part in payload.get("candidates", [{}])[0].get("content", {}).get("parts", []) if not part.get("thought"))
-        try:
-            answer = json.loads(text_out)
-        except json.JSONDecodeError:
-            answer = {"_unparsed": text_out[:2000]}
-        result = {"answer": answer, "model": model, "prompt": prompt_version, "input_tokens": input_tokens, "output_tokens": output_tokens, "usd": usd, "at": now}
-        if "_unparsed" not in answer:
-            cached.write_text(json.dumps(result))
         return result
