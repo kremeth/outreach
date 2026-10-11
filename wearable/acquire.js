@@ -1,6 +1,9 @@
 // Wearable detection, step 1: Instagram acquisition (local cache).
 //
-//   node wearable/acquire.js <usernames.json | username ...> [--pause 2500-5500]
+//   node wearable/acquire.js <usernames.json | username ...> [--pause 2500-5500] [--watch]
+//
+// --watch: keeps going, re-reading the list files every minute (data/wearable/live-list.json is kept
+// ahead of the person prospecting by Outreach).
 //
 // For each profile: one logged-out profile page load in a separate headless Chrome (never the
 // Instagram account in the Outreach panel), then every post image the page shows (usually 12) in grid
@@ -27,17 +30,20 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 function args() {
   const list = []
   let pause = [2500, 5500]
+  let watch = false
   const argv = process.argv.slice(2)
   for (let index = 0; index < argv.length; index++) {
     const arg = argv[index]
-    if (arg === '--pause') {
+    if (arg === '--watch') {
+      watch = true
+    } else if (arg === '--pause') {
       pause = argv[++index].split('-').map(Number)
     } else if (arg.endsWith('.json')) {
       const data = JSON.parse(fs.readFileSync(arg, 'utf8'))
-      list.push(...(Array.isArray(data) ? data : [...(data.yes || []), ...(data.no || []), ...(data.usernames || [])]))
+      list.push(...(Array.isArray(data) ? data : [...(data.yes || []), ...(data.no || []), ...(data.usernames || [])]).map((item) => (typeof item === 'string' ? item : item.username)).filter(Boolean))
     } else list.push(arg.replace(/^@/, '').toLowerCase())
   }
-  return { list: [...new Set(list)], pause }
+  return { list: [...new Set(list)], pause, watch }
 }
 
 async function acquire(username) {
@@ -68,6 +74,15 @@ async function acquire(username) {
       }
     }
     await Promise.all(Array.from({ length: 8 }, worker))
+    // The profile picture: how the model recognises the account owner among the people in the photos.
+    let avatar = ''
+    if (profile.avatar) {
+      try {
+        const photo = await preview.downloadImage(profile.avatar)
+        await sharp(photo.buffer).rotate().resize(320, 320, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 85 }).toFile(path.join(folder, 'avatar.jpg'))
+        avatar = `images/${username}/avatar.jpg`
+      } catch {}
+    }
     record = {
       username,
       status: profile.private ? 'private' : saved.some((item) => item.file) ? 'ok' : 'no-posts',
@@ -76,6 +91,7 @@ async function acquire(username) {
       followers: profile.followers || '',
       posts: saved,
       postCount: (profile.posts || []).length,
+      avatar,
     }
   } catch (error) {
     record = { username, status: error.kind === 'missing' ? 'missing' : error.kind === 'restricted' ? 'restricted' : error.kind === 'login' ? 'login-wall' : 'error', error: error.message }
@@ -91,8 +107,33 @@ async function acquire(username) {
 }
 
 async function main() {
-  const { list, pause } = args()
-  const todo = list.filter((username) => !fs.existsSync(path.join(DIR, 'profiles', `${username}.json`)))
+  const { watch } = args()
+  do {
+    await round()
+    if (watch) await sleep(60000)
+  } while (watch)
+  process.exit(0)
+}
+
+async function round() {
+  let list, pause
+  try {
+    ({ list, pause } = args())
+  } catch (error) {
+    console.error('list not readable yet:', error.message)
+    return
+  }
+  // Saved before profile pictures were kept (no avatar field): fetched again, so the model knows the owner.
+  const todo = list.filter((username) => {
+    const file = path.join(DIR, 'profiles', `${username}.json`)
+    if (!fs.existsSync(file)) return true
+    try {
+      const saved = JSON.parse(fs.readFileSync(file, 'utf8'))
+      return saved.status === 'ok' && !('avatar' in saved)
+    } catch {
+      return true
+    }
+  })
   console.log(`${list.length} profiles, ${list.length - todo.length} already saved, ${todo.length} to fetch`)
   const counts = {}
   for (const [index, username] of todo.entries()) {
@@ -107,8 +148,7 @@ async function main() {
     if ((index + 1) % 10 === 0 || index === todo.length - 1) console.log(`${index + 1}/${todo.length}`, JSON.stringify(counts))
     await sleep(pause[0] + Math.random() * (pause[1] - pause[0]))
   }
-  console.log('done', JSON.stringify(counts))
-  process.exit(0)
+  if (todo.length) console.log('done', JSON.stringify(counts))
 }
 
 main().catch((error) => {

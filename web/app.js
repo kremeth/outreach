@@ -362,6 +362,7 @@ function feed(profile, username) {
   photos.forEach((photo, position) => {
     const button = el('button', 'ig-post')
     button.type = 'button'
+    button.dataset.n = String(position + 1)
     const image = document.createElement('img')
     image.alt = photo.alt || ''
     if (photo.width && photo.height) {
@@ -404,6 +405,7 @@ function renderStage() {
   const known = profiles.get(username)
   if (known && known.status === 'ready') {
     scroller.append(feed(known.data, username))
+    applyFocus(current)
     prefetchAhead()
     return
   }
@@ -412,6 +414,7 @@ function renderStage() {
     .then((profile) => {
       if (queue[0] !== current || !scroller.isConnected) return
       scroller.replaceChildren(feed(profile, username))
+      applyFocus(current)
     })
     .catch((error) => {
       if (queue[0] !== current || !scroller.isConnected) return
@@ -640,8 +643,60 @@ function modelDecision(prediction) {
   return { label: 'Unsure', detail: prediction.profileStatus && prediction.profileStatus !== 'ok' ? `Profile ${prediction.profileStatus}` : 'No wrists or hands visible enough to tell', tone: 'unsure' }
 }
 
+// Only the photos with a wrist, hand or arm (or a device) in view, once the model has judged the
+// profile, and only when its photos are exactly the ones on screen (same count, same post at every
+// position). Photos it could not download stay visible. "Show all" brings the rest back.
+let focusPrediction = { username: '', prediction: null }
+
+function applyFocus(item) {
+  if (!item || queue[0] !== item || focusPrediction.username !== item.username) return
+  const prediction = focusPrediction.prediction
+  const photos = profiles.get(item.username)?.data?.images || []
+  const scroller = stage.querySelector('.preview-scroll')
+  const buttons = scroller ? [...scroller.querySelectorAll('.ig-post')] : []
+  if (!prediction?.focus?.length || !prediction.photoCodes || !buttons.length || scroller.querySelector('.ig-filter')) return
+  const codes = prediction.photoCodes
+  const same = codes.length === photos.length && buttons.length === photos.length && codes.every((code, index) => code === null || code === (photos[index].code || ''))
+  if (!same) return
+  const keep = new Set(prediction.focus)
+  const hide = buttons.filter((button, index) => codes[index] !== null && !keep.has(Number(button.dataset.n)))
+  const head = scroller.querySelector('.ig-head')
+  // Most informative first: the clearest checked wearable, then less clear ones, then the other photos
+  // with the owner's wrist or hand in view. "Show all" puts the profile's own order back.
+  const original = [...buttons]
+  const byNumber = new Map(buttons.map((button) => [Number(button.dataset.n), button]))
+  const ranked = (prediction.order || []).map((n) => byNumber.get(n)).filter(Boolean)
+  const after = head || null
+  const place = (list) => {
+    let anchor = after
+    for (const button of list) {
+      if (anchor) anchor.after(button)
+      else scroller.prepend(button)
+      anchor = button
+    }
+  }
+  if (ranked.length) place([...ranked, ...original.filter((button) => !ranked.includes(button))])
+  for (const button of hide) button.hidden = true
+  const note = el('button', 'ig-filter', hide.length
+    ? `Showing ${buttons.length - hide.length} of ${buttons.length} photos, clearest wearable first: the ones with the owner's wrist, hand or a wearable. Show all`
+    : 'Clearest wearable first. Show in profile order')
+  note.type = 'button'
+  note.addEventListener('click', () => {
+    for (const button of hide) button.hidden = false
+    place(original)
+    note.remove()
+  })
+  if (head) head.after(note)
+  else scroller.prepend(note)
+  if (!ranked.length && !hide.length) note.remove()
+}
+
 function paintModel(item, prediction) {
   if (queue[0] !== item || mode !== 'review') return
+  if (prediction.status === 'ready') {
+    focusPrediction = { username: item.username, prediction }
+    applyFocus(item)
+  }
   modelPanel.replaceChildren(el('div', 'model-side-label', 'Model'))
   if (prediction.status !== 'ready') {
     modelPanel.append(el('div', 'model-side-decision checking', prediction.status === 'pending' ? 'Checking…' : 'Not in the model’s list'))
@@ -649,6 +704,19 @@ function paintModel(item, prediction) {
     const decision = modelDecision(prediction)
     const head = el('div', `model-side-decision ${decision.tone}`, decision.label)
     modelPanel.append(head, el('div', 'model-side-detail', decision.detail))
+    // How sure it is about the wearable it picked (0-100), when it picked one.
+    if (prediction.decision === 'Yes' && Number.isFinite(prediction.confidence)) {
+      const value = Math.max(0, Math.min(100, Math.round(prediction.confidence)))
+      const gauge = el('div', 'model-side-confidence')
+      const meter = el('span', 'option-meter')
+      const fill = el('i', '')
+      fill.style.width = `${value}%`
+      fill.style.background = value >= 75 ? 'var(--fill)' : value >= 45 ? '#d9a21b' : 'var(--line-strong)'
+      meter.append(fill)
+      gauge.title = `${value}/100: how sure the model is about this wearable`
+      gauge.append(el('span', 'model-side-confidence-label', 'Confidence'), meter, el('span', 'option-chance-value', String(value)))
+      modelPanel.append(gauge)
+    }
     if (prediction.evidence) {
       const button = document.createElement('button')
       button.type = 'button'

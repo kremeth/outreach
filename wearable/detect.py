@@ -180,48 +180,58 @@ def verify(profile, answer, count, gemini, model, record):
     return {**answer, "wearable": "yes" if any(d["certainty"] != "possible" for d in found) else "possible", "devices": found}
 
 
-PHOTOS_VERSION = "photos-v1"
+PHOTOS_VERSION = "photos-v3"
+
+SIGHTING = {
+    "type": "OBJECT",
+    "properties": {
+        "photo": {"type": "INTEGER"},
+        "brand": {"type": "STRING", "enum": DEVICE_ENUM},
+        "wearer": {"type": "STRING", "enum": WEARER},
+        "certainty": {"type": "STRING", "enum": CERTAINTY},
+        "confidence": {"type": "INTEGER"},
+        "evidence": {"type": "STRING"},
+    },
+    "required": ["photo", "brand", "wearer", "certainty", "confidence", "evidence"],
+}
 
 PHOTOS_SCHEMA = {
     "type": "OBJECT",
     "properties": {
+        "owner": {"type": "STRING"},
         "notes": {"type": "STRING"},
+        "wrist_photos": {"type": "ARRAY", "items": {"type": "INTEGER"}},
         "wearable": {"type": "STRING", "enum": ["yes", "possible", "no", "insufficient"]},
-        "sightings": {
-            "type": "ARRAY",
-            "items": {
-                "type": "OBJECT",
-                "properties": {
-                    "photo": {"type": "INTEGER"},
-                    "brand": {"type": "STRING", "enum": DEVICE_ENUM},
-                    "wearer": {"type": "STRING", "enum": WEARER},
-                    "certainty": {"type": "STRING", "enum": CERTAINTY},
-                    "evidence": {"type": "STRING"},
-                },
-                "required": ["photo", "brand", "wearer", "certainty", "evidence"],
-            },
-        },
+        "sightings": {"type": "ARRAY", "items": SIGHTING},
     },
-    "required": ["notes", "wearable", "sightings"],
+    "required": ["owner", "notes", "wrist_photos", "wearable", "sightings"],
 }
 
+OWNER_TEXT = """The account: @{username}{name}{bio}{avatar}
+Only the account owner matters: the main person of the account. Use the profile picture, the name and bio, and who appears most often (selfies, mirror selfies, solo shots) to recognise them. Devices worn by anyone else (friends, partners, children, clients, bystanders) do not count at all."""
+
 PHOTOS_PROMPT = """Above are all {count} photos from one Instagram creator's profile, in the order they appear on the profile (carousel slides included). Each photo comes right after its own label, "Photo n:". These are exactly the photos a person reviewing this creator looks at.
+
+{owner_text}
 
 Task: find fitness wearables worn by the account owner: smartwatches and sports watches (Apple Watch, Garmin, Polar and others), screenless fitness bands (WHOOP, worn on the wrist or upper arm), and smart rings (Oura and others).
 
 Inspect every photo closely: every wrist, forearm, upper arm, hand and finger, including small, blurry, background, mirror-selfie and partly hidden ones.
 
-notes: short facts, only for photos where a wrist, upper arm or hand is visible, e.g. "Photo 3: left wrist bare. Photo 7: mirror selfie, white band on left wrist". Use the label numbers exactly.
+owner: one sentence on who the account owner is and how you recognise them (e.g. "Blonde woman with a fringe, the person in the profile picture and most selfies").
+
+notes: short facts, only for photos where a wrist, upper arm or hand is visible, e.g. "Photo 3: owner, left wrist bare. Photo 7: owner's mirror selfie, white band on left wrist. Photo 9: friend wears a watch". Use the label numbers exactly.
+
+wrist_photos: the number of every photo in which the owner's wrist, forearm, hand, finger or upper arm can be seen, even small, partly hidden, blurry or in a mirror. These are the photos a person checks for a wearable, so when in doubt include the photo.
 
 wearable:
 - "yes": the account owner clearly wears a smartwatch, fitness band or smart ring in at least one photo.
-- "possible": something could be one but you cannot be sure (e.g. a dark band on a wrist, a thick ring), or you cannot tell whether the person wearing it is the owner.
-- "no": people's wrists and hands are visible and the owner wears none.
-- "insufficient": no people, or wrists and hands are not visible enough to tell.
-Only the account owner counts: the person who appears most often, in selfies or as the main subject. A device worn only by someone else does not make it "yes".
+- "possible": something on the owner could be one but you cannot be sure (e.g. a dark band on a wrist, a thick ring).
+- "no": the owner's wrists and hands are visible and they wear none (devices on other people do not change this).
+- "insufficient": the owner's wrists and hands are not visible enough to tell.
 Being athletic, running or being in a gym is NOT evidence. Ordinary bracelets, bangles, jewellery rings and analogue dress watches without a screen do not count.
 
-sightings: one entry per photo in which you can actually see a device (the same device in several photos: one entry each, at most 8 entries, clearest first). photo is the number from that photo's label. Never list a photo you did not see the device in.
+sightings: one entry per photo in which you can see a device on the owner (or on someone you cannot tell is or is not the owner: wearer "unclear"); at most 8, clearest first. photo is the number from that photo's label. Never list a photo you did not see the device in.
 brand from visual evidence only:
 - Apple Watch: rectangular face with rounded corners, digital crown and side button.
 - Garmin: round face, usually five side buttons, sometimes GARMIN text on the bezel.
@@ -229,24 +239,80 @@ brand from visual evidence only:
 - Polar: round sports watch, Polar logo.
 - Oura: thick, smooth, rounded ring (matte black, silver, gold), often on the index or ring finger.
 Otherwise "Unknown smartwatch", "Unknown fitness band" or "Unknown smart ring" (or "Other brand" if another brand is identifiable).
-wearer: "owner", "someone else" or "unclear".
+wearer: "owner" or "unclear".
 certainty: "confirmed" when the brand is clear, "probable" when the shape strongly suggests it, "possible" when unsure.
+confidence: 0-100, how sure you are that this photo shows that device on the owner.
 evidence: one sentence about that photo, e.g. "Mirror selfie, white Apple Watch on her left wrist holding the phone"."""
+
+CHECK_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {"photos": {"type": "ARRAY", "items": {**ZOOM_SCHEMA["properties"]["photos"]["items"], "properties": {**ZOOM_SCHEMA["properties"]["photos"]["items"]["properties"], "confidence": {"type": "INTEGER"}}, "required": ZOOM_SCHEMA["properties"]["photos"]["items"]["required"] + ["confidence"]}}},
+    "required": ["photos"],
+}
+
+CHECK_PROMPT = """These are full-resolution photos from one Instagram creator. Each photo is preceded by its number and what a quick look at a small thumbnail thought it showed: a fitness wearable (a smartwatch or sports watch, a screenless fitness band like WHOOP, or a smart ring like Oura). Thumbnails are often wrong, so check each photo yourself.
+
+{owner_text}
+
+For each photo, look closely at every wrist, upper arm and finger and answer:
+seen: "yes" if a smartwatch, fitness band or smart ring is clearly visible, "possible" if something could be one but you cannot be sure, "no" if there is none (bare wrists, wrists out of frame, an ordinary bracelet, or an analogue dress watch without a screen).
+brand: from visual evidence only (Apple Watch: rectangular, rounded corners, digital crown; Garmin: round with side buttons; WHOOP: screenless band with sensor pod; Polar: round sports watch, Polar logo; Oura: thick smooth rounded ring), otherwise an Unknown type.
+wearer: "owner" if the account owner wears it, "someone else", or "unclear".
+certainty: "confirmed" when the brand is clear, "probable" when the shape strongly suggests it, "possible" when unsure.
+confidence: 0-100, how sure you are that the account owner wears this device (brand included) in this photo. 90+ only when it is unmistakable.
+evidence: one sentence on where the device is in that photo, or why there is none."""
+
+
+def owner_text(username, profile, avatar_label):
+    name = f", name \"{profile.get('name')}\"" if profile.get("name") else ""
+    bio = f", bio \"{str(profile.get('bio', ''))[:300]}\"" if profile.get("bio") else ""
+    avatar = ". Their profile picture is the image labelled \"Profile picture\"." if avatar_label else ""
+    return OWNER_TEXT.format(username=username, name=name, bio=bio, avatar=avatar)
+
+
+def avatar_part(profile):
+    path = config.IMAGES_ROOT / profile["avatar"] if profile.get("avatar") else None
+    return (path.read_bytes(), "Profile picture (the account owner's own photo):") if path and path.exists() else None
+
+
+def check_photos(profile, username, chosen, gemini, model, record, owner):
+    """The closer look at full size, with the profile picture for who the owner is. chosen: [(photo, sighting)]."""
+    files = {post["index"]: config.IMAGES_ROOT / post["file"] for post in profile.get("posts", []) if post.get("file")}
+    chosen = [(n, s) for n, s in chosen if n in files][:5]
+    if not chosen:
+        return {}
+    avatar = avatar_part(profile)
+    images = ([avatar[0]] if avatar else []) + [files[n].read_bytes() for n, _ in chosen]
+    labels = ([avatar[1]] if avatar else []) + [f"Photo {n} (thumbnail guess: {s.get('brand')}; {str(s.get('evidence', ''))[:160]}):" for n, s in chosen]
+    second = gemini.generate(model, PHOTOS_VERSION + "-check", images, CHECK_PROMPT.format(owner_text=owner), CHECK_SCHEMA, max_output_tokens=2000, labels=labels)
+    record["zoomed"] = True
+    record["stage2"] = second.get("answer", {})
+    record["cost"] += second.get("usd", 0.0)
+    if "_unparsed" in record["stage2"]:
+        return None
+    checked = {item.get("photo"): item for item in record["stage2"].get("photos", [])}
+    if len(chosen) == 1 and len(checked) == 1:
+        checked = {chosen[0][0]: next(iter(checked.values()))}
+    return checked
 
 
 def detect_photos(username, gemini, model="gemini-3.1-flash-lite", zoom_model="gemini-3.8-flash"):
     """Every profile photo sent on its own, labelled with its number (the numbers are the profile's
-    photo order, the same as on the Prospecting screen and in data/wearable/images/<user>/<n>.jpg);
-    then the closer look checks the photos it named at full size. Only checked photos are evidence."""
+    photo order, the same as on the Prospecting screen and in data/wearable/images/<user>/<n>.jpg),
+    with the profile picture, name and bio so it knows who the account owner is; then the closer look
+    checks the photos it named at full size. Only the owner's devices count, and only checked photos
+    are evidence. photo_order ranks the photos from most to least informative."""
     profile = load_profile(username)
     if not profile or profile.get("status") != "ok":
         return {"username": username, "decision": "Unknown", "status": (profile or {}).get("status", "not acquired"), "devices": [], "cost": 0.0, "prompt": PHOTOS_VERSION}
     text = signals.mentions(profile)
     photos = [(post["index"], config.IMAGES_ROOT / post["file"]) for post in profile.get("posts", []) if post.get("file")]
     numbers = {n for n, _ in photos}
+    avatar = avatar_part(profile)
+    owner = owner_text(username, profile, bool(avatar))
     first = gemini.generate(
-        model, PHOTOS_VERSION, [path.read_bytes() for _, path in photos], PHOTOS_PROMPT.format(count=len(photos)), PHOTOS_SCHEMA,
-        max_output_tokens=2500, media_resolution="MEDIA_RESOLUTION_LOW", labels=[f"Photo {n}:" for n, _ in photos],
+        model, PHOTOS_VERSION, ([avatar[0]] if avatar else []) + [path.read_bytes() for _, path in photos], PHOTOS_PROMPT.format(count=len(photos), owner_text=owner), PHOTOS_SCHEMA,
+        max_output_tokens=2500, media_resolution="MEDIA_RESOLUTION_LOW", labels=([avatar[1]] if avatar else []) + [f"Photo {n}:" for n, _ in photos],
     )
     answer = first.get("answer", {})
     record = {
@@ -255,28 +321,59 @@ def detect_photos(username, gemini, model="gemini-3.1-flash-lite", zoom_model="g
         "prompt": PHOTOS_VERSION,
         "model": model,
         "images": len(photos),
+        "avatar": bool(avatar),
+        "acquired_at": profile.get("acquiredAt", ""),
         "stage1": answer,
         "text_mentions": text,
         "cost": first.get("usd", 0.0),
         "tokens": [first.get("input_tokens", 0), first.get("output_tokens", 0)],
         "zoomed": False,
     }
-    sightings = [s for s in answer.get("sightings", []) if s.get("photo") in numbers] if "_unparsed" not in answer else []
-    final = answer
-    if answer.get("wearable") in ("yes", "possible") and sightings:
-        devices = [{**s, "best_tile": s["photo"], "tiles": [s["photo"]]} for s in sightings]
-        final = verify(profile, {**answer, "devices": devices}, max(numbers), gemini, zoom_model, record)
-    elif answer.get("wearable") in ("yes", "possible"):
-        final = {**answer, "wearable": "possible"}
-    devices = final.get("devices", [])
-    verdict = final.get("wearable", "insufficient")
+    parsed = "_unparsed" not in answer
+    sightings = [s for s in answer.get("sightings", []) if s.get("photo") in numbers] if parsed else []
+    sightings.sort(key=lambda s: -int(s.get("confidence") or 0))
+    verdict = answer.get("wearable", "insufficient") if parsed else "insufficient"
+    devices, confidence = [], 0
+    if sightings:
+        chosen = list({s["photo"]: s for s in reversed(sightings)}.items())[::-1]
+        checked = check_photos(profile, username, chosen, gemini, zoom_model, record, owner)
+        if checked is None:  # the closer look's answer was unreadable: keep the first look, low confidence
+            devices = [{**s, "best_tile": s["photo"], "tiles": [s["photo"]], "verified": False} for s in sightings]
+            verdict, confidence = "possible", 30
+        else:
+            for n, s in chosen:
+                item = checked.get(n)
+                if not item or item.get("seen") not in ("yes", "possible") or item.get("wearer") == "someone else":
+                    continue
+                score = max(0, min(100, int(item.get("confidence") or 0)))
+                certainty = item.get("certainty", "possible") if item.get("seen") == "yes" else "possible"
+                if item.get("wearer") != "owner":
+                    certainty, score = "possible", min(score, 50)
+                devices.append({"brand": item.get("brand") or s.get("brand"), "best_tile": n, "tiles": [n], "wearer": item.get("wearer"), "certainty": certainty, "confidence": score, "evidence": item.get("evidence", ""), "verified": True})
+            devices.sort(key=lambda d: -d["confidence"])
+            if devices:
+                verdict = "yes" if any(d["certainty"] != "possible" for d in devices) else "possible"
+                confidence = devices[0]["confidence"]
+            elif verdict in ("yes", "possible"):
+                verdict = "unverified"  # it said so, but the closer look found no device on the owner
+    elif verdict in ("yes", "possible"):
+        verdict = "possible"
     brands = sorted({d["brand"] for d in _strong(devices) if d["brand"] in config.BRANDS} | set(text))
+    # Most to least informative: checked devices by confidence, then other photos it named, then the
+    # rest of the photos with the owner's wrist or hand in view, in profile order.
+    order = []
+    for n in [d["best_tile"] for d in devices] + [s["photo"] for s in sightings] + sorted(n for n in answer.get("wrist_photos", []) if n in numbers):
+        if n not in order:
+            order.append(n)
     record.update({
         "verdict": verdict,
         "decision": "Yes" if verdict in ("yes", "possible") or text else ("No" if verdict == "no" else "Unknown"),
+        "confidence": confidence if devices else (60 if text else 0),
         "brands": brands,
         "possible_brands": sorted({d["brand"] for d in devices if d["brand"] in config.BRANDS} | set(text)),
         "devices": devices,
+        "photo_order": order,
+        "focus_photos": sorted(order),
     })
     return record
 

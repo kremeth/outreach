@@ -175,6 +175,8 @@ async function nextBatch(fromIndex, count) {
     for (; index < rows.length && window.length < count * 2; index++) {
       const row = rows[index]
       if (choiceFor(row) || log.claimedByOther(`row:${row.sheetRow}`)) continue
+      // The model's Nos are not shown: the auto-No loop writes them to the sheet.
+      if (modelProspect.saysNo(data.usernameFrom(row['DIRECT LINK']))) continue
       window.push(index)
     }
     if (!window.length) break
@@ -260,6 +262,81 @@ async function adoptRow(sheetRow, link) {
   }
   byRow.set(sheetRow, row)
   return row
+}
+
+// The next undecided profiles in queue order, for the wearable model to judge ahead of the person
+// (data/wearable/live-list.json, read by python -m wearable.live and wearable/acquire.js --watch).
+function writeUpcoming(count = 300) {
+  const upcoming = rows.filter((row) => !choiceFor(row)).slice(0, count).map((row) => ({ sheetRow: row.sheetRow, username: data.usernameFrom(row['DIRECT LINK']) })).filter((item) => item.username)
+  fs.mkdirSync(path.dirname(modelProspect.LIST), { recursive: true })
+  const tmp = `${modelProspect.LIST}.tmp`
+  fs.writeFileSync(tmp, JSON.stringify(upcoming))
+  fs.renameSync(tmp, modelProspect.LIST)
+  return upcoming
+}
+
+// The wearable model's Nos go straight into the sheet: rows nobody decided and nobody is looking at
+// (not claimed by either computer), checked live in the sheet first and written only into an empty or
+// "pending" Keep cell of the same creator, never over an answer. One read and one write per pass (both computers
+// share the sheet's per-minute quota), at most 20 rows, once a minute.
+let autoNoBusy = false
+// Rows whose Keep cell turned out to hold something already (any value): never candidates again.
+const autoNoSettled = new Set()
+async function autoNo() {
+  if (autoNoBusy || !rows.length || loadError) return
+  autoNoBusy = true
+  let wrote = []
+  const before = decisions
+  try {
+    await log.refresh() // the other computer's claims, at most a few seconds old
+    const candidates = []
+    for (const row of rows) {
+      if (candidates.length >= 20) break
+      if (choiceFor(row) || autoNoSettled.has(row.sheetRow)) continue
+      const username = data.usernameFrom(row['DIRECT LINK'])
+      if (!username || !modelProspect.saysNo(username)) continue
+      const target = `row:${row.sheetRow}`
+      if (log.claimedByOther(target) || log.heldByMe(target)) continue
+      candidates.push(row)
+    }
+    if (!candidates.length) return
+    const live = await liveRows(candidates)
+    const updates = []
+    const skipped = { link: 0, decided: 0 }
+    for (const row of candidates) {
+      const now = live.get(row.sheetRow)
+      if (!now || !sameLink(now.link, row['DIRECT LINK'])) {
+        skipped.link++
+        autoNoSettled.add(row.sheetRow)
+        continue
+      }
+      // "pending" is what an undecided row holds; anything else is someone's answer and stays.
+      if (now.keep && !/^pending$/i.test(now.keep)) {
+        skipped.decided++
+        autoNoSettled.add(row.sheetRow)
+        skipped.values = [...new Set([...(skipped.values || []), now.keep])].slice(0, 5)
+        if (/^(yes|no)$/i.test(now.keep)) elsewhere.set(row.sheetRow, now.keep.toLowerCase())
+        continue
+      }
+      if (row.dateColumn) updates.push({ cell: `${row.dateColumn}${row.sheetRow}`, value: sheet.todayLabel() })
+      updates.push({ cell: `${row.keepColumn}${row.sheetRow}`, value: 'No' })
+      decisions = sheet.record(decisions, row, 'no')
+      wrote.push(row)
+    }
+    if (!updates.length) {
+      console.log(`auto no: nothing to write (${JSON.stringify(skipped)})`)
+      return
+    }
+    await writer.setCells(updates)
+    sheet.persist(rows, decisions)
+    for (const row of wrote) modelProspect.logAuto({ sheetRow: row.sheetRow, username: data.usernameFrom(row['DIRECT LINK']) })
+    console.log(`model wrote No for ${wrote.length} rows`)
+  } catch (error) {
+    if (wrote.length) decisions = before
+    console.error('auto no', error.message)
+  } finally {
+    autoNoBusy = false
+  }
 }
 
 // Saving is idempotent and never overwrites: an answer the sheet already holds counts as saved, someone
@@ -859,9 +936,7 @@ const server = http.createServer(async (req, res) => {
     // for one profile, and how often it has agreed so far.
     if (req.method === 'GET' && url.pathname === '/api/model-prospect/upcoming') {
       const count = Math.min(1000, Math.max(1, Number(url.searchParams.get('count')) || 300))
-      const upcoming = rows.filter((row) => !choiceFor(row)).slice(0, count).map((row) => ({ sheetRow: row.sheetRow, username: data.usernameFrom(row['DIRECT LINK']) })).filter((item) => item.username)
-      fs.mkdirSync(path.dirname(modelProspect.LIST), { recursive: true })
-      fs.writeFileSync(modelProspect.LIST, JSON.stringify(upcoming))
+      const upcoming = writeUpcoming(count)
       sendJson(res, 200, { count: upcoming.length, upcoming })
       return
     }
@@ -1223,6 +1298,9 @@ async function boot() {
   writer.start()
   autopilot.resume()
   pickModel.startAutoRetrain()
+  setInterval(autoNo, 60 * 1000).unref()
+  // Keeps the model's list ahead of the person (it moves on as profiles get decided).
+  setInterval(() => { if (rows.length) writeUpcoming() }, 5 * 60 * 1000).unref()
   apiUsage.startSync()
   // The HUSTLING list straight from the sheet (no Instagram), so Hustling is never empty after a restart.
   hustle.loadList().catch((error) => console.error('hustle list:', error.message))
