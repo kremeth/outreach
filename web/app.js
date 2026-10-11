@@ -707,10 +707,10 @@ function paintModel(item, prediction) {
     const decision = modelDecision(prediction)
     const head = el('div', `model-side-decision ${decision.tone}`, decision.label)
     modelPanel.append(head, el('div', 'model-side-detail', decision.detail))
-    // Shadow mode: what the automatic decision would be (auto-Yes is not on yet; you still decide).
-    if (prediction.auto && !prediction.autoYesOn) {
+    // Why this one is left to you (the model decides the clear Yes and No on its own).
+    if (prediction.auto && prediction.auto.verdict === 'review') {
       const auto = prediction.auto
-      const text = auto.verdict === 'yes' ? `Auto would say: Yes (${auto.device})` : auto.verdict === 'review' ? `Auto would leave it to you: ${auto.reasons.join(', ')}` : `Auto would say: No (${auto.reasons.join(', ')})`
+      const text = `For you to judge: ${auto.reasons.join(', ')}`
       modelPanel.append(el('div', `model-side-auto ${auto.verdict}`, text))
     }
     // Three gauges: is there a wearable on the owner, which exact device, and does the profile fit.
@@ -797,6 +797,11 @@ async function loadModel(item) {
     modelNo(item)
     return
   }
+  // All three gauges pass: saved as Yes with its device, and the next profile comes up.
+  if (prediction.autoYes && queue[0] === item && mode === 'review') {
+    modelDecides(item, 'yes', prediction.autoYes)
+    return
+  }
   paintModel(item, prediction)
   if (prediction.status === 'pending' && queue[0] === item) modelPoll = setTimeout(() => loadModel(item), 3000)
 }
@@ -837,12 +842,16 @@ function choose(choice, device) {
 }
 
 function modelNo(item) {
+  modelDecides(item, 'no', '')
+}
+
+function modelDecides(item, choice, device) {
   if (queue[0] !== item) return
   askingDevice = false
-  adjustCounts(item, 'no')
-  updatePeople(item, 'no', '')
+  adjustCounts(item, choice)
+  updatePeople(item, choice, device)
   queue = queue.slice(1)
-  save(item, 'no', '', 'model')
+  save(item, choice, device, 'model')
   show()
   refill()
 }

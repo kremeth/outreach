@@ -176,7 +176,7 @@ async function nextBatch(fromIndex, count) {
       const row = rows[index]
       if (choiceFor(row) || log.claimedByOther(`row:${row.sheetRow}`)) continue
       // The model's Nos are not shown: the auto-No loop writes them to the sheet.
-      if (modelProspect.saysNo(data.usernameFrom(row['DIRECT LINK']))) continue
+      if (modelProspect.saysNo(data.usernameFrom(row['DIRECT LINK'])) || modelProspect.saysYes(data.usernameFrom(row['DIRECT LINK']))) continue
       window.push(index)
     }
     if (!window.length) break
@@ -341,7 +341,40 @@ async function autoNo() {
 
 // Saving is idempotent and never overwrites: an answer the sheet already holds counts as saved, someone
 // else's answer is never replaced, and a temporary failure is retried (retry: true becomes a 503).
-// by = 'model': the wearable model's No, sent by the Prospecting screen when the profile comes up.
+// by = 'model': the wearable model's own decision (auto No or auto Yes), from autoYes or the Prospecting screen.
+// The wearable model's automatic Yes (all three gauges pass: wearable 85+, profile 65+, device 80+):
+// written through decide like a person's Yes (live check, never over an answer, device for the
+// voicenote), a few per minute, only for rows nobody is looking at.
+let autoYesBusy = false
+async function autoYes() {
+  if (autoYesBusy || !rows.length || loadError) return
+  autoYesBusy = true
+  try {
+    let written = 0
+    for (const row of rows) {
+      if (written >= 5) break
+      if (choiceFor(row) || autoNoSettled.has(row.sheetRow)) continue
+      const username = data.usernameFrom(row['DIRECT LINK'])
+      const device = username && modelProspect.saysYes(username)
+      if (!device || !devices.includes(device)) continue
+      const target = `row:${row.sheetRow}`
+      if (log.claimedByOther(target) || log.heldByMe(target)) continue
+      const result = await decide(row.sheetRow, 'yes', device, row['DIRECT LINK'], 'model')
+      if (result.ok) {
+        written++
+        console.log(`model wrote Yes (${device}) for row ${row.sheetRow} @${username}`)
+      } else {
+        autoNoSettled.add(row.sheetRow)
+        if (result.retry) break
+      }
+    }
+  } catch (error) {
+    console.error('auto yes', error.message)
+  } finally {
+    autoYesBusy = false
+  }
+}
+
 async function decide(sheetRow, choice, device, link, by = '') {
   if (choice !== 'yes' && choice !== 'no') return { ok: false, taken: true, error: 'Unknown choice. Nothing was saved.', ...counts() }
   if (choice === 'yes' && !devices.includes(device)) return { ok: false, taken: true, error: 'No device was picked. Nothing was saved.', ...counts() }
@@ -378,7 +411,7 @@ async function decide(sheetRow, choice, device, link, by = '') {
   decisions = sheet.record(decisions, row, choice)
   // The wearable model's answer for this profile, kept next to the person's (local log only).
   try {
-    if (by === 'model') modelProspect.logAuto({ sheetRow: row.sheetRow, username: data.usernameFrom(row['DIRECT LINK']), from: 'screen' })
+    if (by === 'model') modelProspect.logAuto({ sheetRow: row.sheetRow, username: data.usernameFrom(row['DIRECT LINK']), choice, device: choice === 'yes' ? device : '', from: 'screen' })
     else modelProspect.record({ sheetRow: row.sheetRow, username: data.usernameFrom(row['DIRECT LINK']), choice, device: choice === 'yes' ? device : '' })
   } catch (error) {
     console.error('model compare', error.message)
@@ -975,7 +1008,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && url.pathname === '/api/decide') {
       const body = await readBody(req)
-      const result = await decide(body.sheetRow, body.choice, body.device, body.link, body.by === 'model' && body.choice === 'no' ? 'model' : '')
+      const result = await decide(body.sheetRow, body.choice, body.device, body.link, body.by === 'model' ? 'model' : '')
       sendJson(res, result.retry ? 503 : 200, result)
       return
     }
@@ -1313,7 +1346,10 @@ async function boot() {
   writer.start()
   autopilot.resume()
   pickModel.startAutoRetrain()
-  setInterval(autoNo, 60 * 1000).unref()
+  setInterval(async () => {
+    await autoNo()
+    await autoYes()
+  }, 60 * 1000).unref()
   // Keeps the model's list ahead of the person (it moves on as profiles get decided).
   setInterval(() => { if (rows.length) writeUpcoming() }, 5 * 60 * 1000).unref()
   apiUsage.startSync()
