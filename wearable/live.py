@@ -31,19 +31,22 @@ CURRENT = {"photos-v3", "photos-v4"}
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--budget", type=float, default=3.0, help="USD per day, live and batch together")
+    parser.add_argument("--extra-today", type=float, default=0.0, help="one-off extra USD for the day it starts on")
     parser.add_argument("--list", default=str(config.DATA / "live-list.json"))
     parser.add_argument("--watch", action="store_true", help="keep going as the list moves on")
     args = parser.parse_args()
     out = config.RESULTS / "live.jsonl"
     config.RESULTS.mkdir(parents=True, exist_ok=True)
     day = None
+    first_day = time.strftime("%Y-%m-%d", time.gmtime())
     while True:
         if day != time.strftime("%Y-%m-%d"):
             day = time.strftime("%Y-%m-%d")
             live = Gemini(budget=args.budget, run="live-prospecting", purpose="wearable model, live prospecting")
             later = Gemini(budget=args.budget, run="live-prospecting", purpose="wearable model, batch", defer=True)
         spent = batch.spent_today()  # live calls and batches today, whatever restarts happened
-        worked = "budget" if spent >= args.budget else run_once(args, out, live, later)
+        budget = args.budget + (args.extra_today if time.strftime("%Y-%m-%d", time.gmtime()) == first_day else 0)
+        worked = "budget" if spent >= budget else run_once(args, out, live, later)
         if worked != "budget":
             try:
                 written, sent = batch.step()
@@ -55,7 +58,7 @@ def main():
         if not args.watch:
             break
         if worked == "budget":
-            print(f"daily budget of ${args.budget:.2f} reached; waiting for tomorrow", flush=True)
+            print(f"daily budget of ${budget:.2f} reached; waiting for tomorrow", flush=True)
             while day == time.strftime("%Y-%m-%d"):
                 time.sleep(300)
         elif not worked:
