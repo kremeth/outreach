@@ -126,11 +126,11 @@ async function round() {
     return 0
   }
   // Saved before profile pictures were kept (no avatar field): fetched again, so the model knows the owner.
-  // Never fetched first (the model has nothing on them), then the ones only missing the picture.
-  const missing = list.filter((username) => !fs.existsSync(path.join(DIR, 'profiles', `${username}.json`)))
-  const noAvatar = list.filter((username) => {
+  // In list order, so the profiles the person reaches next come first: never fetched, or saved before
+  // profile pictures were kept (no avatar field), so the model knows who the owner is.
+  const needed = list.filter((username) => {
     const file = path.join(DIR, 'profiles', `${username}.json`)
-    if (!fs.existsSync(file)) return false
+    if (!fs.existsSync(file)) return true
     try {
       const saved = JSON.parse(fs.readFileSync(file, 'utf8'))
       return saved.status === 'ok' && !('avatar' in saved)
@@ -139,8 +139,8 @@ async function round() {
     }
   })
   // A few at a time, so a list that moved on (the person prospecting) is re-read often.
-  const todo = [...missing, ...noAvatar].slice(0, watchMode ? 15 : Infinity)
-  console.log(`${list.length} profiles, ${list.length - todo.length} already saved, ${todo.length} to fetch`)
+  const todo = needed.slice(0, watchMode ? 15 : Infinity)
+  console.log(`${list.length} profiles, ${needed.length} to fetch, ${todo.length} now`)
   const counts = {}
   for (const [index, username] of todo.entries()) {
     const wall = preview.loginWall()
