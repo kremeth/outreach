@@ -409,7 +409,7 @@ async function autoComment() {
     const key = `${next.username}:${next.latest.pk}`
     let drafted
     try {
-      drafted = await commentDrafts(next.username)
+      drafted = await commentDrafts(next.username, [], '', { background: true })
     } catch (error) {
       autoCommentPassed.add(key) // taken by the other computer, already handled, unreadable: next one
       console.error('auto comment', next.username, error.message)
@@ -602,12 +602,13 @@ function serveStatic(res, urlPath) {
 }
 
 // The newest post by date, not the first grid tile, which is often a pinned post.
-async function latestPost(username) {
-  let profile = await preview.profile(username, true)
+// urgent: false for background work (auto-commenting), inside the shared hourly allowance.
+async function latestPost(username, urgent = true) {
+  let profile = await preview.profile(username, urgent)
   let post = posts.latestPost(profile)
   if (!post?.image) {
     preview.forget(username)
-    profile = await preview.profile(username, true)
+    profile = await preview.profile(username, urgent)
     post = posts.latestPost(profile)
   }
   if (!post) throw Object.assign(new Error('Could not find the latest post.'), { kind: 'read' })
@@ -627,7 +628,7 @@ const INLINE_BYTES = 12 * 1024 * 1024
 const MAX_VIDEO_BYTES = 200 * 1024 * 1024
 const MAX_SLIDES = 20
 
-async function readPost(post, photo) {
+async function readPost(post, photo, urgent = true) {
   const cover = async (note) => ({
     format: 'photo',
     media: [await preview.downloadImage(photo.full || photo.src)],
@@ -637,7 +638,7 @@ async function readPost(post, photo) {
   })
   let full
   try {
-    full = await preview.post(post.code)
+    full = await preview.post(post.code, urgent)
   } catch (error) {
     console.error('post page', post.code, error.message)
     return cover(error.kind === 'missing' ? '' : 'Read from the cover photo only: the full post did not load.')
@@ -704,13 +705,13 @@ function webVersion() {
   return hash.digest('hex').slice(0, 12)
 }
 
-async function commentDrafts(username, avoid = [], guidance = '') {
+async function commentDrafts(username, avoid = [], guidance = '', { background = false } = {}) {
   const claimed = await log.claim(`hustle:${String(username).toLowerCase()}`, CREATOR_CLAIM_MS)
   if (!claimed.ok) throw taken(`${claimed.by} is working on @${username} right now.`)
-  const { profile, post, permalink } = await latestPost(username)
+  const { profile, post, permalink } = await latestPost(username, !background)
   if (hustle.alreadyHandled(username, post.pk)) throw taken(`@${username}'s newest post was already commented on or skipped.`)
   const photo = post.image
-  const read = await readPost(post, photo)
+  const read = await readPost(post, photo, !background)
   const drafted = await drafts.generate({
     name: profile.name,
     username: profile.username || username,
