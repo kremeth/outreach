@@ -1224,6 +1224,8 @@ async function boot() {
   autopilot.resume()
   pickModel.startAutoRetrain()
   apiUsage.startSync()
+  // The HUSTLING list straight from the sheet (no Instagram), so Hustling is never empty after a restart.
+  hustle.loadList().catch((error) => console.error('hustle list:', error.message))
   mediaServer.listen(MEDIA_PORT, '127.0.0.1')
   server.listen(PORT, '127.0.0.1', () => {
     console.log(`Open http://127.0.0.1:${PORT}`)

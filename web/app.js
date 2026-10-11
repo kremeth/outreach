@@ -656,6 +656,9 @@ function paintModel(item, prediction) {
       button.append(img)
       button.addEventListener('click', () => openZoom(prediction.evidence.image, img.alt, img.src))
       modelPanel.append(button, el('div', 'model-side-where', `Photo ${prediction.evidence.photo} · ${prediction.evidence.brand} (${prediction.evidence.certainty}) · ${prediction.evidence.where}`))
+      if (prediction.evidence.vague) {
+        modelPanel.append(el('div', 'model-side-where model-side-vague', `It listed ${prediction.evidence.cited} photos without pointing to one, so this is likely a guess: photo ${prediction.evidence.photo} is just the first of them.`))
+      }
     } else if (prediction.textMentions?.length) {
       modelPanel.append(el('div', 'model-side-where', `Named in the bio or captions: ${prediction.textMentions.join(', ')}`))
     }

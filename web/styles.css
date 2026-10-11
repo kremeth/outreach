@@ -1491,3 +1491,5 @@ a.person.current {
   .model-side { position: static; width: auto; margin: 0 16px; max-height: none; }
   .model-side-photo img { max-height: 220px; }
 }
+
+.model-side-vague { color: #a15c00; }
