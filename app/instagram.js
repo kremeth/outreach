@@ -458,6 +458,10 @@ const THREAD = String.raw`(() => {
         text: (bubble.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 600),
         top: Math.round(box.top),
         at: stamps.filter((stamp) => stamp.top < box.top).pop()?.at || null,
+        // A reaction on the message (e.g. their ❤️ under ours): an emoji-only label next to the bubble.
+        reaction: [...((bubble.closest('[role="group"]') || bubble.parentElement?.parentElement || bubble).querySelectorAll('span'))]
+          .filter((el) => !bubble.contains(el) && el.children.length === 0 && /^[\p{Extended_Pictographic}\uFE0F\u200d\s\d]+$/u.test((el.innerText || '').trim()) && /\p{Extended_Pictographic}/u.test(el.innerText || ''))
+          .map((el) => el.innerText.trim()).join(' '),
       }
     })
     .sort((a, b) => a.top - b.top)
@@ -790,7 +794,13 @@ async function probeChat(wc, { username, gifQuery }) {
     const controls = [...document.querySelectorAll('button, [role="button"], svg[aria-label]')]
       .filter((el) => { const r = el.getBoundingClientRect(); return r.width && r.top > window.innerHeight * 0.6 })
       .map((el) => ({ label: el.getAttribute('aria-label') || (el.querySelector('svg[aria-label]') || {}).getAttribute?.('aria-label') || (el.innerText || '').trim().slice(0, 30), tag: el.tagName }))
-    return { stamps: stamps.slice(-15), times, controls: controls.slice(0, 30) }
+    // Around the last few bubbles: every aria-label and short text, to see how reactions are marked.
+    const bubbles = [...main.querySelectorAll('[role="article"]')].slice(-3)
+    const around = bubbles.map((bubble) => {
+      const lane = bubble.closest('[role="group"]') || bubble.parentElement?.parentElement || bubble
+      return [...lane.querySelectorAll('[aria-label], span, img')].map((el) => [el.tagName, el.getAttribute('aria-label') || '', el.tagName === 'IMG' ? (el.alt || '') : (el.children.length ? '' : (el.innerText || '').slice(0, 20))].join('|')).filter((line) => !/\|\|$/.test(line)).slice(0, 25)
+    })
+    return { stamps: stamps.slice(-15), times, controls: controls.slice(0, 30), around }
   })()`)
   const result = { username, messages: messages.slice(-6).map((m) => ({ ours: m.ours, voice: m.voice, text: m.text.slice(0, 80), top: m.top })), ...page }
   if (!gifQuery) return result

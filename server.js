@@ -1034,7 +1034,14 @@ async function replyStep(item) {
     replyRelaunch.remember(row.sheetRow, username, { action: 'none', reason: error.message })
     return { ok: false, error: `@${username}: ${error.message}` }
   }
-  const decision = replyRelaunch.decide(row.sheetRow, chat.messages)
+  let decision = replyRelaunch.decide(row.sheetRow, chat.messages)
+  // Due by the clock: first make sure the conversation is really waiting on them, in this chat. A
+  // closed loop (moved to email or management, a thank-you, their reaction to our message, the next
+  // step ours) or any doubt: no nudge and no unfollow; looked at again once someone writes.
+  if (decision.action !== 'none') {
+    const open = await replyCheck.conversationOpen(chat.messages)
+    if (open.state !== 'waiting') decision = { ...decision, action: 'none', reason: `${open.state === 'closed' ? 'Loop closed' : 'Not clearly waiting on them'}: ${open.reason}`, held: open.state }
+  }
   replyRelaunch.remember(row.sheetRow, username, decision)
   if (decision.action === 'none') return { ok: true, checked: true, username, reason: decision.reason || `waiting on them since ${new Date(decision.since).toLocaleDateString('en-AU')}`, dueAt: decision.dueAt }
   if (decision.action === 'close') {
