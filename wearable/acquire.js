@@ -58,7 +58,7 @@ async function acquire(username) {
   let record
   try {
     preview.forget(username)
-    const profile = await preview.profile(username, true)
+    const profile = await preview.profile(username, false) // background: inside the shared hourly allowance
     const images = (profile.images || []).filter((image) => image.src)
     const folder = path.join(DIR, 'images', username)
     fs.mkdirSync(folder, { recursive: true })
