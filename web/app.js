@@ -539,7 +539,7 @@ let offlineSince = 0
 
 function persistOutbox() {
   try {
-    const list = [...saving.values()].map(({ item, choice, device }) => ({ item, choice, device }))
+    const list = [...saving.values()].map(({ item, choice, device, by }) => ({ item, choice, device, by: by || '' }))
     localStorage.setItem(OUTBOX_KEY, JSON.stringify(list))
   } catch {}
 }
@@ -564,15 +564,15 @@ function offlineNote() {
   return `Not saved yet: ${count} ${count === 1 ? 'answer is' : 'answers are'} waiting and will save automatically.`
 }
 
-function save(item, choice, device) {
-  saving.set(item.sheetRow, { item, choice, device: device || '', attempt: 0 })
+function save(item, choice, device, by = '') {
+  saving.set(item.sheetRow, { item, choice, device: device || '', by, attempt: 0 })
   persistOutbox()
   send(item, choice, device)
 }
 
 function send(item, choice, device) {
   if (!sameSave(item, choice, device)) return
-  api('/api/decide', { sheetRow: item.sheetRow, choice, device: device || '', link: item.link || '' }, 20000)
+  api('/api/decide', { sheetRow: item.sheetRow, choice, device: device || '', link: item.link || '', by: saving.get(item.sheetRow)?.by || '' }, 20000)
     .then((result) => {
       if (!sameSave(item, choice, device)) return
       if (!result.ok) {
@@ -755,6 +755,11 @@ async function loadModel(item) {
     if (queue[0] === item) modelPanel.hidden = true
     return
   }
+  // The model says No: saved as No straight away and the next profile comes up (you only see Yes and Unsure).
+  if (prediction.autoNo && queue[0] === item && mode === 'review') {
+    modelNo(item)
+    return
+  }
   paintModel(item, prediction)
   if (prediction.status === 'pending' && queue[0] === item) modelPoll = setTimeout(() => loadModel(item), 3000)
 }
@@ -790,6 +795,17 @@ function choose(choice, device) {
   queue = queue.slice(1)
   save(item, choice, device)
   setTimeout(refreshTally, 1500)
+  show()
+  refill()
+}
+
+function modelNo(item) {
+  if (queue[0] !== item) return
+  askingDevice = false
+  adjustCounts(item, 'no')
+  updatePeople(item, 'no', '')
+  queue = queue.slice(1)
+  save(item, 'no', '', 'model')
   show()
   refill()
 }
@@ -855,7 +871,7 @@ async function start() {
   devices = state.devices || []
   const outbox = readOutbox()
   for (const entry of outbox) {
-    saving.set(entry.item.sheetRow, { item: entry.item, choice: entry.choice, device: entry.device || '', attempt: 0 })
+    saving.set(entry.item.sheetRow, { item: entry.item, choice: entry.choice, device: entry.device || '', by: entry.by || '', attempt: 0 })
     if (!entry.item.choice) counts.remaining = Math.max(0, counts.remaining - 1)
     updatePeople(entry.item, entry.choice, entry.device)
   }

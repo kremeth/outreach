@@ -341,7 +341,8 @@ async function autoNo() {
 
 // Saving is idempotent and never overwrites: an answer the sheet already holds counts as saved, someone
 // else's answer is never replaced, and a temporary failure is retried (retry: true becomes a 503).
-async function decide(sheetRow, choice, device, link) {
+// by = 'model': the wearable model's No, sent by the Prospecting screen when the profile comes up.
+async function decide(sheetRow, choice, device, link, by = '') {
   if (choice !== 'yes' && choice !== 'no') return { ok: false, taken: true, error: 'Unknown choice. Nothing was saved.', ...counts() }
   if (choice === 'yes' && !devices.includes(device)) return { ok: false, taken: true, error: 'No device was picked. Nothing was saved.', ...counts() }
   let row = byRow.get(Number(sheetRow))
@@ -377,7 +378,8 @@ async function decide(sheetRow, choice, device, link) {
   decisions = sheet.record(decisions, row, choice)
   // The wearable model's answer for this profile, kept next to the person's (local log only).
   try {
-    modelProspect.record({ sheetRow: row.sheetRow, username: data.usernameFrom(row['DIRECT LINK']), choice, device: choice === 'yes' ? device : '' })
+    if (by === 'model') modelProspect.logAuto({ sheetRow: row.sheetRow, username: data.usernameFrom(row['DIRECT LINK']), from: 'screen' })
+    else modelProspect.record({ sheetRow: row.sheetRow, username: data.usernameFrom(row['DIRECT LINK']), choice, device: choice === 'yes' ? device : '' })
   } catch (error) {
     console.error('model compare', error.message)
   }
@@ -960,7 +962,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && url.pathname === '/api/decide') {
       const body = await readBody(req)
-      const result = await decide(body.sheetRow, body.choice, body.device, body.link)
+      const result = await decide(body.sheetRow, body.choice, body.device, body.link, body.by === 'model' && body.choice === 'no' ? 'model' : '')
       sendJson(res, result.retry ? 503 : 200, result)
       return
     }

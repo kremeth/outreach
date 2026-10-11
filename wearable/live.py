@@ -87,11 +87,12 @@ def run_once(args, out, gemini):
             return bool(saved) and (saved.get("status") != "ok" or "avatar" in saved)
 
         waited = 0
-        while not ready() and waited < (60 if args.watch else WAIT_SECONDS):
+        while not ready() and not args.watch and waited < WAIT_SECONDS:
             time.sleep(2)
             waited += 2
         if not ready():
-            print(f"{position}/{len(items)} @{username}: images never arrived, skipped", flush=True)
+            if not args.watch:
+                print(f"{position}/{len(items)} @{username}: images never arrived, skipped", flush=True)
             continue
         try:
             record = detect.detect_photos(username, gemini, SCREEN_MODEL, zoom_model=BRAND_MODEL)

@@ -26,6 +26,7 @@ const sharp = require('sharp')
 
 const MAX_SIDE = 768
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+let watchMode = false
 
 function args() {
   const list = []
@@ -108,9 +109,10 @@ async function acquire(username) {
 
 async function main() {
   const { watch } = args()
+  watchMode = watch
   do {
-    await round()
-    if (watch) await sleep(60000)
+    const fetched = await round()
+    if (watch && !fetched) await sleep(60000)
   } while (watch)
   process.exit(0)
 }
@@ -121,12 +123,14 @@ async function round() {
     ({ list, pause } = args())
   } catch (error) {
     console.error('list not readable yet:', error.message)
-    return
+    return 0
   }
   // Saved before profile pictures were kept (no avatar field): fetched again, so the model knows the owner.
-  const todo = list.filter((username) => {
+  // Never fetched first (the model has nothing on them), then the ones only missing the picture.
+  const missing = list.filter((username) => !fs.existsSync(path.join(DIR, 'profiles', `${username}.json`)))
+  const noAvatar = list.filter((username) => {
     const file = path.join(DIR, 'profiles', `${username}.json`)
-    if (!fs.existsSync(file)) return true
+    if (!fs.existsSync(file)) return false
     try {
       const saved = JSON.parse(fs.readFileSync(file, 'utf8'))
       return saved.status === 'ok' && !('avatar' in saved)
@@ -134,6 +138,8 @@ async function round() {
       return true
     }
   })
+  // A few at a time, so a list that moved on (the person prospecting) is re-read often.
+  const todo = [...missing, ...noAvatar].slice(0, watchMode ? 15 : Infinity)
   console.log(`${list.length} profiles, ${list.length - todo.length} already saved, ${todo.length} to fetch`)
   const counts = {}
   for (const [index, username] of todo.entries()) {
@@ -149,6 +155,7 @@ async function round() {
     await sleep(pause[0] + Math.random() * (pause[1] - pause[0]))
   }
   if (todo.length) console.log('done', JSON.stringify(counts))
+  return todo.length
 }
 
 main().catch((error) => {
