@@ -264,9 +264,27 @@ async function adoptRow(sheetRow, link) {
   return row
 }
 
+// The undecided profiles split by where the wearable model is with them: for the person to judge,
+// decided by the model (written to the sheet within a minute or two), or still being checked.
+// A row without an Instagram link is always for the person.
+function modelProgress() {
+  let forYou = 0
+  let auto = 0
+  let judging = 0
+  for (const row of rows) {
+    if (choiceFor(row)) continue
+    const username = data.usernameFrom(row['DIRECT LINK'])
+    const state = username ? modelProspect.stateOf(username) : 'review'
+    if (state === 'review') forYou++
+    else if (state === 'auto') auto++
+    else judging++
+  }
+  return { forYou, auto, judging }
+}
+
 // The next undecided profiles in queue order, for the wearable model to judge ahead of the person
 // (data/wearable/live-list.json, read by python -m wearable.live and wearable/acquire.js --watch).
-function writeUpcoming(count = 300) {
+function writeUpcoming(count = Infinity) {
   const upcoming = rows.filter((row) => !choiceFor(row)).slice(0, count).map((row) => ({ sheetRow: row.sheetRow, username: data.usernameFrom(row['DIRECT LINK']) })).filter((item) => item.username)
   fs.mkdirSync(path.dirname(modelProspect.LIST), { recursive: true })
   const tmp = `${modelProspect.LIST}.tmp`
@@ -800,7 +818,7 @@ async function todo() {
   await log.refresh(10000).catch(() => {})
   return {
     guard,
-    prospecting: { remaining: counts().remaining, total: rows.length, yesToday: counts().yesToday, yesTarget: sendQueue.DAILY_LIMIT },
+    prospecting: { remaining: counts().remaining, ...modelProgress(), total: rows.length, yesToday: counts().yesToday, yesTarget: sendQueue.DAILY_LIMIT },
     voice: { toSend: voice.length, sentToday: Math.max(sendQueue.sentToday(), guard.app ? guard.kinds.voice.today : 0), limit: sendQueue.DAILY_LIMIT },
     hustle: { ...hustle.status(), auto: autoCommentStatus() },
     relaunch: { 1: relaunch.summary(yesRows, 1), 2: relaunch.summary(yesRows, 2) },
@@ -1062,7 +1080,7 @@ const server = http.createServer(async (req, res) => {
     // The wearable model prospecting alongside: the next undecided profiles in queue order, its answer
     // for one profile, and how often it has agreed so far.
     if (req.method === 'GET' && url.pathname === '/api/model-prospect/upcoming') {
-      const count = Math.min(1000, Math.max(1, Number(url.searchParams.get('count')) || 300))
+      const count = Math.max(1, Number(url.searchParams.get('count')) || Infinity)
       const upcoming = writeUpcoming(count)
       sendJson(res, 200, { count: upcoming.length, upcoming })
       return

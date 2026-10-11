@@ -150,9 +150,26 @@ function waitingLine(summary) {
 const PROSPECT_TASK = {
   id: 'prospect',
   title: 'Prospecting',
-  hint: 'Profiles left to answer Yes or No',
-  count: (data) => data.prospecting.remaining,
+  hint: 'For you to judge · the model decides the clear Yes and No',
+  count: (data) => data.prospecting.forYou ?? data.prospecting.remaining,
   side: (data) => `${data.prospecting.yesToday} / ${data.prospecting.yesTarget} yes today`,
+}
+
+// Under the Prospecting card: how far the model is with the profiles left.
+function modelProgressBar(data) {
+  const { remaining = 0, judging = 0, auto = 0 } = data.prospecting || {}
+  if (!remaining) return null
+  const checked = remaining - judging
+  const box = el('div', 'model-progress')
+  const bar = el('div', 'meter')
+  const fill = el('div', 'meter-fill')
+  fill.style.width = `${Math.max(2, Math.round((checked / remaining) * 100))}%`
+  bar.append(fill)
+  const text = judging
+    ? `Model checked ${number(checked)} of ${number(remaining)} left · ${number(judging)} to go`
+    : `Model has checked all ${number(remaining)} profiles left`
+  box.append(bar, el('div', 'model-progress-text', `${text}${auto ? ` · ${number(auto)} being saved` : ''}`))
+  return box
 }
 
 function renderTasks() {
@@ -180,6 +197,8 @@ function renderTasks() {
     if (task === PROSPECT_TASK) {
       link.classList.add('hero')
       prospectCard.append(link)
+      const progress = modelProgressBar(todoData)
+      if (progress) link.append(progress)
     } else {
       tasksEl.append(link)
     }

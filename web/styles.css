@@ -1436,8 +1436,8 @@ a.person.current {
 .usage-tip-date { font-size: 12px; color: var(--muted); }
 .usage-tip-value { font-size: 16px; font-weight: 650; color: var(--ink); font-variant-numeric: tabular-nums; }
 .usage-tip-meta { margin-top: 2px; font-size: 12px; color: var(--muted); max-width: 240px; }
-.usage-note { margin: 0; min-height: 16px; font-size: 12px; color: var(--muted); transition: opacity 0.4s ease; }
-.usage-live { display: inline-flex; align-items: center; gap: 5px; color: var(--accent-text); font-weight: 600; }
+.usage-note { display: flex; flex-wrap: wrap; align-items: center; gap: 0 6px; margin: 0; min-height: 16px; font-size: 12px; line-height: 16px; color: var(--muted); transition: opacity 0.4s ease; }
+.usage-live { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; line-height: 16px; color: var(--accent-text); font-weight: 600; }
 .usage-live::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--fill); }
 
 /* Loading: same layout, shimmering placeholders instead of numbers and bars. */
@@ -1506,3 +1506,8 @@ a.person.current {
 .model-side-auto.yes { background: #e8f5d6; color: #2f5d0a; }
 .model-side-info { display: flex; gap: 8px; align-items: flex-start; margin: 6px 0 4px; padding: 8px 10px; border-radius: 8px; background: var(--chip); color: var(--ink-2); font-size: 13px; line-height: 1.4; }
 .model-side-info-icon { flex: none; width: 16px; height: 16px; margin-top: 1px; border-radius: 50%; border: 1.5px solid currentColor; font-size: 11px; font-weight: 700; font-style: italic; line-height: 13px; text-align: center; }
+
+/* Prospecting: the model's progress through the profiles left */
+.model-progress { grid-column: 2 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: -6px; }
+.model-progress .meter { flex: 0 0 160px; }
+.model-progress-text { font-size: 13px; color: var(--muted); }
