@@ -818,6 +818,19 @@ async function closeOut(sheetRow, mode) {
       return ` The sheet could not be updated: ${writeError.message}`
     }
   }
+  // Unfollowed (or not followed in the first place): Keep hustling? becomes No, so they are done for good.
+  // Only after the unfollow: a creator who said no stays Yes until Launch has unfollowed them.
+  const keepNo = async () => {
+    if (!outreachColumns.keep) return ''
+    try {
+      await writer.setCells([{ cell: `${outreachColumns.keep}${row.sheetRow}`, value: 'No' }])
+      yesRows = yesRows.filter((item) => item.sheetRow !== row.sheetRow)
+      return ''
+    } catch (writeError) {
+      console.error(writeError)
+      return ` Keep hustling could not be set to No: ${writeError.message}`
+    }
+  }
   if (result.replied) {
     // Without a verdict nothing changes; Launch tries again later (and gives up after 2 tries).
     const verdict = await replyCheck.classify(result.thread).catch((error) => {
@@ -840,10 +853,10 @@ async function closeOut(sheetRow, mode) {
   const reason = mode === 'declined' ? 'said no' : 'no reply 3 days after the 2nd relaunch'
   if (result.notFollowing) {
     await relaunch.closeWithoutUnfollow(row.sheetRow, 'was not following them')
-    const note = String(liveAccepted).toLowerCase() === value.toLowerCase() ? '' : await sheetWrite(value, `${reason} (was not following)`)
-    return { ok: false, error: `@${username}: we were not following them, nothing to unfollow. Marked ${value}.${note}` }
+    const note = (String(liveAccepted).toLowerCase() === value.toLowerCase() ? '' : await sheetWrite(value, `${reason} (was not following)`)) + await keepNo()
+    return { ok: false, error: `@${username}: we were not following them, nothing to unfollow. Marked ${value}, Keep hustling No.${note}` }
   }
-  const note = String(liveAccepted).toLowerCase() === value.toLowerCase() ? '' : await sheetWrite(value, reason)
+  const note = (String(liveAccepted).toLowerCase() === value.toLowerCase() ? '' : await sheetWrite(value, reason)) + await keepNo()
   return { ok: true, warning: note.trim() }
 }
 

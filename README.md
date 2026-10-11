@@ -31,7 +31,7 @@ Optional: put a short name for your computer in `data/machine-name.txt` (e.g. `R
    Every round of 5 suggestions and what you did with it (picked, own comment, rewrote and how, skipped, later, undo) is saved to the **HUSTLING Training Data** tab, to train a model later.
 3. **Launch** on the To do page. It runs from 8:00 to 21:00 and carries anything left over to the next morning. Outreach just has to be open; it can sit on another desktop or behind other windows, and it keeps the Mac awake while it runs. Launch stays on until you press Stop: if Outreach, its server or the Mac restarts, it picks up again by itself.
 
-   Before each relaunch the chat is read. If they wrote back, Gemini judges the reply: a clear no is marked **No** and they are unfollowed; anything still going is marked **Replied**. Three days after the 2nd relaunch, the chat is checked again: no reply means unfollow and **unfollowed** in the sheet (at most 20 unfollows a day).
+   Before each relaunch the chat is read. If they wrote back, Gemini judges the reply: a clear no is marked **No** and they are unfollowed; anything still going is marked **Replied**. Three days after the 2nd relaunch, the chat is checked again: no reply means unfollow and **unfollowed** in the sheet (at most 40 unfollows a day); every unfollowed creator gets **No** in Keep hustling?.
 
 The **API costs** card at the top of To do shows what the Gemini API cost today (large), this week and this month, in USD, for both computers. It is computed from the token counts Gemini reports for every call, at Google's published rates; each computer writes its own daily totals to the sheet's **API Usage** tab.
 
