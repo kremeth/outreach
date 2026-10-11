@@ -719,7 +719,7 @@ function postCard(image, full, caption, alt) {
 
 // ---------- Hustling ----------
 
-const DAILY_COMMENTS = 60
+const DAILY_COMMENTS = 50
 const REWRITE_CHIPS = ['Shorter', 'More casual', 'More specific', 'Funnier', 'Add emojis']
 
 function hustleScreen() {
