@@ -1,20 +1,21 @@
-"""Profile match: how much a profile looks like the ones we say Yes to (whatever the wearable).
+"""Profile match: how close a profile is to the creators we actually did collabs with.
 
-    .venv/bin/python -m wearable.style build [--negatives 300] [--budget 1]   # the Yes database
-    .venv/bin/python -m wearable.style score <username>                       # one profile
+    .venv/bin/python -m wearable.style build [--budget 1]   # the ground truth set
+    .venv/bin/python -m wearable.style score <username>      # one profile
 
-1. Every human-labelled Yes profile (data/wearable/labels.jsonl) gets a short description from
-   Gemini Flash-Lite: who they are, what they post, their style and audience, from their first 12
-   photos, bio, name, follower count and captions. Wearables are left out on purpose: this score is
-   about the kind of profile, the wearable model handles the device. A sample of human-labelled No
-   profiles gets the same description, to calibrate against.
-2. Locally: each description is embedded with the comment ranker's Sentence-BERT, the photos with
-   CLIP (both already on disk, offline). A profile's similarity to the Yes database is the mean
-   cosine to its 10 nearest Yes profiles, text and photos, minus the same against the No sample.
-3. A small logistic regression on those similarities (cross-validated) gives the score; 0-100 is
-   where that lands among the Yes profiles' own scores (50 = a typical Yes). Levels: high from 50,
-   medium from 20, low below.
-The description prompt is the same for the database and for every new profile, so they compare.
+Ground truth: every creator on the "2. 'Yes' Collaboration Tracking" tab (data/wearable/collab-
+usernames.json, written from the sheet). Each profile, ground truth and new alike, is turned into one
+vector the same way:
+1. Gemini Flash-Lite describes it (who they are, what they post, their style and audience) from the
+   first 12 photos, bio, name, followers and captions, wearables left out on purpose (the wearable
+   model handles the device). Sentence-BERT (local) embeds that description.
+2. CLIP (local) embeds every photo; their mean is the profile's look.
+3. The two, each normalised, are joined and normalised again: one unit vector per profile.
+Profile match = cosine similarity between the profile's vector and the ground truth set: the mean
+cosine to its 5 closest collab creators (the set is varied, athletes, mums, coaches..., so the
+closest ones say more than the average of all). Shown 0-100 as where that cosine falls among the
+collab creators' own cosines to the rest of the set (50 = as close as a typical collab creator is
+to the others). Levels: high from 50, medium from 15, low below.
 """
 import argparse
 import json
@@ -30,13 +31,16 @@ from .grid import load_profile
 
 DIR = config.DATA / "style"
 DESCRIPTIONS = DIR / "descriptions.jsonl"
-MODEL_PATH = DIR / "model.npz"
+MODEL_PATH = DIR / "collab.npz"
 REPORT = DIR / "report.json"
-STYLE_TEXT = DIR / "yes-style.md"
-VERSION = "style-v1"
+STYLE_TEXT = DIR / "collab-style.md"
+GROUND_TRUTH = config.DATA / "collab-usernames.json"
+VERSION = "style-v1"  # the description prompt (Gemini's cache key): unchanged, so descriptions are reused
+MATCH_VERSION = "collab-v1"
 DESCRIBE_MODEL = "gemini-3.1-flash-lite"
 PHOTOS = 12
-K = 10
+TOP = 5
+HIGH, MEDIUM = 50, 15
 
 SCHEMA = {
     "type": "OBJECT",
@@ -79,24 +83,6 @@ def description_text(answer):
     return f"{answer.get('niche', '')}. {answer.get('persona', '')}. {answer.get('content_style', '')}. {answer.get('audience', '')}. {answer.get('summary', '')}"
 
 
-def _knn(vector, matrix, skip=None):
-    if not len(matrix):
-        return 0.0
-    sims = matrix @ vector
-    if skip is not None:
-        sims = np.delete(sims, skip)
-    return float(np.sort(sims)[-K:].mean())
-
-
-def _features(text_vec, image_vec, db, skip_yes=None, skip_no=None):
-    return np.array([
-        _knn(text_vec, db["text_yes"], skip_yes) - _knn(text_vec, db["text_no"], skip_no),
-        _knn(image_vec, db["image_yes"], skip_yes) - _knn(image_vec, db["image_no"], skip_no),
-        _knn(text_vec, db["text_yes"], skip_yes),
-        _knn(image_vec, db["image_yes"], skip_yes),
-    ], dtype=np.float32)
-
-
 def _image_vector(username):
     from .features import image_embeddings
 
@@ -114,22 +100,27 @@ def _text_vectors(texts):
     return vectors / np.maximum(np.linalg.norm(vectors, axis=1, keepdims=True), 1e-9)
 
 
-def _fit_logistic(x, y, steps=3000, lr=0.5, l2=1e-3):
-    mean, std = x.mean(axis=0), x.std(axis=0) + 1e-6
-    z = (x - mean) / std
-    w, b = np.zeros(z.shape[1]), 0.0
-    weight = np.where(y == 1, len(y) / (2 * max(1, y.sum())), len(y) / (2 * max(1, (1 - y).sum())))
-    for _ in range(steps):
-        p = 1 / (1 + np.exp(-(z @ w + b)))
-        grad = (p - y) * weight
-        w -= lr * (z.T @ grad / len(y) + l2 * w)
-        b -= lr * grad.mean()
-    return {"w": w, "b": b, "mean": mean, "std": std}
+def vector(username, answer):
+    """One unit vector per profile: its description (Sentence-BERT) and its photos (CLIP), equally weighted."""
+    joined = np.concatenate([_text_vectors([description_text(answer)])[0], _image_vector(username)])
+    return (joined / (np.linalg.norm(joined) or 1)).astype(np.float32)
 
 
-def _predict(model, x):
-    z = (x - model["mean"]) / model["std"]
-    return 1 / (1 + np.exp(-(z @ model["w"] + model["b"])))
+def similarity(v, matrix, skip=None):
+    """Mean cosine to the TOP closest ground truth profiles, and which ones they are."""
+    sims = matrix @ v
+    if skip is not None:
+        sims[skip] = -np.inf
+    order = np.argsort(-sims)[:TOP]
+    return float(sims[order].mean()), order
+
+
+def level(score):
+    return "high" if score >= HIGH else "medium" if score >= MEDIUM else "low"
+
+
+def _percentile(value, reference):
+    return round(float(np.searchsorted(reference, value) / len(reference) * 100))
 
 
 def _auc(scores, y):
@@ -139,76 +130,55 @@ def _auc(scores, y):
     return float((pos[:, None] > neg[None, :]).mean() + 0.5 * (pos[:, None] == neg[None, :]).mean())
 
 
-def build(negatives=300, budget=1.0, seed=42):
+def build(budget=1.0):
     DIR.mkdir(parents=True, exist_ok=True)
-    labels = [json.loads(line) for line in open(config.DATA / "labels.jsonl") if line.strip()]
-    human = [r for r in labels if r.get("source") == "human" and (config.PROFILES / f"{r['username']}.json").exists()]
-    yes = sorted({r["username"] for r in human if r["label"] == "Yes"})
-    no_all = sorted({r["username"] for r in human if r["label"] == "No"} - set(yes))
-    no = sorted(random.Random(seed).sample(no_all, min(negatives, len(no_all))))
+    collab = [u for u in json.loads(GROUND_TRUTH.read_text()) if (config.PROFILES / f"{u}.json").exists()]
     gemini = Gemini(budget=budget, run="profile-match", purpose="profile match: descriptions")
-    print(f"describing {len(yes)} Yes and {len(no)} No profiles (cached ones are free)", flush=True)
     with ThreadPoolExecutor(6) as pool:
-        answers = dict(zip(yes + no, pool.map(lambda u: describe(u, gemini), yes + no)))
-    with open(DESCRIPTIONS, "w") as handle:
-        for username, answer in answers.items():
-            if answer:
-                handle.write(json.dumps({"username": username, "label": "Yes" if username in yes else "No", **answer}) + "\n")
-    yes = [u for u in yes if answers.get(u)]
-    no = [u for u in no if answers.get(u)]
-    print(f"described: {len(yes)} Yes, {len(no)} No; ${gemini.spent:.3f}; embedding locally", flush=True)
-    text = _text_vectors([description_text(answers[u]) for u in yes + no])
-    image = np.stack([_image_vector(u) for u in yes + no])
-    n_yes = len(yes)
-    db = {"text_yes": text[:n_yes], "text_no": text[n_yes:], "image_yes": image[:n_yes], "image_no": image[n_yes:]}
-    x = np.stack([_features(text[i], image[i], db, skip_yes=i if i < n_yes else None, skip_no=i - n_yes if i >= n_yes else None) for i in range(len(yes) + len(no))])
-    y = np.array([1] * n_yes + [0] * len(no), dtype=np.float32)
-    # 5-fold cross-validation for an honest AUC (the kNN features already leave each profile out).
-    order = np.random.default_rng(seed).permutation(len(y))
-    held = np.zeros(len(y))
-    for fold in range(5):
-        test = order[fold::5]
-        train = np.setdiff1d(order, test)
-        held[test] = _predict(_fit_logistic(x[train], y[train]), x[test])
-    model = _fit_logistic(x, y)
-    fitted = _predict(model, x)
-    yes_scores = np.sort(fitted[:n_yes])
-    np.savez(MODEL_PATH, **db, w=model["w"], b=model["b"], mean=model["mean"], std=model["std"], yes_scores=yes_scores, usernames_yes=np.array(yes))
-    pct = lambda s: float(np.searchsorted(yes_scores, s) / len(yes_scores) * 100)
-    no_levels = [level(pct(s)) for s in fitted[n_yes:]]
+        answers = dict(zip(collab, pool.map(lambda u: describe(u, gemini), collab)))
+    collab = [u for u in collab if answers.get(u)]
+    print(f"ground truth: {len(collab)} collab creators described (${gemini.spent:.3f}); embedding locally", flush=True)
+    matrix = np.stack([vector(u, answers[u]) for u in collab])
+    own = np.sort([similarity(matrix[i], matrix, skip=i)[0] for i in range(len(collab))])
+    np.savez(MODEL_PATH, matrix=matrix, usernames=np.array(collab), own=own)
+    # How it separates the profiles we said Yes and No to before (described for the first version).
+    labelled = [json.loads(line) for line in open(DESCRIPTIONS)] if DESCRIPTIONS.exists() else []
+    labelled = [r for r in labelled if r["username"] not in set(collab)]
+    sims = np.array([similarity(vector(r["username"], r), matrix)[0] for r in labelled]) if labelled else np.zeros(0)
+    y = np.array([1 if r["label"] == "Yes" else 0 for r in labelled])
+    pct = np.array([_percentile(v, own) for v in sims])
+    levels = lambda mask: {name: int(sum(level(p) == name for p in pct[mask])) for name in ("high", "medium", "low")}
     report = {
-        "yes": n_yes,
-        "no": len(no),
-        "auc_cross_validated": round(_auc(held, y), 3),
-        "auc_text_only": round(_auc(x[:, 0], y), 3),
-        "auc_photos_only": round(_auc(x[:, 1], y), 3),
-        "no_profiles_by_level": {name: no_levels.count(name) for name in ("high", "medium", "low")},
+        "ground_truth": len(collab),
+        "collab_cosine_to_set": {"median": round(float(np.median(own)), 3), "min": round(float(own[0]), 3), "max": round(float(own[-1]), 3)},
+        "labelled_yes": int(y.sum()),
+        "labelled_no": int(len(y) - y.sum()),
+        "auc_yes_vs_no": round(_auc(sims, y), 3) if len(y) else None,
+        "median_cosine": {"yes": round(float(np.median(sims[y == 1])), 3) if y.sum() else None, "no": round(float(np.median(sims[y == 0])), 3) if (1 - y).sum() else None},
+        "yes_by_level": levels(y == 1) if len(y) else {},
+        "no_by_level": levels(y == 0) if len(y) else {},
         "spent_usd": round(gemini.spent, 3),
     }
     REPORT.write_text(json.dumps(report, indent=1))
-    summarise([answers[u] for u in yes], gemini)
+    summarise([answers[u] for u in collab], gemini)
     print(json.dumps(report, indent=1), flush=True)
     return report
 
 
 def summarise(answers, gemini):
-    """One plain description of the profiles we say Yes to, for people (data/wearable/style/yes-style.md)."""
+    """One plain description of the creators we did collabs with, for people (data/wearable/style/collab-style.md)."""
     lines = "\n".join(f"- {a.get('niche')}; {a.get('persona')}; {a.get('content_style')}; {a.get('audience')}" for a in answers)
     schema = {"type": "OBJECT", "properties": {"style": {"type": "STRING"}}, "required": ["style"]}
-    prompt = f"These are short descriptions of the {len(answers)} Instagram creators a team said Yes to for a partnership:\n{lines}\n\nstyle: in 8-12 short bullet points (markdown, '- '), describe the kinds of profile they say Yes to: the main groups, typical niches, people, content and audiences, roughly how common each is. Plain words."
-    result = gemini.generate("gemini-3.8-flash", VERSION + "-summary", [], prompt, schema, max_output_tokens=900)
-    STYLE_TEXT.write_text("# The profiles we say Yes to\n\n" + result.get("answer", {}).get("style", "") + "\n")
-
-
-def level(score):
-    return "high" if score >= 50 else "medium" if score >= 20 else "low"
+    prompt = f"These are short descriptions of the {len(answers)} Instagram creators a brand has done collaborations with:\n{lines}\n\nstyle: in 6-10 short bullet points (markdown, '- '), describe the kinds of creator they collaborate with: the main groups, typical niches, people, content and audiences, roughly how common each is. Plain words."
+    result = gemini.generate("gemini-3.8-flash", MATCH_VERSION + "-summary", [], prompt, schema, max_output_tokens=900)
+    STYLE_TEXT.write_text("# The creators we did collabs with\n\n" + result.get("answer", {}).get("style", "") + "\n")
 
 
 _db = None
 
 
 def score(username, gemini):
-    """{score 0-100, level, niche, summary} for one profile, or None if it cannot be described."""
+    """{score 0-100, level, cosine, closest, niche} for one profile, or None if it cannot be described."""
     global _db
     if _db is None:
         if not MODEL_PATH.exists():
@@ -217,23 +187,29 @@ def score(username, gemini):
     answer = describe(username, gemini)
     if not answer:
         return None
-    text = _text_vectors([description_text(answer)])[0]
-    image = _image_vector(username)
-    model = {key: _db[key] for key in ("w", "b", "mean", "std")}
-    probability = float(_predict(model, _features(text, image, _db)[None, :])[0])
-    value = round(float(np.searchsorted(_db["yes_scores"], probability) / len(_db["yes_scores"]) * 100))
-    return {"score": value, "level": level(value), "niche": answer.get("niche", ""), "summary": answer.get("summary", ""), "version": VERSION}
+    names = [str(u) for u in _db["usernames"]]
+    skip = names.index(username) if username in names else None
+    cosine, closest = similarity(vector(username, answer), _db["matrix"], skip)
+    value = _percentile(cosine, _db["own"])
+    return {
+        "score": value,
+        "level": level(value),
+        "cosine": round(cosine, 3),
+        "closest": [names[i] for i in closest[:3]],
+        "niche": answer.get("niche", ""),
+        "summary": answer.get("summary", ""),
+        "version": MATCH_VERSION,
+    }
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=["build", "score"])
     parser.add_argument("username", nargs="?")
-    parser.add_argument("--negatives", type=int, default=300)
     parser.add_argument("--budget", type=float, default=1.0)
     args = parser.parse_args()
     if args.command == "build":
-        build(args.negatives, args.budget)
+        build(args.budget)
     else:
         print(json.dumps(score(args.username, Gemini(budget=0.05, run="profile-match", purpose="profile match")), indent=1))
     return 0

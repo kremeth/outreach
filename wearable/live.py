@@ -107,10 +107,10 @@ def run_once(args, out, gemini):
             handle.write(json.dumps(record) + "\n")
         worked = True
         print(f"{position}/{len(items)} @{username}: {record['decision']} {record.get('brands') or ''} (${gemini.spent:.3f} today)", flush=True)
-    # Profiles judged before the profile match existed get it now (a new line; the latest one counts).
+    # Profiles judged before this profile match (or with an older one) get it now (a new line; the latest counts).
     for item in items:
         record = latest.get(item["username"])
-        if record and shown(record) and "match" not in record and style.MODEL_PATH.exists():
+        if record and shown(record) and (record.get("match") or {}).get("version") != style.MATCH_VERSION and style.MODEL_PATH.exists():
             try:
                 add_match(record, gemini)
             except BudgetExceeded:
@@ -130,7 +130,7 @@ def shown(record):
 
 
 def add_match(record, gemini):
-    """How much the profile looks like the ones we say Yes to (wearable.style), for the ones shown."""
+    """How close the profile is to the creators we did collabs with (wearable.style), for the ones shown."""
     if not shown(record) or not style.MODEL_PATH.exists():
         return
     try:
