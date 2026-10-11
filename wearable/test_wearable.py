@@ -70,8 +70,8 @@ class WearableTests(unittest.TestCase):
         answer = {"description": "Tile 1: left wrist, black Garmin watch", "wearable": "yes", "devices": [{"brand": "Garmin", "tiles": [1], "certainty": "confirmed", "evidence": "tile 1"}]}
         payload = {"candidates": [{"content": {"parts": [{"text": json.dumps(answer)}]}}], "usageMetadata": {"promptTokenCount": 1500, "candidatesTokenCount": 200}}
         with mock.patch.object(gemini, "_post", return_value=payload) as post:
-            first = detect.detect("b", client, "gemini-3.1-flash-lite")
-            second = detect.detect("b", client, "gemini-3.1-flash-lite")
+            first = detect.detect("b", client, "gemini-3.1-flash-lite", zoom=False)
+            second = detect.detect("b", client, "gemini-3.1-flash-lite", zoom=False)
         self.assertEqual(post.call_count, 1)
         self.assertEqual(first["decision"], "Yes")
         self.assertEqual(second["brands"], ["Garmin"])
@@ -94,22 +94,40 @@ class WearableTests(unittest.TestCase):
             record = detect.detect("d", client)
         self.assertEqual(record["decision"], "Unknown")
 
-    def test_closer_look_only_when_it_can_change_the_answer(self):
-        self.assertTrue(detect.needs_zoom({"wearable": "possible", "devices": []}))
-        self.assertTrue(detect.needs_zoom({"wearable": "yes", "devices": [{"brand": "Unknown smartwatch", "certainty": "possible"}]}))
-        self.assertFalse(detect.needs_zoom({"wearable": "yes", "devices": [{"brand": "WHOOP", "certainty": "confirmed"}]}))
+    def test_closer_look_on_every_yes_or_possible(self):
+        self.assertTrue(detect.needs_zoom({"wearable": "possible", "devices": [{"brand": "Unknown smartwatch"}]}))
+        self.assertTrue(detect.needs_zoom({"wearable": "yes", "devices": [{"brand": "WHOOP", "certainty": "confirmed"}]}))
         self.assertFalse(detect.needs_zoom({"wearable": "no", "devices": []}))
 
-    def test_closer_look_never_vetoes_a_yes(self):
-        self.make_profile("e", 9)
+    def _two_step(self, username, first, second):
+        self.make_profile(username, 9)
         client = gemini.Gemini(budget=1.0)
-        first = {"description": "Tile 2: dark band on left wrist", "wearable": "yes", "devices": [{"brand": "Unknown fitness band", "tiles": [2], "certainty": "probable", "evidence": "tile 2"}]}
-        second = {"wearable": "no", "devices": []}
         replies = [{"candidates": [{"content": {"parts": [{"text": json.dumps(reply)}]}}], "usageMetadata": {"promptTokenCount": 1000, "candidatesTokenCount": 50}} for reply in (first, second)]
         with mock.patch.object(gemini, "_post", side_effect=replies):
-            record = detect.detect("e", client)
+            return detect.detect(username, client)
+
+    def test_closer_look_that_finds_nothing_is_unknown_never_no(self):
+        first = {"description": "Tile 2: dark band on left wrist", "wearable": "yes", "devices": [{"brand": "Apple Watch", "best_tile": 2, "tiles": [2, 3, 4, 5], "wearer": "owner", "certainty": "probable", "evidence": "tile 2"}]}
+        second = {"photos": [{"photo": 2, "seen": "no", "brand": "Unknown smartwatch", "wearer": "unclear", "certainty": "possible", "evidence": "wrist out of frame"}]}
+        record = self._two_step("e", first, second)
         self.assertTrue(record["zoomed"])
+        self.assertEqual(record["verdict"], "unverified")
+        self.assertEqual(record["decision"], "Unknown")
+
+    def test_closer_look_keeps_only_the_photo_it_saw(self):
+        first = {"description": "", "wearable": "yes", "devices": [{"brand": "Unknown smartwatch", "best_tile": 7, "tiles": [1, 4, 7], "wearer": "owner", "certainty": "possible", "evidence": "tile 7"}]}
+        second = {"photos": [{"photo": 7, "seen": "yes", "brand": "Garmin", "wearer": "owner", "certainty": "confirmed", "evidence": "round watch on left wrist"}]}
+        record = self._two_step("f", first, second)
         self.assertEqual(record["decision"], "Yes")
+        self.assertEqual(record["brands"], ["Garmin"])
+        self.assertEqual(record["devices"][0]["tiles"], [7])
+
+    def test_someone_elses_watch_is_possible_at_most(self):
+        first = {"description": "", "wearable": "yes", "devices": [{"brand": "Apple Watch", "best_tile": 3, "tiles": [3], "wearer": "owner", "certainty": "confirmed", "evidence": "tile 3"}]}
+        second = {"photos": [{"photo": 3, "seen": "yes", "brand": "Apple Watch", "wearer": "someone else", "certainty": "confirmed", "evidence": "on the friend's wrist"}]}
+        record = self._two_step("g", first, second)
+        self.assertEqual(record["verdict"], "possible")
+        self.assertEqual(record["brands"], [])
 
     def test_network_has_two_logits_and_softmax(self):
         import torch

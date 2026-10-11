@@ -1,12 +1,13 @@
 """The wearable model prospecting ahead of a person.
 
-    .venv/bin/python -m wearable.live [--budget 3] [--list data/wearable/live-list.json]
+    .venv/bin/python -m wearable.live [--budget 3] [--list data/wearable/live-list.json] [--redo 50]
 
 Goes through the upcoming profiles in queue order (written by Outreach's
 /api/model-prospect/upcoming), waits for each one's images (wearable/acquire.js), and judges it with
 the pilot's best setup: Gemini 3.1 Flash-Lite on all the profile's grids, with the closer look (brand
 identification) done by Gemini 3.8 Flash. Answers go to data/wearable/results/live.jsonl, which the
-Prospecting screen reads. Resumable; stops at the budget.
+Prospecting screen reads (the latest line per profile wins). Resumable; stops at the budget.
+--redo N: the first N profiles of the list are judged again if their answer came from an older prompt.
 """
 import argparse
 import json
@@ -25,15 +26,22 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--budget", type=float, default=3.0)
     parser.add_argument("--list", default=str(config.DATA / "live-list.json"))
+    parser.add_argument("--redo", type=int, default=0)
     args = parser.parse_args()
     items = json.loads(open(args.list).read())
     out = config.RESULTS / "live.jsonl"
     config.RESULTS.mkdir(parents=True, exist_ok=True)
-    done = {json.loads(line)["username"] for line in out.read_text().splitlines() if line.strip()} if out.exists() else set()
+    latest = {}
+    if out.exists():
+        for line in out.read_text().split("\n"):
+            if line.strip():
+                record = json.loads(line)
+                latest[record["username"]] = record
+    current = {username for username, record in latest.items() if record.get("prompt") == detect.PROMPT_VERSION}
     gemini = Gemini(budget=args.budget, run="live-prospecting", purpose="wearable model, live prospecting")
     for position, item in enumerate(items, 1):
         username = item["username"]
-        if username in done:
+        if username in current or (username in latest and position > args.redo):
             continue
         profile_path = config.PROFILES / f"{username}.json"
         waited = 0

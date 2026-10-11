@@ -633,6 +633,9 @@ function modelDecision(prediction) {
     const brands = prediction.brands.length ? prediction.brands : prediction.possibleBrands
     return { label: 'Yes', detail: brands.length ? brands.join(', ') : 'Wearable, brand not identified', tone: 'yes' }
   }
+  if (prediction.verdict === 'unverified') {
+    return { label: 'Unsure', detail: 'The quick look thought it saw a wearable, but the closer look at that photo could not find one', tone: 'unsure' }
+  }
   if (prediction.decision === 'No') return { label: 'No', detail: 'No wearable on any wrist, arm or finger it could see', tone: 'no' }
   return { label: 'Unsure', detail: prediction.profileStatus && prediction.profileStatus !== 'ok' ? `Profile ${prediction.profileStatus}` : 'No wrists or hands visible enough to tell', tone: 'unsure' }
 }
@@ -655,7 +658,10 @@ function paintModel(item, prediction) {
       img.alt = `Photo ${prediction.evidence.photo}: ${prediction.evidence.where}`
       button.append(img)
       button.addEventListener('click', () => openZoom(prediction.evidence.image, img.alt, img.src))
-      modelPanel.append(button, el('div', 'model-side-where', `Photo ${prediction.evidence.photo} · ${prediction.evidence.brand} (${prediction.evidence.certainty}) · ${prediction.evidence.where}`))
+      const who = prediction.evidence.wearer && prediction.evidence.wearer !== 'owner' ? ` · worn by ${prediction.evidence.wearer === 'unclear' ? 'someone, unclear who' : 'someone else'}` : ''
+      const checked = prediction.evidence.verified ? ' · checked at full size' : ''
+      const what = prediction.verdict === 'unverified' ? `first look guessed ${prediction.evidence.brand}` : `${prediction.evidence.brand} (${prediction.evidence.certainty})${who}${checked}`
+      modelPanel.append(button, el('div', 'model-side-where', `Photo ${prediction.evidence.photo} · ${what} · ${prediction.evidence.where}`))
       if (prediction.evidence.vague) {
         modelPanel.append(el('div', 'model-side-where model-side-vague', `It listed ${prediction.evidence.cited} photos without pointing to one, so this is likely a guess: photo ${prediction.evidence.photo} is just the first of them.`))
       }
