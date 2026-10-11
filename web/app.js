@@ -732,7 +732,7 @@ function paintModel(item, prediction) {
     }
     if (prediction.device && Number.isFinite(prediction.device.score)) {
       const value = Math.max(0, Math.min(100, Math.round(prediction.device.score)))
-      gaugeRow('Device', value, shade(value), `${value}/100: how sure the model is that it is ${prediction.device.brand}`)
+      gaugeRow('Device', value, shade(value), prediction.device.fromText ? `${prediction.device.brand}: named in the bio or captions, not seen worn in a photo` : `${value}/100: how sure the model is that it is ${prediction.device.brand}`)
     }
     // Profile match: an active person whose content is their own life. Red low, orange medium, green high.
     if (prediction.match && Number.isFinite(prediction.match.score)) {
@@ -755,8 +755,12 @@ function paintModel(item, prediction) {
       const checked = prediction.evidence.verified ? ' · checked at full size' : ''
       const also = prediction.evidence.others?.length ? ` · also in photo ${prediction.evidence.others.join(', ')}` : ''
       modelPanel.append(button, el('div', 'model-side-where', `Photo ${prediction.evidence.photo} · ${prediction.evidence.brand} (${prediction.evidence.certainty})${who}${checked}${also} · ${prediction.evidence.where}`))
-    } else if (prediction.textMentions?.length) {
-      modelPanel.append(el('div', 'model-side-where', `Named in the bio or captions: ${prediction.textMentions.join(', ')}`))
+    }
+    // A brand named in the bio or captions (it can make a Yes on its own): where, the words around it,
+    // and whether it is a paid partnership.
+    for (const mention of prediction.mentions || []) {
+      const where = mention.where === 'bio' || mention.where === 'name' ? `in the ${mention.where}` : `in ${mention.where}${mention.count > 1 ? ` (+${mention.count - 1} more)` : ''}`
+      modelPanel.append(el('div', 'model-side-where', `${mention.brand} named ${where}${mention.paid ? ', a paid partnership' : ''}: “${mention.quote}”`))
     }
     if (!prediction.evidence && prediction.notes) {
       modelPanel.append(el('div', 'model-side-where', `What it saw: ${prediction.notes}`))
