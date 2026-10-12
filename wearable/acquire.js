@@ -27,7 +27,7 @@ const sharp = require('sharp')
 const MAX_SIDE = 768
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 let watchMode = false
-const HOURLY = 60
+const HOURLY = 25
 const QUIET_AFTER_WALL_MS = 10 * 60 * 1000
 const loads = []
 
@@ -35,7 +35,7 @@ function args() {
   const list = []
   // Slow on purpose: logged-out profile loads from one internet connection are what make Instagram put
   // up a login wall, and the Prospecting screen needs the same connection.
-  let pause = [30000, 60000]
+  let pause = [90000, 150000]
   let watch = false
   const argv = process.argv.slice(2)
   for (let index = 0; index < argv.length; index++) {
@@ -104,8 +104,9 @@ async function acquire(username) {
   }
   record.acquiredAt = new Date().toISOString()
   record.seconds = Math.round((Date.now() - started) / 100) / 10
-  // A login wall says nothing about the profile: not saved, so it is retried.
-  if (record.status !== 'login-wall') {
+  // A login wall or a failure on our side (no browser...) says nothing about the profile: not saved,
+  // so it is retried.
+  if (record.status !== 'login-wall' && record.status !== 'error') {
     fs.mkdirSync(path.dirname(file), { recursive: true })
     fs.writeFileSync(file, JSON.stringify(record, null, 1))
   }
