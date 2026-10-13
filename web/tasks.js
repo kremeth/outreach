@@ -176,29 +176,28 @@ function modelProgressBar(data) {
   return box
 }
 
-// DMs to reply: conversations where they wrote last (read from the inbox every 20 minutes); a
-// conversation drops off by itself once you answer. Their voicenotes come as Instagram's transcription.
+// DMs to reply: in the last 100 conversations of the inbox, the ones where they wrote last (read from
+// the inbox list every 20 minutes; no conversation is opened). Unread ones are marked. A conversation
+// drops off by itself once you answer.
 function renderDms() {
   dmsEl.replaceChildren()
   const dms = todoData?.dms
   if (!dms) return
   const card = el('div', 'side-card')
   const when = dms.scannedAt ? new Date(dms.scannedAt).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' }) : ''
-  if (!dms.toReply.length) {
-    card.append(el('p', 'side-empty', dms.scannedAt ? `Nothing to reply to · inbox checked at ${when}` : 'The inbox is read every 20 minutes while Outreach is open.'))
-  }
+  if (!dms.scannedAt) card.append(el('p', 'side-empty', 'The inbox is read every 20 minutes while Outreach is open.'))
+  else if (!dms.toReply.length) card.append(el('p', 'side-empty', `Nothing to reply to in the last ${dms.looked} conversations · checked at ${when}`))
   for (const item of dms.toReply) {
-    const row = el('a', 'dm-row')
-    row.href = item.threadId ? `https://www.instagram.com/direct/t/${item.threadId}/` : (item.username ? `https://ig.me/m/${item.username}` : 'https://www.instagram.com/direct/inbox/')
+    const row = el('a', `dm-row${item.unread ? ' unread' : ''}`)
+    row.href = 'https://www.instagram.com/direct/inbox/'
     row.target = '_blank'
     row.rel = 'noopener'
     const top = el('div', 'dm-top')
-    top.append(el('strong', '', item.name), el('span', 'dm-handle', item.username ? `@${item.username}` : ''), el('span', 'dm-age', item.age || ''))
-    const words = (item.words && item.words.length) ? item.words.map((word) => `${word.voice ? '🎙 ' : ''}${word.text}`).join(' · ') : item.preview
-    row.append(top, el('div', 'dm-words', words))
+    top.append(el('strong', '', item.name), el('span', 'dm-age', item.unread ? 'Unread' : item.age || ''))
+    row.append(top, el('div', 'dm-words', `${item.voice ? '🎙 ' : ''}${item.preview}`))
     card.append(row)
   }
-  if (dms.toReply.length) card.append(el('p', 'side-foot', `Inbox checked at ${when} · a conversation drops off once you answer`))
+  if (dms.scannedAt && dms.toReply.length) card.append(el('p', 'side-foot', `${dms.toReply.length} waiting on you · ${dms.unread} unread · last ${dms.looked} conversations, checked at ${when}`))
   dmsEl.append(card)
 }
 

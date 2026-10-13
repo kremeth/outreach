@@ -779,23 +779,34 @@ async function chatState(wc, { username }) {
   return { messages: await openThread(wc, username) }
 }
 
-// The DM inbox list, read only: every conversation row in view (name, preview, age, unread, link).
-async function inboxState(wc, { folder = '' } = {}) {
+// The DM inbox list, read only (no conversation is opened): scrolls the list until it has `limit`
+// conversations (or the list ends) and returns each row's lines (name, preview, age or "Unread").
+async function inboxState(wc, { folder = '', limit = 100 } = {}) {
   await openUrl(wc, `https://www.instagram.com/direct/${folder === 'general' ? 'general/' : 'inbox/'}`)
   await sleep(2500)
-  const read = () => run(wc, String.raw`(() => {
-    const rows = [...document.querySelectorAll('a[href*="/direct/t/"], div[role="button"], div[role="listitem"]')]
-      .filter((el) => { const r = el.getBoundingClientRect(); return r.width > 150 && r.height > 40 && r.height < 120 && r.left < window.innerWidth * 0.5 })
-    const seen = new Set()
-    return rows.map((el) => {
-      const lines = (el.innerText || '').split('\n').map((line) => line.trim()).filter(Boolean)
-      const link = el.closest('a[href*="/direct/t/"]')?.getAttribute('href') || el.querySelector('a[href*="/direct/t/"]')?.getAttribute('href') || ''
-      const bold = [...el.querySelectorAll('span')].some((span) => Number(getComputedStyle(span).fontWeight) >= 600 && (span.innerText || '').trim().length > 3)
-      const unreadDot = Boolean(el.querySelector('[aria-label*="nread" i]'))
-      return { lines: lines.slice(0, 5), link, bold, unreadDot, html: el.outerHTML.length }
-    }).filter((row) => { const key = row.lines.join('|'); if (!row.lines.length || seen.has(key)) return false; seen.add(key); return true })
-  })()`)
-  return { rows: await read(), tabs: await run(wc, String.raw`[...document.querySelectorAll('[role="tab"], a[href*="/direct/"]')].map((el) => (el.innerText || el.getAttribute('aria-label') || '').trim()).filter(Boolean).slice(0, 12)`) }
+  const collected = new Map()
+  let stale = 0
+  for (let round = 0; round < 40 && collected.size < limit && stale < 4; round++) {
+    const page = await run(wc, String.raw`(() => {
+      const rows = [...document.querySelectorAll('div[role="button"], a[href*="/direct/t/"], div[role="listitem"]')]
+        .filter((el) => { const r = el.getBoundingClientRect(); return r.width > 150 && r.height > 40 && r.height < 120 && r.left < window.innerWidth * 0.5 })
+      const out = rows.map((el) => ({ lines: (el.innerText || '').split('\n').map((line) => line.trim()).filter(Boolean).slice(0, 6) }))
+      // Scroll the list (the scrollable ancestor of the last row) further down.
+      const last = rows[rows.length - 1]
+      let box = last
+      while (box && box.parentElement && !(box.scrollHeight > box.clientHeight + 20 && /auto|scroll/.test(getComputedStyle(box).overflowY))) box = box.parentElement
+      if (box) box.scrollTop = box.scrollTop + box.clientHeight * 0.9
+      return out
+    })()`).catch(() => [])
+    const before = collected.size
+    for (const row of page) {
+      const key = row.lines.slice(0, 2).join('|')
+      if (row.lines.length && !collected.has(key)) collected.set(key, row)
+    }
+    stale = collected.size === before ? stale + 1 : 0
+    await sleep(900)
+  }
+  return { rows: [...collected.values()].slice(0, limit) }
 }
 
 // Opens one inbox conversation by its name (read only: no message is typed or sent) and returns who it

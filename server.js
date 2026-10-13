@@ -1028,9 +1028,13 @@ function panelFree() {
 
 // A conversation showing "can't receive your message": NA in the sheet (Launch then unfollows them and
 // sets Keep hustling to No). Only for creators we contacted (Keep hustling Yes).
-async function markUnreachableByUsername(username, inboxRow) {
-  const row = yesRows.find((item) => data.usernameFrom(item.link).toLowerCase() === String(username).toLowerCase())
-  if (!row) return false
+// The inbox shows display names: matched to the sheet's NAME (case and spacing aside), only when exactly
+// one creator we contacted has that name.
+async function markUnreachableByUsername(name, inboxRow) {
+  const norm = (text) => String(text || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
+  const matches = yesRows.filter((item) => norm(item.name) === norm(name))
+  if (matches.length !== 1) return false
+  const row = matches[0]
   if (String(row.accepted || '').trim().toLowerCase() === 'na') return true
   await relaunch.markUnreachable(row, 3, `can't receive our messages (seen in the inbox: ${inboxRow.name})`)
   return true
@@ -1566,7 +1570,9 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'GET' && url.pathname === '/api/preview') {
       try {
-        const profile = await preview.profile(url.searchParams.get('u'), url.searchParams.get('now') === '1')
+        // The Prospecting screen: the profile on screen now, or one it preloads next ('screen'): never held
+        // back by the background allowance.
+        const profile = await preview.profile(url.searchParams.get('u'), url.searchParams.get('now') === '1' ? true : 'screen')
         sendJson(res, 200, profile)
       } catch (error) {
         sendJson(res, 502, { error: error.message || 'Could not load this profile.', kind: error.kind || 'error' })
@@ -1654,7 +1660,7 @@ async function boot() {
   })
   const first = rows.filter((row) => !choiceFor(row)).slice(0, 4).map((row) => data.usernameFrom(row['DIRECT LINK'])).filter(Boolean)
   first.forEach((username, position) => {
-    preview.profile(username, position === 0).catch(() => {})
+    preview.profile(username, position === 0 ? true : 'screen').catch(() => {})
   })
 }
 
