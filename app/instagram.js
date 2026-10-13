@@ -836,6 +836,11 @@ async function openInboxRow(wc, { name, folder = '', transcribe = true }) {
     return { ...value, done: Boolean(value.id) }
   }, 10000, 400)
   if (!opened?.id) throw fail(`Could not open the chat with ${name}.`, 'mismatch')
+  // The header (with their username) can render a moment after the chat itself.
+  for (let tries = 0; !opened.username && tries < 12; tries++) {
+    await sleep(400)
+    opened.username = await run(wc, String.raw`(() => { const link = document.querySelector('[aria-label^="Open the profile page of "]'); return link ? link.getAttribute('aria-label').replace('Open the profile page of ', '').trim() : '' })()`).catch(() => '')
+  }
   let messages = await readThread(wc)
   if (transcribe) {
     // Their voicenotes after our last message: open each transcription, then read the chat again.
