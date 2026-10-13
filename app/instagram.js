@@ -819,7 +819,18 @@ async function openInboxRow(wc, { name, folder = '', transcribe = true }) {
     const value = await run(wc, String.raw`(() => {
       const id = (location.pathname.match(/\/direct\/t\/(\d+)/) || [])[1] || ''
       const link = document.querySelector('[aria-label^="Open the profile page of "]')
-      const username = link ? link.getAttribute('aria-label').replace('Open the profile page of ', '').trim() : ''
+      let username = link ? link.getAttribute('aria-label').replace('Open the profile page of ', '').trim() : ''
+      // Otherwise the profile link in the chat's header (top of the conversation, right of the list).
+      if (!username) {
+        const main = document.querySelector('[role="main"]') || document.body
+        const left = main.getBoundingClientRect().left
+        const header = [...document.querySelectorAll('a[href]')].find((a) => {
+          const r = a.getBoundingClientRect()
+          const m = (a.getAttribute('href') || '').match(/^\/([A-Za-z0-9._]{2,30})\/?$/)
+          return m && r.top < 160 && r.left >= left - 5 && !['direct', 'explore', 'reels', 'accounts'].includes(m[1])
+        })
+        username = header ? header.getAttribute('href').replace(/\//g, '') : ''
+      }
       return { id, username }
     })()`).catch(() => ({}))
     return { ...value, done: Boolean(value.id) }
