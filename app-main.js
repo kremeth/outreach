@@ -363,6 +363,36 @@ function startControl() {
           panelTask = ''
         }
       }
+      if (url.pathname === '/inbox-state') {
+        if (panelTask) return reply(409, { error: `Instagram is busy (${panelTask}).`, kind: 'busy' })
+        panelTask = 'reading the inbox'
+        try {
+          await ensurePanelLive()
+          return reply(200, await ig.inboxState(panel.webContents, body))
+        } finally {
+          panelTask = ''
+        }
+      }
+      if (url.pathname === '/inbox-open') {
+        if (panelTask) return reply(409, { error: `Instagram is busy (${panelTask}).`, kind: 'busy' })
+        panelTask = 'reading a chat'
+        try {
+          await ensurePanelLive()
+          return reply(200, await ig.openInboxRow(panel.webContents, body))
+        } finally {
+          panelTask = ''
+        }
+      }
+      if (url.pathname === '/our-stories') {
+        if (panelTask) return reply(409, { error: `Instagram is busy (${panelTask}).`, kind: 'busy' })
+        panelTask = 'looking at our stories'
+        try {
+          await ensurePanelLive()
+          return reply(200, await ig.ourStories(panel.webContents, body))
+        } finally {
+          panelTask = ''
+        }
+      }
       if (url.pathname === '/reply-relaunch') {
         const describe = () => ({ target: body.username || '', detail: `reply${Number(body.step) === 2 ? 2 : 1}:${body.sheetRow || ''}` })
         return reply(200, await inPanel('dm', 'sending a reply relaunch', describe, (wc) => ig.replyRelaunch(wc, body)))

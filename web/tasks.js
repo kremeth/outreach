@@ -8,6 +8,8 @@ const syncEl = document.getElementById('sync')
 const homeWarn = document.getElementById('home-warn')
 const tasksEl = document.getElementById('tasks')
 const prospectCard = document.getElementById('prospect-card')
+const dmsEl = document.getElementById('dms')
+const partnersEl = document.getElementById('partners')
 const safetyEl = document.getElementById('safety')
 const launchEl = document.getElementById('launch')
 
@@ -174,7 +176,67 @@ function modelProgressBar(data) {
   return box
 }
 
+// DMs to reply: conversations where they wrote last (read from the inbox every 20 minutes); a
+// conversation drops off by itself once you answer. Their voicenotes come as Instagram's transcription.
+function renderDms() {
+  dmsEl.replaceChildren()
+  const dms = todoData?.dms
+  if (!dms) return
+  const card = el('div', 'side-card')
+  const when = dms.scannedAt ? new Date(dms.scannedAt).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' }) : ''
+  if (!dms.toReply.length) {
+    card.append(el('p', 'side-empty', dms.scannedAt ? `Nothing to reply to · inbox checked at ${when}` : 'The inbox is read every 20 minutes while Outreach is open.'))
+  }
+  for (const item of dms.toReply) {
+    const row = el('a', 'dm-row')
+    row.href = item.threadId ? `https://www.instagram.com/direct/t/${item.threadId}/` : (item.username ? `https://ig.me/m/${item.username}` : 'https://www.instagram.com/direct/inbox/')
+    row.target = '_blank'
+    row.rel = 'noopener'
+    const top = el('div', 'dm-top')
+    top.append(el('strong', '', item.name), el('span', 'dm-handle', item.username ? `@${item.username}` : ''), el('span', 'dm-age', item.age || ''))
+    const words = (item.words && item.words.length) ? item.words.map((word) => `${word.voice ? '🎙 ' : ''}${word.text}`).join(' · ') : item.preview
+    row.append(top, el('div', 'dm-words', words))
+    card.append(row)
+  }
+  if (dms.toReply.length) card.append(el('p', 'side-foot', `Inbox checked at ${when} · a conversation drops off once you answer`))
+  dmsEl.append(card)
+}
+
+// Ongoing partnerships: Story ticks when our own story reposts theirs, Post when one of their posts names
+// nutricode; both can be ticked by hand. Kept on the "Ongoing Partnerships" tab of the sheet.
+function renderPartners() {
+  partnersEl.replaceChildren()
+  const list = todoData?.partners
+  if (!list) return
+  const card = el('div', 'side-card')
+  if (!list.length) card.append(el('p', 'side-empty', 'No ongoing partnerships (add them on the "Ongoing Partnerships" tab).'))
+  for (const partner of list) {
+    const row = el('div', 'partner-row')
+    const who = el('a', 'partner-name', `@${partner.username}`)
+    who.href = `https://www.instagram.com/${partner.username}/`
+    who.target = '_blank'
+    who.rel = 'noopener'
+    const checks = el('div', 'partner-checks')
+    for (const kind of ['story', 'post']) {
+      const on = partner[kind]
+      const chip = button(`${on ? '✓' : '○'} ${kind === 'story' ? 'Story' : 'Post'}`, `partner-check${on ? ' on' : ''}`, async () => {
+        chip.disabled = true
+        const result = await api('/api/partners/mark', { username: partner.username, kind, value: !on }).catch(() => null)
+        if (result?.partners && todoData) todoData.partners = result.partners
+        renderPartners()
+      })
+      chip.title = on ? (partner[`${kind}Seen`] || 'Ticked') : `Not seen yet. Click to tick by hand.`
+      checks.append(chip)
+    }
+    row.append(who, el('span', 'partner-date', partner.date || ''), checks)
+    card.append(row)
+  }
+  partnersEl.append(card)
+}
+
 function renderTasks() {
+  renderDms()
+  renderPartners()
   tasksEl.replaceChildren()
   prospectCard.replaceChildren()
   if (!todoData) {

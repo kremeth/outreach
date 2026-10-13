@@ -779,6 +779,112 @@ async function chatState(wc, { username }) {
   return { messages: await openThread(wc, username) }
 }
 
+// The DM inbox list, read only: every conversation row in view (name, preview, age, unread, link).
+async function inboxState(wc, { folder = '' } = {}) {
+  await openUrl(wc, `https://www.instagram.com/direct/${folder === 'general' ? 'general/' : 'inbox/'}`)
+  await sleep(2500)
+  const read = () => run(wc, String.raw`(() => {
+    const rows = [...document.querySelectorAll('a[href*="/direct/t/"], div[role="button"], div[role="listitem"]')]
+      .filter((el) => { const r = el.getBoundingClientRect(); return r.width > 150 && r.height > 40 && r.height < 120 && r.left < window.innerWidth * 0.5 })
+    const seen = new Set()
+    return rows.map((el) => {
+      const lines = (el.innerText || '').split('\n').map((line) => line.trim()).filter(Boolean)
+      const link = el.closest('a[href*="/direct/t/"]')?.getAttribute('href') || el.querySelector('a[href*="/direct/t/"]')?.getAttribute('href') || ''
+      const bold = [...el.querySelectorAll('span')].some((span) => Number(getComputedStyle(span).fontWeight) >= 600 && (span.innerText || '').trim().length > 3)
+      const unreadDot = Boolean(el.querySelector('[aria-label*="nread" i]'))
+      return { lines: lines.slice(0, 5), link, bold, unreadDot, html: el.outerHTML.length }
+    }).filter((row) => { const key = row.lines.join('|'); if (!row.lines.length || seen.has(key)) return false; seen.add(key); return true })
+  })()`)
+  return { rows: await read(), tabs: await run(wc, String.raw`[...document.querySelectorAll('[role="tab"], a[href*="/direct/"]')].map((el) => (el.innerText || el.getAttribute('aria-label') || '').trim()).filter(Boolean).slice(0, 12)`) }
+}
+
+// Opens one inbox conversation by its name (read only: no message is typed or sent) and returns who it
+// is (username, thread id) and its newest messages. Their voicenotes since our last message get
+// Instagram's own transcription ("View transcription").
+async function openInboxRow(wc, { name, folder = '', transcribe = true }) {
+  await openUrl(wc, `https://www.instagram.com/direct/${folder === 'general' ? 'general/' : 'inbox/'}`)
+  await sleep(2000)
+  const target = await run(wc, String.raw`(() => {
+    const want = ${JSON.stringify(String(name || ''))}
+    const rows = [...document.querySelectorAll('div[role="button"], a[href*="/direct/t/"], div[role="listitem"]')]
+      .filter((el) => { const r = el.getBoundingClientRect(); return r.width > 150 && r.height > 40 && r.height < 120 && r.left < window.innerWidth * 0.5 })
+    const row = rows.find((el) => ((el.innerText || '').split('\n')[0] || '').trim() === want)
+    if (!row) return null
+    const r = row.getBoundingClientRect()
+    return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }
+  })()`)
+  if (!target) throw fail(`${name} is not in the inbox list.`, 'mismatch')
+  await click(wc, target)
+  const opened = await waitFor(async () => {
+    const value = await run(wc, String.raw`(() => {
+      const id = (location.pathname.match(/\/direct\/t\/(\d+)/) || [])[1] || ''
+      const link = document.querySelector('[aria-label^="Open the profile page of "]')
+      const username = link ? link.getAttribute('aria-label').replace('Open the profile page of ', '').trim() : ''
+      return { id, username }
+    })()`).catch(() => ({}))
+    return { ...value, done: Boolean(value.id) }
+  }, 10000, 400)
+  if (!opened?.id) throw fail(`Could not open the chat with ${name}.`, 'mismatch')
+  let messages = await readThread(wc)
+  if (transcribe) {
+    // Their voicenotes after our last message: open each transcription, then read the chat again.
+    const lastOurs = messages.map((message) => message.ours).lastIndexOf(true)
+    const theirsVoice = messages.slice(lastOurs + 1).filter((message) => !message.ours && message.voice).length
+    if (theirsVoice) {
+      await run(wc, String.raw`(() => {
+        const bubbles = [...document.querySelectorAll('[role="main"] [role="article"]')].slice(-${Math.min(4, theirsVoice + 2)})
+        for (const bubble of bubbles) {
+          const button = [...bubble.querySelectorAll('div, span, [role="button"]')].find((el) => el.children.length === 0 && /^view transcription$/i.test((el.innerText || '').trim()))
+          if (button) button.click()
+        }
+      })()`)
+      await sleep(2500)
+      messages = await readThread(wc)
+    }
+  }
+  return { threadId: opened.id, username: opened.username, messages: messages.slice(-10) }
+}
+
+// Our own current stories (read only): for each one, the accounts it shows (a reposted story carries
+// the original poster's name and link). Goes frame by frame with the right arrow, at most 40 frames.
+async function ourStories(wc, { account }) {
+  await openUrl(wc, `https://www.instagram.com/stories/${encodeURIComponent(account)}/`)
+  await sleep(2500)
+  const frames = []
+  let lastUrl = ''
+  for (let index = 0; index < 40; index++) {
+    const frame = await run(wc, String.raw`(() => {
+      if (!/\/stories\//.test(location.pathname)) return { done: true }
+      // "View story" gate on some accounts: open it.
+      const gate = [...document.querySelectorAll('div[role="button"], button')].find((el) => /^view story$/i.test((el.innerText || '').trim()))
+      if (gate) { gate.click(); return { gate: true } }
+      const own = ${JSON.stringify(String(account || '').toLowerCase())}
+      const box = document.querySelector('section') || document.body
+      const names = new Set()
+      for (const a of box.querySelectorAll('a[href]')) {
+        const m = (a.getAttribute('href') || '').match(/^\/([A-Za-z0-9._]{2,30})\/?(?:$|\?)/)
+        if (m && m[1].toLowerCase() !== own && !['explore', 'direct', 'stories', 'reels', 'accounts'].includes(m[1].toLowerCase())) names.add(m[1].toLowerCase())
+      }
+      for (const el of box.querySelectorAll('span, div')) {
+        if (el.children.length) continue
+        for (const m of (el.innerText || '').matchAll(/@([A-Za-z0-9._]{2,30})/g)) if (m[1].toLowerCase() !== own) names.add(m[1].toLowerCase())
+      }
+      return { url: location.pathname, names: [...names] }
+    })()`).catch(() => ({ done: true }))
+    if (frame.gate) {
+      await sleep(1500)
+      continue
+    }
+    if (frame.done || frame.url === lastUrl) break
+    lastUrl = frame.url
+    frames.push({ url: frame.url, names: frame.names })
+    await key(wc, 'Right')
+    await sleep(1800)
+  }
+  await key(wc, 'Escape').catch(() => {})
+  return { frames }
+}
+
 // Read-only look at a chat page, to build on: what timestamps it shows, which buttons sit by the
 // message box, and (with gifQuery) what the GIF picker shows for a search. Never presses Send or a
 // GIF; the picker is closed again and the message box is left empty.
@@ -869,4 +975,4 @@ async function probeChat(wc, { username, gifQuery }) {
   return result
 }
 
-module.exports = { openUrl, run, click, key, sleep, aborted, comment, dm, unfollow, pageProblem, readThread, threadAllows, lastVoiceWaveform, probeChat, chatState, replyRelaunch }
+module.exports = { openUrl, run, click, key, sleep, aborted, comment, dm, unfollow, pageProblem, readThread, threadAllows, lastVoiceWaveform, probeChat, chatState, replyRelaunch, inboxState, openInboxRow, ourStories }

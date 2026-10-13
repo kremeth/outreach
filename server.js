@@ -18,6 +18,8 @@ const training = require('./lib/training-log')
 const migrations = require('./lib/row-migrations')
 const replyCheck = require('./lib/reply-check')
 const replyRelaunch = require('./lib/reply-relaunch')
+const dmInbox = require('./lib/dm-inbox')
+const partners = require('./lib/partners')
 const pickModel = require('./lib/pick-model')
 const apiUsage = require('./lib/api-usage')
 const modelProspect = require('./lib/model-prospect')
@@ -821,6 +823,8 @@ async function todo() {
   await log.refresh(10000).catch(() => {})
   return {
     guard,
+    dms: dmInbox.summary(),
+    partners: await partners.list().catch(() => []),
     prospecting: { remaining: counts().remaining, ...modelProgress(), total: rows.length, yesToday: counts().yesToday, yesTarget: sendQueue.DAILY_LIMIT },
     voice: { toSend: voice.length, sentToday: Math.max(sendQueue.sentToday(), guard.app ? guard.kinds.voice.today : 0), limit: sendQueue.DAILY_LIMIT },
     hustle: { ...hustle.status(), auto: autoCommentStatus() },
@@ -932,10 +936,33 @@ async function closeOut(sheetRow, mode) {
     await relaunch.closeWithoutUnfollow(row.sheetRow, `sheet says ${liveAccepted || 'blank'}, not No`)
     return { ok: false, error: `@${username} is "${liveAccepted || 'blank'}" in the sheet, not No, so they were not unfollowed.` }
   }
+  // Unfollowed (or not followed in the first place): Keep hustling? becomes No, so they are done for good.
+  // Only after the unfollow: a creator who said no stays Yes until Launch has unfollowed them.
+  const keepNo = async () => {
+    if (!outreachColumns.keep) return ''
+    try {
+      await writer.setCells([{ cell: `${outreachColumns.keep}${row.sheetRow}`, value: 'No' }])
+      yesRows = yesRows.filter((item) => item.sheetRow !== row.sheetRow)
+      return ''
+    } catch (writeError) {
+      console.error(writeError)
+      return ` Keep hustling could not be set to No: ${writeError.message}`
+    }
+  }
+  // They can't receive our messages (NA): only while the sheet still says NA.
+  if (mode === 'unreachable' && liveAccepted.toLowerCase() !== 'na') {
+    await relaunch.closeWithoutUnfollow(row.sheetRow, `sheet says ${liveAccepted || 'blank'}, not NA`)
+    return { ok: false, error: `@${username} is "${liveAccepted || 'blank'}" in the sheet, not NA, so they were not unfollowed.` }
+  }
   let result
   try {
     result = await instagram.unfollow({ username, sheetRow: row.sheetRow, checkChat: mode === 'no-reply' })
   } catch (error) {
+    if (error.kind === 'missing' && mode === 'unreachable') {
+      await relaunch.closeWithoutUnfollow(row.sheetRow, 'account no longer exists').catch((logError) => console.error(logError))
+      const note = await keepNo()
+      return { ok: false, error: `@${username}'s Instagram account no longer exists. Keep hustling set to No.${note}` }
+    }
     if (error.kind === 'missing') {
       await relaunch.closeWithoutUnfollow(row.sheetRow, 'account no longer exists').catch((logError) => console.error(logError))
       await relaunch.markUnreachable(row, 3, error.message).catch((writeError) => console.error(writeError))
@@ -956,19 +983,6 @@ async function closeOut(sheetRow, mode) {
       return ` The sheet could not be updated: ${writeError.message}`
     }
   }
-  // Unfollowed (or not followed in the first place): Keep hustling? becomes No, so they are done for good.
-  // Only after the unfollow: a creator who said no stays Yes until Launch has unfollowed them.
-  const keepNo = async () => {
-    if (!outreachColumns.keep) return ''
-    try {
-      await writer.setCells([{ cell: `${outreachColumns.keep}${row.sheetRow}`, value: 'No' }])
-      yesRows = yesRows.filter((item) => item.sheetRow !== row.sheetRow)
-      return ''
-    } catch (writeError) {
-      console.error(writeError)
-      return ` Keep hustling could not be set to No: ${writeError.message}`
-    }
-  }
   if (result.replied) {
     // Without a verdict nothing changes; Launch tries again later (and gives up after 2 tries).
     const verdict = await replyCheck.classify(result.thread).catch((error) => {
@@ -987,8 +1001,8 @@ async function closeOut(sheetRow, mode) {
     }
     return { ok: false, replied: true, error: `@${username} replied and it's still going (${verdict.reason}). Marked Replied, not unfollowed.` }
   }
-  const value = mode === 'declined' ? 'No' : 'unfollowed'
-  const reason = mode === 'declined' ? 'said no' : mode === 'reply-stale' ? 'no answer 3 days after both reply relaunches' : 'no reply 3 days after the 2nd relaunch'
+  const value = mode === 'declined' ? 'No' : mode === 'unreachable' ? 'NA' : 'unfollowed'
+  const reason = mode === 'declined' ? 'said no' : mode === 'unreachable' ? 'cannot receive our messages' : mode === 'reply-stale' ? 'no answer 3 days after both reply relaunches' : 'no reply 3 days after the 2nd relaunch'
   if (result.notFollowing) {
     await relaunch.closeWithoutUnfollow(row.sheetRow, 'was not following them')
     const note = (String(liveAccepted).toLowerCase() === value.toLowerCase() ? '' : await sheetWrite(value, `${reason} (was not following)`)) + await keepNo()
@@ -996,6 +1010,84 @@ async function closeOut(sheetRow, mode) {
   }
   const note = (String(liveAccepted).toLowerCase() === value.toLowerCase() ? '' : await sheetWrite(value, reason)) + await keepNo()
   return { ok: true, warning: note.trim() }
+}
+
+// Background reads in the Instagram panel (no action, nothing sent), only when Launch is not about to use
+// it, inside its daily window: the DM inbox every 20 minutes (DMs to reply), our own stories every 4 hours
+// (Story ticks for ongoing partnerships). Partners' posts are read once a day with the logged-out preview.
+const OUR_ACCOUNT = process.env.OUR_INSTAGRAM || 'nutricode.io'
+const panelReads = { inbox: 0, stories: 0, posts: 0, busy: false, errors: {} }
+
+function panelFree() {
+  const pilot = autopilot.status()
+  if (pilot.current) return false
+  if (pilot.running && pilot.nextAt && pilot.nextAt - Date.now() < 3 * 60 * 1000) return false
+  const hour = new Date().getHours()
+  return hour >= 8 && hour < 21
+}
+
+// A conversation showing "can't receive your message": NA in the sheet (Launch then unfollows them and
+// sets Keep hustling to No). Only for creators we contacted (Keep hustling Yes).
+async function markUnreachableByUsername(username, inboxRow) {
+  const row = yesRows.find((item) => data.usernameFrom(item.link).toLowerCase() === String(username).toLowerCase())
+  if (!row) return false
+  if (String(row.accepted || '').trim().toLowerCase() === 'na') return true
+  await relaunch.markUnreachable(row, 3, `can't receive our messages (seen in the inbox: ${inboxRow.name})`)
+  return true
+}
+
+async function checkPartnerPosts() {
+  for (const partner of await partners.list()) {
+    if (partner.post) continue
+    try {
+      const profile = await preview.profile(partner.username, false)
+      const hit = (profile.images || []).find((image) => /nutricode/i.test(image.alt || ''))
+      if (hit) await partners.mark(partner.username, 'post', true, `${new Date().toLocaleDateString('en-AU')} · ${hit.code ? `instagram.com/p/${hit.code}` : 'caption names nutricode'}`)
+    } catch (error) {
+      panelReads.errors.posts = `${partner.username}: ${error.message}`
+    }
+  }
+}
+
+async function backgroundReads() {
+  if (panelReads.busy) return
+  panelReads.busy = true
+  try {
+    const now = Date.now()
+    // Partners' posts: in the logged-out preview's background allowance, so it can wait; it runs on its
+    // own and never holds up the panel reads below.
+    if (now - panelReads.posts > 24 * 60 * 60 * 1000) {
+      panelReads.posts = now
+      checkPartnerPosts().catch((error) => { panelReads.errors.posts = error.message })
+    }
+    if (!panelFree()) return
+    if (now - panelReads.inbox > 20 * 60 * 1000) {
+      panelReads.inbox = now
+      try {
+        await dmInbox.scan(instagram, markUnreachableByUsername)
+        await refreshSheet(true).catch(() => {})
+      } catch (error) {
+        panelReads.errors.inbox = error.message
+      }
+    }
+    if (!panelFree()) return
+    if (now - panelReads.stories > 4 * 60 * 60 * 1000) {
+      panelReads.stories = now
+      try {
+        const { frames } = await instagram.ourStories({ account: OUR_ACCOUNT })
+        const list = await partners.list()
+        for (const partner of list) {
+          if (partner.story) continue
+          const frame = frames.find((item) => item.names.includes(partner.username))
+          if (frame) await partners.mark(partner.username, 'story', true, `${new Date().toLocaleDateString('en-AU')} · reposted on our story`)
+        }
+      } catch (error) {
+        panelReads.errors.stories = error.message
+      }
+    }
+  } finally {
+    panelReads.busy = false
+  }
 }
 
 // Reply relaunches (lib/reply-relaunch.js): the Replied conversations due for a look.
@@ -1385,6 +1477,18 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, { ...autopilot.status(), preview: await autopilot.preview(guard), guard })
       return
     }
+    if (req.method === 'POST' && url.pathname === '/api/partners/mark') {
+      const body = await readBody(req)
+      const ok = await partners.mark(String(body.username || ''), body.kind === 'post' ? 'post' : 'story', Boolean(body.value), body.value ? `${new Date().toLocaleDateString('en-AU')} · ticked by hand` : '')
+      sendJson(res, ok ? 200 : 404, { ok, partners: await partners.list() })
+      return
+    }
+    if (req.method === 'POST' && url.pathname === '/api/dms/scan') {
+      panelReads.inbox = 0
+      backgroundReads().catch((error) => console.error('background reads', error.message))
+      sendJson(res, 200, { ok: true })
+      return
+    }
     if (req.method === 'GET' && url.pathname === '/api/hustle/auto') {
       sendJson(res, 200, autoCommentStatus())
       return
@@ -1538,6 +1642,7 @@ async function boot() {
     await autoYes()
   }, 60 * 1000).unref()
   setInterval(autoComment, 90 * 1000).unref()
+  setInterval(() => backgroundReads().catch((error) => console.error('background reads', error.message)), 5 * 60 * 1000).unref()
   // Keeps the model's list ahead of the person (it moves on as profiles get decided).
   setInterval(() => { if (rows.length) writeUpcoming() }, 5 * 60 * 1000).unref()
   apiUsage.startSync()
