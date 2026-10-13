@@ -21,6 +21,17 @@ const DIR = path.join(ROOT, 'data', 'wearable')
 process.env.IG_PREVIEW_PORT = process.env.IG_PREVIEW_PORT || '9447'
 process.env.IG_PREVIEW_PROFILE = process.env.IG_PREVIEW_PROFILE || path.join(DIR, 'chrome')
 process.env.IG_PREVIEW_TABS = '1'
+// A Chrome that died leaves its lock behind and no new one can start on that profile: clear it when the
+// process it names is gone.
+;(() => {
+  const lock = path.join(process.env.IG_PREVIEW_PROFILE, 'SingletonLock')
+  try {
+    const owner = Number(String(fs.readlinkSync(lock)).split('-').pop())
+    let alive = false
+    try { process.kill(owner, 0); alive = true } catch {}
+    if (!alive) for (const name of ['SingletonLock', 'SingletonCookie', 'SingletonSocket']) fs.rmSync(path.join(process.env.IG_PREVIEW_PROFILE, name), { force: true })
+  } catch {}
+})()
 const preview = require('../lib/ig-preview')
 const sharp = require('sharp')
 

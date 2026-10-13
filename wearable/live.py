@@ -114,6 +114,10 @@ def run_once(args, out, live, later):
         # Ready: saved with its profile picture (or known private, missing...); otherwise the next pass.
         if username in current or not saved or (saved.get("status") == "ok" and "avatar" not in saved):
             continue
+        # A profile whose last try ended in an error: again at most once an hour (never in a loop).
+        before = latest.get(username)
+        if before and before.get("status") == "error" and time.time() - before.get("judged_at", 0) < 3600:
+            continue
         gemini = live if position <= NEAR else later
         try:
             record = judge(username, gemini)
@@ -129,9 +133,10 @@ def run_once(args, out, live, later):
         # Every answer is tied to the photos it was made on (private or missing profiles too), so it
         # counts as current until the profile is fetched again.
         record.setdefault("acquired_at", saved.get("acquiredAt", ""))
+        record["judged_at"] = time.time()
         with open(out, "a") as handle:
             handle.write(json.dumps(record) + "\n")
-        worked = True
+        worked = worked or record.get("status") != "error"  # errors alone never skip the pause
         how = "live" if gemini is live else "batch"
         match = record.get("match", {}).get("score")
         print(f"{position}/{len(items)} @{username}: {record['decision']} {record.get('brands') or ''} profile {match} ({how}, ${live.spent:.3f} live today)", flush=True)
