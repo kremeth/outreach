@@ -395,8 +395,9 @@ function autoCommentStatus() {
   const picks = (state.picks || []).filter((pick) => new Date(pick.at).toDateString() === today)
   // Armed: the trial's hours start counting at its first automatic pick (the person's own picks waiting
   // for Launch go first).
-  const on = Boolean(state.armed) && (!state.until || Date.now() < state.until)
-  return { on, armed: Boolean(state.armed), until: state.until || 0, hours: state.hours || 0, pickedToday: picks.length, waiting: hustle.picks().length, last: (state.picks || []).slice(-5).reverse(), note: state.note || '' }
+  // always: on until Stop is pressed (since 14 Oct), no end time.
+  const on = Boolean(state.armed) && (state.always || !state.until || Date.now() < state.until)
+  return { on, always: Boolean(state.always), armed: Boolean(state.armed), until: state.always ? 0 : state.until || 0, hours: state.hours || 0, pickedToday: picks.length, waiting: hustle.picks().length, last: (state.picks || []).slice(-5).reverse(), note: state.note || '' }
 }
 
 async function autoComment() {
@@ -434,7 +435,7 @@ async function autoComment() {
       predicted: scores, comments: drafted.comments, outcome: 'auto picked', pickedIndex: index + 1, pickedText: text, seconds: 0,
     })
     const fresh = autoCommentState()
-    setAutoComment({ ...fresh, note: '', until: fresh.until || Date.now() + (fresh.hours || 24) * 3600 * 1000, picks: [...(fresh.picks || []), { at: new Date().toISOString(), username: next.username, text, score: scores[index], code: drafted.code }].slice(-500) })
+    setAutoComment({ ...fresh, note: '', until: fresh.always ? 0 : fresh.until || Date.now() + (fresh.hours || 24) * 3600 * 1000, picks: [...(fresh.picks || []), { at: new Date().toISOString(), username: next.username, text, score: scores[index], code: drafted.code }].slice(-500) })
     console.log(`auto comment @${next.username}: "${text}" (${scores[index]}%)`)
   } catch (error) {
     console.error('auto comment', error.message)
@@ -1499,8 +1500,12 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && url.pathname === '/api/hustle/auto') {
       const body = await readBody(req)
+      if (body.always) {
+        sendJson(res, 200, setAutoComment({ ...autoCommentState(), armed: true, always: true, hours: 0, until: 0, note: '' }))
+        return
+      }
       const hours = Math.max(0, Math.min(72, Number(body.hours) || 0))
-      sendJson(res, 200, setAutoComment({ ...autoCommentState(), armed: hours > 0, hours, until: 0, note: '' }))
+      sendJson(res, 200, setAutoComment({ ...autoCommentState(), armed: hours > 0, always: false, hours, until: 0, note: '' }))
       return
     }
     if (req.method === 'POST' && url.pathname === '/api/hustle/training') {
