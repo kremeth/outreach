@@ -20,6 +20,7 @@ const replyCheck = require('./lib/reply-check')
 const replyRelaunch = require('./lib/reply-relaunch')
 const dmInbox = require('./lib/dm-inbox')
 const partners = require('./lib/partners')
+const dmReply = require('./lib/dm-reply')
 const pickModel = require('./lib/pick-model')
 const apiUsage = require('./lib/api-usage')
 const modelProspect = require('./lib/model-prospect')
@@ -283,7 +284,7 @@ function modelProgress() {
     else judging++
   }
   const written = modelProspect.autoTotals()
-  return { forYou, auto, judging, modelYes: written.yes, modelNo: written.no }
+  return { forYou, auto, judging, modelYes: written.yes, modelNo: written.no, checkedToday: modelProspect.checkedToday() }
 }
 
 // The next undecided profiles in queue order, for the wearable model to judge ahead of the person
@@ -826,7 +827,7 @@ async function todo() {
   await log.refresh(10000).catch(() => {})
   return {
     guard,
-    dms: dmInbox.summary(),
+    dms: dmsForPage(),
     partners: await partners.list().catch(() => []),
     prospecting: { remaining: counts().remaining, ...modelProgress(), total: rows.length, yesToday: counts().yesToday, yesTarget: sendQueue.DAILY_LIMIT },
     voice: { toSend: voice.length, sentToday: Math.max(sendQueue.sentToday(), guard.app ? guard.kinds.voice.today : 0), limit: sendQueue.DAILY_LIMIT },
@@ -1053,6 +1054,51 @@ async function checkPartnerPosts() {
     } catch (error) {
       panelReads.errors.posts = `${partner.username}: ${error.message}`
     }
+  }
+}
+
+// DMs to reply: each conversation matched to the creator we contacted (by name, only when exactly one
+// matches), for their username and who sent the first voicenote (Romain or Mathieu); and the state of a
+// reply sent from the list.
+function dmsForPage() {
+  const summary = dmInbox.summary()
+  const norm = (text) => String(text || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
+  const sent = dmReply.byName()
+  summary.toReply = summary.toReply.map((item) => {
+    const matches = yesRows.filter((row) => norm(row.name) === norm(item.name))
+    const row = matches.length === 1 ? matches[0] : null
+    return { ...item, username: row ? data.usernameFrom(row.link) : '', voice: row && /^(romain|mathieu)$/i.test(row.voice || '') ? row.voice : '', reply: sent[item.name] || null }
+  })
+  return summary
+}
+
+// Sends the queued replies, one at a time, when Launch is not using Instagram. Busy, paused or waiting
+// on a limit: stays queued and is tried again. Anything else: marked failed with the reason.
+let replySending = false
+async function sendQueuedReplies() {
+  if (replySending) return
+  const pilot = autopilot.status()
+  if (pilot.current) return
+  const item = dmReply.next()
+  if (!item) return
+  replySending = true
+  try {
+    let username = item.username
+    if (!username) {
+      const chat = await instagram.openInboxRow({ name: item.name, transcribe: false })
+      username = chat.username
+      if (!username) throw Object.assign(new Error('Could not find their username.'), { kind: 'notsent' })
+    }
+    dmReply.update(item.id, { status: 'sending', username })
+    if (item.kind === 'voice') await instagram.voiceReply({ username, clipName: `${item.voice} Message 2.m4a` })
+    else await instagram.sendDm({ username, message: item.text, detail: 'reply' })
+    dmReply.update(item.id, { status: 'sent', sentAt: Date.now() })
+    panelReads.inbox = 0 // the list refreshes on the next pass: this one is answered now
+  } catch (error) {
+    if (['busy', 'wait', 'hidden', 'app', 'timeout'].includes(error.kind)) dmReply.update(item.id, { status: 'queued' })
+    else dmReply.update(item.id, { status: 'failed', error: error.message })
+  } finally {
+    replySending = false
   }
 }
 
@@ -1490,6 +1536,40 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, ok ? 200 : 404, { ok, partners: await partners.list() })
       return
     }
+    // A proposed reply: opens that conversation (it was going to be answered anyway), reads it (their
+    // voicenotes transcribed by Instagram) and drafts the next message from the whole chat.
+    if (req.method === 'POST' && url.pathname === '/api/dms/draft') {
+      const body = await readBody(req)
+      if (autopilot.status().current || replySending) {
+        sendJson(res, 409, { error: 'Instagram is busy with Launch right now. Try again in a minute.' })
+        return
+      }
+      try {
+        // By username when it is known (straight to the chat), otherwise by the name in the inbox list.
+        const chat = body.username
+          ? { ...(await instagram.chatState({ username: String(body.username), transcribe: true })), username: String(body.username) }
+          : await instagram.openInboxRow({ name: String(body.name || ''), transcribe: true })
+        const reply = await dmReply.draft({ name: body.name, messages: (chat.messages || []).slice(-20) })
+        sendJson(res, 200, { reply, username: chat.username || '' })
+      } catch (error) {
+        sendJson(res, error.kind === 'busy' ? 409 : 502, { error: error.message || 'Could not draft a reply.' })
+      }
+      return
+    }
+    if (req.method === 'POST' && url.pathname === '/api/dms/send') {
+      const body = await readBody(req)
+      const kind = body.kind === 'voice' ? 'voice' : 'text'
+      const text = String(body.text || '').trim()
+      const voice = /^(romain|mathieu)$/i.test(body.voice || '') ? body.voice[0].toUpperCase() + body.voice.slice(1).toLowerCase() : ''
+      if (!body.name || (kind === 'text' && !text) || (kind === 'voice' && !voice)) {
+        sendJson(res, 400, { error: kind === 'voice' ? 'Who sent the first voicenote is unknown.' : 'The reply is empty.' })
+        return
+      }
+      const item = dmReply.add({ name: String(body.name), username: String(body.username || ''), kind, text, voice })
+      sendQueuedReplies().catch(() => {})
+      sendJson(res, 200, { ok: true, item })
+      return
+    }
     if (req.method === 'POST' && url.pathname === '/api/dms/scan') {
       panelReads.inbox = 0
       backgroundReads().catch((error) => console.error('background reads', error.message))
@@ -1656,6 +1736,7 @@ async function boot() {
   }, 60 * 1000).unref()
   setInterval(autoComment, 90 * 1000).unref()
   setInterval(() => backgroundReads().catch((error) => console.error('background reads', error.message)), 5 * 60 * 1000).unref()
+  setInterval(() => sendQueuedReplies().catch((error) => console.error('dm replies', error.message)), 20 * 1000).unref()
   // Keeps the model's list ahead of the person (it moves on as profiles get decided).
   setInterval(() => { if (rows.length) writeUpcoming() }, 5 * 60 * 1000).unref()
   apiUsage.startSync()

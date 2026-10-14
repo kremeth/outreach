@@ -775,8 +775,9 @@ function replyRelaunch(wc, options) {
 }
 
 // The chat as it is, read only (no action): who sent each message and when.
-async function chatState(wc, { username }) {
-  return { messages: await openThread(wc, username) }
+async function chatState(wc, { username, transcribe = false }) {
+  const messages = await openThread(wc, username)
+  return { messages: transcribe ? await transcribeTheirs(wc, messages) : messages }
 }
 
 // The DM inbox list, read only (no conversation is opened): scrolls the list until it has `limit`
@@ -807,6 +808,22 @@ async function inboxState(wc, { folder = '', limit = 100 } = {}) {
     await sleep(900)
   }
   return { rows: [...collected.values()].slice(0, limit) }
+}
+
+// Their voicenotes after our last message: open each one's transcription, then read the chat again.
+async function transcribeTheirs(wc, messages) {
+  const lastOurs = messages.map((message) => message.ours).lastIndexOf(true)
+  const theirsVoice = messages.slice(lastOurs + 1).filter((message) => !message.ours && message.voice).length
+  if (!theirsVoice) return messages
+  await run(wc, String.raw`(() => {
+    const bubbles = [...document.querySelectorAll('[role="main"] [role="article"]')].slice(-${Math.min(4, theirsVoice + 2)})
+    for (const bubble of bubbles) {
+      const button = [...bubble.querySelectorAll('div, span, [role="button"]')].find((el) => el.children.length === 0 && /^view transcription$/i.test((el.innerText || '').trim()))
+      if (button) button.click()
+    }
+  })()`)
+  await sleep(2500)
+  return readThread(wc)
 }
 
 // Opens one inbox conversation by its name (read only: no message is typed or sent) and returns who it
@@ -853,22 +870,7 @@ async function openInboxRow(wc, { name, folder = '', transcribe = true }) {
     opened.username = await run(wc, String.raw`(() => { const link = document.querySelector('[aria-label^="Open the profile page of "]'); return link ? link.getAttribute('aria-label').replace('Open the profile page of ', '').trim() : '' })()`).catch(() => '')
   }
   let messages = await readThread(wc)
-  if (transcribe) {
-    // Their voicenotes after our last message: open each transcription, then read the chat again.
-    const lastOurs = messages.map((message) => message.ours).lastIndexOf(true)
-    const theirsVoice = messages.slice(lastOurs + 1).filter((message) => !message.ours && message.voice).length
-    if (theirsVoice) {
-      await run(wc, String.raw`(() => {
-        const bubbles = [...document.querySelectorAll('[role="main"] [role="article"]')].slice(-${Math.min(4, theirsVoice + 2)})
-        for (const bubble of bubbles) {
-          const button = [...bubble.querySelectorAll('div, span, [role="button"]')].find((el) => el.children.length === 0 && /^view transcription$/i.test((el.innerText || '').trim()))
-          if (button) button.click()
-        }
-      })()`)
-      await sleep(2500)
-      messages = await readThread(wc)
-    }
-  }
+  if (transcribe) messages = await transcribeTheirs(wc, messages)
   return { threadId: opened.id, username: opened.username, messages: messages.slice(-10) }
 }
 

@@ -408,6 +408,10 @@ function startControl() {
           panelTask = ''
         }
       }
+      if (url.pathname === '/voice/reply') {
+        const describe = (result, failure) => (result?.sent || failure ? { target: body.username || '', detail: `voice-reply:${body.clipName || ''}` } : null)
+        return reply(200, await inPanel('voice', 'sending a voicenote reply', describe, (wc, account) => voice.sendReply(account, body)))
+      }
       if (url.pathname === '/voice/status') return reply(200, voice.getStatus())
       if (url.pathname === '/voice/next') {
         const describe = (result, failure) => {

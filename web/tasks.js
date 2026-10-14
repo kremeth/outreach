@@ -161,7 +161,7 @@ const PROSPECT_TASK = {
 // decided on its own (Yes, No), what it left for the person, and what it has not checked yet. The four
 // add up; the bar fills with the share already done.
 function modelProgressBar(data) {
-  const { judging = 0, forYou = 0, auto = 0, modelYes = 0, modelNo = 0 } = data.prospecting || {}
+  const { judging = 0, forYou = 0, auto = 0, modelYes = 0, modelNo = 0, checkedToday = 0 } = data.prospecting || {}
   const done = modelYes + modelNo + auto + forYou
   const total = done + judging
   if (!total) return null
@@ -172,7 +172,7 @@ function modelProgressBar(data) {
   bar.append(fill)
   const parts = [`${number(modelYes)} Yes`, `${number(modelNo + auto)} No`, `${number(forYou)} for you`]
   if (judging) parts.push(`${number(judging)} still to check`)
-  box.append(bar, el('div', 'model-progress-text', `Model: ${parts.join(' · ')}`))
+  box.append(bar, el('div', 'model-progress-text', `Model: ${parts.join(' · ')}`), el('div', 'model-progress-text', `${number(checkedToday)} checked today`))
   return box
 }
 
@@ -187,18 +187,71 @@ function renderDms() {
   const when = dms.scannedAt ? new Date(dms.scannedAt).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' }) : ''
   if (!dms.scannedAt) card.append(el('p', 'side-empty', 'The inbox is read every 20 minutes while Outreach is open.'))
   else if (!dms.toReply.length) card.append(el('p', 'side-empty', `Nothing to reply to in the last ${dms.looked} conversations · checked at ${when}`))
-  for (const item of dms.toReply) {
-    const row = el('a', `dm-row${item.unread ? ' unread' : ''}`)
-    row.href = 'https://www.instagram.com/direct/inbox/'
-    row.target = '_blank'
-    row.rel = 'noopener'
-    const top = el('div', 'dm-top')
-    top.append(el('strong', '', item.name), el('span', 'dm-age', item.unread ? 'Unread' : item.age || ''))
-    row.append(top, el('div', 'dm-words', `${item.voice ? '🎙 ' : ''}${item.preview}`))
-    card.append(row)
-  }
+  for (const item of dms.toReply) card.append(dmRow(item))
   if (dms.scannedAt && dms.toReply.length) card.append(el('p', 'side-foot', `${dms.toReply.length} waiting on you · ${dms.unread} unread · last ${dms.looked} conversations, checked at ${when}`))
   dmsEl.append(card)
+}
+
+// One conversation: what they wrote, and the ways to answer it from here: a proposed reply (drafted from
+// the whole chat, editable) to send as a text, or the "Message 2" voicenote of whoever sent the first one.
+// Sending waits in a queue while Launch is using Instagram.
+const dmDrafts = new Map()
+function dmRow(item) {
+  const row = el('div', `dm-row${item.unread ? ' unread' : ''}`)
+  const top = el('div', 'dm-top')
+  top.append(el('strong', '', item.name), el('span', 'dm-handle', item.username ? `@${item.username}` : ''), el('span', 'dm-age', item.unread ? 'Unread' : item.age || ''))
+  row.append(top, el('div', 'dm-words', `${item.voice && /voice/i.test(item.preview) ? '🎙 ' : ''}${item.preview}`))
+  const state = item.reply
+  if (state && state.status !== 'failed') {
+    const label = { queued: 'Reply queued: it goes out as soon as Instagram is free', sending: 'Sending the reply…', sent: 'Reply sent ✓' }[state.status] || state.status
+    row.append(el('div', `dm-status ${state.status}`, `${state.kind === 'voice' ? 'Voicenote' : 'Text'} · ${label}`))
+    return row
+  }
+  if (state?.status === 'failed') row.append(el('div', 'dm-status failed', `Not sent: ${state.error}`))
+  const actions = el('div', 'dm-actions')
+  const box = document.createElement('textarea')
+  box.className = 'dm-box'
+  box.rows = 3
+  box.placeholder = 'Write a reply, or let it propose one'
+  box.value = dmDrafts.get(item.name) || ''
+  box.addEventListener('input', () => dmDrafts.set(item.name, box.value))
+  const note = el('span', 'dm-note', '')
+  const propose = button('Propose a reply', 'ghost small', async () => {
+    propose.disabled = true
+    note.textContent = 'Reading the chat and writing a reply…'
+    try {
+      const result = await api('/api/dms/draft', { name: item.name, username: item.username }, 90000)
+      box.value = result.reply
+      dmDrafts.set(item.name, result.reply)
+      if (result.username && !item.username) item.username = result.username
+      note.textContent = ''
+    } catch (error) {
+      note.textContent = error.message || 'Could not write a reply.'
+    }
+    propose.disabled = false
+  })
+  const send = button('Send', 'small', async () => {
+    if (!box.value.trim()) return
+    send.disabled = true
+    await api('/api/dms/send', { name: item.name, username: item.username, kind: 'text', text: box.value }).then(() => {
+      dmDrafts.delete(item.name)
+      item.reply = { status: 'queued', kind: 'text' }
+      row.replaceWith(dmRow(item))
+    }).catch((error) => { note.textContent = error.message; send.disabled = false })
+  })
+  const voices = item.voice ? [item.voice] : ['Romain', 'Mathieu']
+  const voiceButtons = voices.map((voice) => button(`🎙 Send ${voice}'s message 2`, 'ghost small', async (event) => {
+    event.currentTarget.disabled = true
+    await api('/api/dms/send', { name: item.name, username: item.username, kind: 'voice', voice }).then(() => {
+      item.reply = { status: 'queued', kind: 'voice' }
+      row.replaceWith(dmRow(item))
+    }).catch((error) => { note.textContent = error.message })
+  }))
+  const buttons = el('div', 'dm-buttons')
+  buttons.append(propose, send, ...voiceButtons, note)
+  actions.append(box, buttons)
+  row.append(actions)
+  return row
 }
 
 // Ongoing partnerships: Story ticks when our own story reposts theirs, Post when one of their posts names

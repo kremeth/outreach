@@ -2,6 +2,7 @@
 // Same steps as the old sender: follow the creator, open the DM, feed the clip in as the microphone,
 // wait for it to end, press Send, mark Pending in the sheet.
 const fs = require('fs')
+const path = require('path')
 const queue = require('../lib/send-queue')
 const guard = require('../lib/ig-guard')
 const log = require('../lib/shared-log')
@@ -249,6 +250,58 @@ async function sendTo(item, account) {
   return { sent: true, flatWaveform: Boolean(wave.found && wave.flat), item: { name: item.name, username: item.username, device: item.device, voice: item.voice, sheetRow: item.sheetRow } }
 }
 
+// A voicenote into an ongoing conversation (a reply from the DMs to reply list): the named clip
+// (e.g. "Romain Message 2.m4a" from data/voice/clips), recorded the same way as the first voicenote.
+// No follow, and the chat does not need to be empty.
+async function replyTo({ username, clipName }, account) {
+  const clips = path.join(__dirname, '..', 'data', 'voice', 'clips')
+  const clip = path.join(clips, path.basename(String(clipName || '')))
+  if (!clipName || !fs.existsSync(clip)) throw fail(`No clip called ${clipName}.`, 'notsent')
+  await guard.lock(account, 5 * 60 * 1000)
+  status = { phase: 'preparing', text: `Opening the DM with @${username}` }
+  await openUrl(`https://ig.me/m/${encodeURIComponent(username)}`)
+  const state = await ig.run(wc, 'window.__igPageState()')
+  if (state.kind === 'login') throw fail('Log into Instagram in the panel.', 'login')
+  if (state.kind === 'missing') throw fail('This Instagram account no longer exists.', 'missing')
+  if (!(await openedChat())) throw fail('The chat did not open, so no voicenote was sent.', 'notsent')
+  const composer = await waitForComposer()
+  const canMessage = await ig.run(wc, 'window.__canMessage()')
+  if (canMessage.kind === 'unreachable') throw fail(canMessage.error || 'This account cannot receive your messages.', 'unreachable')
+  const warning = await confirmWarning('Warning while opening the DM')
+  if (warning) throw fail(`Instagram showed a warning: ${warning}`, 'blocked')
+  if (!composer?.ok) throw fail('The DM opened, but the voice button never appeared.', 'notsent')
+  const audio = fs.readFileSync(clip).toString('base64')
+  await ensureHook()
+  const loaded = await ig.run(wc, `window.__loadVoice(${JSON.stringify(audio)})`)
+  clipSeconds = loaded?.duration || 30
+  await ig.sleep(SETTLE_BEFORE_SEND_MS)
+  if ((await ig.run(wc, 'document.visibilityState')) !== 'visible') await ensureLive()
+  if ((await ig.run(wc, 'document.visibilityState')) !== 'visible') throw fail('macOS paused the Instagram panel, so the voicenote was not recorded. It will try again shortly.', 'hidden')
+  status = { phase: 'recording', text: `Voicenote reply to @${username}` }
+  await startRecording()
+  await waitForEnd()
+  const result = await ig.run(wc, 'window.__finishIgRecord()')
+  if (!result?.ok) {
+    await ig.run(wc, 'window.__cancelIgRecord()').catch(() => {})
+    throw fail('The voicenote ended, but Instagram did not show Send.', 'failed')
+  }
+  await ig.sleep(1500)
+  const after = await confirmWarning('Warning after a voicenote')
+  if (after) throw fail(`Instagram showed a warning after sending: ${after}`, 'blocked')
+  return { sent: true, username, clip: path.basename(clip) }
+}
+
+async function sendReply(account, options) {
+  if (running) throw fail('A voicenote is already being sent.', 'busy')
+  running = replyTo(options, account)
+  try {
+    return await running
+  } finally {
+    running = null
+    status = { phase: 'idle', text: '' }
+  }
+}
+
 // One voicenote at a time. The app wraps this in its safety gate (limits, record, 48 hour stop).
 async function sendNext(account) {
   if (running) throw fail('A voicenote is already being sent.', 'busy')
@@ -261,4 +314,4 @@ async function sendNext(account) {
   }
 }
 
-module.exports = { init, active, getStatus, onVoiceState, sendNext }
+module.exports = { init, active, getStatus, onVoiceState, sendNext, sendReply }
