@@ -712,10 +712,12 @@ function webVersion() {
 async function commentDrafts(username, avoid = [], guidance = '', { background = false } = {}) {
   const claimed = await log.claim(`hustle:${String(username).toLowerCase()}`, CREATOR_CLAIM_MS)
   if (!claimed.ok) throw taken(`${claimed.by} is working on @${username} right now.`)
-  const { profile, post, permalink } = await latestPost(username, !background)
+  // Auto-commenting (background): few loads (about 2 per comment, at Launch's pace), so it goes with the
+  // screen's preloads instead of waiting behind the hourly background allowance.
+  const { profile, post, permalink } = await latestPost(username, background ? 'screen' : true)
   if (hustle.alreadyHandled(username, post.pk)) throw taken(`@${username}'s newest post was already commented on or skipped.`)
   const photo = post.image
-  const read = await readPost(post, photo, !background)
+  const read = await readPost(post, photo, background ? 'screen' : true)
   const drafted = await drafts.generate({
     name: profile.name,
     username: profile.username || username,
