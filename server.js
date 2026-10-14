@@ -1590,6 +1590,26 @@ const server = http.createServer(async (req, res) => {
       }
       return
     }
+    // "No reply needed": off the list until they write something new.
+    if (req.method === 'POST' && url.pathname === '/api/dms/dismiss') {
+      const body = await readBody(req)
+      dmInbox.dismiss(String(body.name || ''), String(body.preview || ''))
+      sendJson(res, 200, { ok: true, dms: dmsForPage() })
+      return
+    }
+    // The Message 2 voicenotes, to listen to before sending.
+    if (req.method === 'GET' && url.pathname === '/api/dms/clip') {
+      const voice = /^(romain|mathieu)$/i.test(url.searchParams.get('voice') || '') ? url.searchParams.get('voice')[0].toUpperCase() + url.searchParams.get('voice').slice(1).toLowerCase() : ''
+      const part = url.searchParams.get('part') === '2' ? 2 : 1
+      const file = path.join(__dirname, 'data', 'voice', 'clips', `${voice} Message 2 part ${part}.m4a`)
+      if (!voice || !fs.existsSync(file)) {
+        sendJson(res, 404, { error: 'No such clip.' })
+        return
+      }
+      res.writeHead(200, { 'Content-Type': 'audio/mp4', 'Content-Length': fs.statSync(file).size, 'Cache-Control': 'no-cache' })
+      fs.createReadStream(file).pipe(res)
+      return
+    }
     if (req.method === 'POST' && url.pathname === '/api/dms/send') {
       const body = await readBody(req)
       const kind = body.kind === 'voice' ? 'voice' : 'text'
