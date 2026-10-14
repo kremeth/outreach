@@ -1227,12 +1227,8 @@ async function backgroundReads() {
   panelReads.busy = true
   try {
     const now = Date.now()
-    // Partners' posts: in the logged-out preview's background allowance, so it can wait; it runs on its
-    // own and never holds up the panel reads below.
-    if (now - panelReads.posts > 24 * 60 * 60 * 1000) {
-      panelReads.posts = now
-      checkPartnerPosts().catch((error) => { panelReads.errors.posts = error.message })
-    }
+    // Partners' reels are ticked by hand only (Mathieu, 15 Oct): a caption naming nutricode is not a
+    // reel posted for the deal, so checkPartnerPosts no longer runs on its own.
     if (!panelFree()) return
     if (now - panelReads.inbox > 20 * 60 * 1000) {
       panelReads.inbox = now
