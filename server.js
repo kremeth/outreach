@@ -1089,7 +1089,7 @@ function dmsForPage() {
     ...item,
     // A reply sent before this inbox read: they wrote again since, so it is a new conversation turn.
     reply: item.reply && item.reply.status === 'sent' && item.reply.sentAt < summary.scannedAt ? null : item.reply,
-    draftReady: Boolean(dmChats.draftFor(item)),
+    draftReady: Boolean(dmChats.draftFor(item, dmReply.MODEL)),
   }))
   // Answered from here: off the list straight away (queued or sending), and once sent until the inbox
   // is read again (then it is gone for good, unless they wrote again). A failed send stays, with why.
@@ -1157,12 +1157,12 @@ async function predraftReplies() {
   predrafting = true
   try {
     for (const item of dmsForPage().toReply) {
-      if (dmChats.draftFor(item) || (item.reply && item.reply.status !== 'failed')) continue
+      if (dmChats.draftFor(item, dmReply.MODEL) || (item.reply && item.reply.status !== 'failed')) continue
       const history = dmChats.history(item)
       if (!history) continue
       try {
         const reply = await dmReply.draft({ name: item.name, messages: history.messages.slice(-20) })
-        dmChats.rememberDraft(item, reply, history.complete ? 'chat' : 'list')
+        dmChats.rememberDraft(item, reply, history.complete ? 'chat' : 'list', dmReply.MODEL)
       } catch (error) {
         console.error('dm predraft', item.name, error.message)
         break
@@ -1642,7 +1642,7 @@ const server = http.createServer(async (req, res) => {
       const listed = dmsForPage().toReply.find((entry) => entry.name === body.name)
       const item = listed || { name: String(body.name || ''), username: String(body.username || ''), preview: '', voice: '' }
       try {
-        const ready = !body.fresh && dmChats.draftFor(item)
+        const ready = !body.fresh && dmChats.draftFor(item, dmReply.MODEL)
         if (ready) {
           sendJson(res, 200, { reply: ready.reply, username: item.username, instant: true })
           return
@@ -1661,7 +1661,7 @@ const server = http.createServer(async (req, res) => {
           history = dmChats.history(item) || { messages: chat.messages || [], complete: true }
         }
         const reply = await dmReply.draft({ name: item.name, messages: history.messages.slice(-20) })
-        if (listed) dmChats.rememberDraft(item, reply, history.complete ? 'chat' : 'list')
+        if (listed) dmChats.rememberDraft(item, reply, history.complete ? 'chat' : 'list', dmReply.MODEL)
         sendJson(res, 200, { reply, username: item.username || '' })
       } catch (error) {
         sendJson(res, error.kind === 'busy' ? 409 : 502, { error: error.message || 'Could not draft a reply.' })

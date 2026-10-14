@@ -1418,6 +1418,21 @@ a.person.current {
   transition: height 0.7s cubic-bezier(0.22, 1, 0.36, 1), background-color 0.4s ease;
 }
 .usage-col.today .usage-bar { background: #3d6e00; }
+.usage-bar { display: flex; flex-direction: column; overflow: hidden; }
+.usage-bar-openai { flex: none; width: 100%; background: #5b80cc; transition: height 0.7s cubic-bezier(0.22, 1, 0.36, 1); }
+.usage-col.today .usage-bar-openai { background: #2f57a8; }
+.usage.loading .usage-bar-openai { height: 0 !important; }
+.usage { position: relative; }
+.usage-hoverable { cursor: default; border-radius: 8px; outline: none; transition: background-color 0.15s ease; margin: -4px -6px; padding: 4px 6px; }
+.usage-hoverable:hover, .usage-hoverable:focus-visible { background: var(--surface-hover); }
+.usage-head-tip { top: auto; }
+.usage-tip-split { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line); display: grid; gap: 3px; }
+.usage-tip-line { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--ink-2); }
+.usage-tip-line b { margin-left: auto; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--ink); }
+.usage-tip-line i, .usage-legend i { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+.usage-tip-line i.gemini, .usage-legend i.gemini { background: #6f9632; }
+.usage-tip-line i.openai, .usage-legend i.openai { background: #5b80cc; }
+.usage-legend { display: inline-flex; align-items: center; gap: 5px; }
 .usage-axis { display: flex; gap: 2px; margin: 6px 52px 0 0; height: 14px; font-size: 11px; color: var(--muted); }
 .usage-axis span { flex: 1; white-space: nowrap; overflow: visible; }
 .usage-axis span:last-child { text-align: right; }
@@ -1537,7 +1552,8 @@ a.person.current {
 .partner-check.on { border-color: var(--fill); background: #eef7d8; color: #2f5d0a; font-weight: 600; }
 
 /* DMs to reply: compact rows that open into the chat and one reply box */
-.dm-card { padding: 0; overflow: hidden; }
+.dm-card { padding: 0; }
+.dm-row:last-child, .dm-row:last-child .dm-summary { border-radius: 0 0 15px 15px; }
 .dm-head { display: flex; align-items: baseline; gap: 10px; padding: 14px 20px 12px; border-bottom: 1px solid var(--line); }
 .dm-head strong { font-size: 15px; }
 .dm-head-note { font-size: 13px; color: var(--muted); }
@@ -1636,6 +1652,16 @@ a.person.current {
 @media (prefers-reduced-motion: reduce) {
   .dm-skeleton-line, .dm-thinking, .dm-composer.writing::before, .dm-composer.typing::before { animation: none; }
 }
+/* Emoji keyboard of the reply box */
+.dm-emoji { position: relative; display: inline-flex; }
+.dm-emoji-toggle { width: 32px; height: 32px; padding: 0; border: 1px solid var(--line-strong); border-radius: 50%; background: var(--surface); font-size: 16px; line-height: 1; cursor: pointer; filter: grayscale(0.4); transition: filter 0.15s ease, background-color 0.15s ease; }
+.dm-emoji-toggle:hover { filter: none; background: var(--hover); }
+.dm-emoji-panel { position: absolute; left: 0; bottom: calc(100% + 8px); z-index: 5; width: 316px; max-height: 280px; overflow-y: auto; padding: 8px 10px 10px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); box-shadow: 0 10px 30px rgba(20, 20, 19, 0.14); animation: dm-pop 0.14s ease-out; }
+.dm-emoji-label { margin: 6px 2px 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+.dm-emoji-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 2px; }
+.dm-emoji-key { height: 34px; padding: 0; border: 0; border-radius: 8px; background: transparent; font-size: 20px; line-height: 1; cursor: pointer; }
+.dm-emoji-key:hover, .dm-emoji-key:focus-visible { background: var(--sunken); outline: none; }
+@keyframes dm-pop { from { opacity: 0; transform: translateY(4px) scale(0.98); } to { opacity: 1; transform: none; } }
 @media (max-width: 640px) {
   .dm-body { padding-left: 20px; }
   .dm-keys { display: none; }

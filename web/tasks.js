@@ -286,6 +286,60 @@ function dmAnswered(item, kind) {
   renderDms(true)
 }
 
+// The emoji keyboard of the reply box: a click puts the emoji where the cursor is. The first row is
+// the ones used most in our replies.
+const EMOJI_GROUPS = [
+  ['Most used', '😊 🥰 🧡 🙌 🤝 😂 🙏 👏 🔥 💪 ❤️ ✨'],
+  ['Faces', '🙂 😁 😄 😅 🤣 😉 😍 🤩 😎 🤗 🫡 🤔 😮 🥲 😭 🙃 😇 🫠 🤯 🥳'],
+  ['Hands', '👋 👌 🤙 👊 🤞 ✌️ 👍 🫶 👀 🙏 💯 ✅'],
+  ['Hearts', '❤️ 🧡 💛 💚 💙 💜 🖤 🤍 💕 💖 ❤️‍🔥 💫'],
+  ['Active', '🏃 🚴 🏋️ 🧘 🏊 🥾 ⛰️ 🏆 ⌚ 💤 🧠 📈 💊 🥗 ☕ 🌱 ☀️ 🌊 📦 🎉'],
+]
+let openEmojiPanel = null
+document.addEventListener('mousedown', (event) => {
+  if (openEmojiPanel && !openEmojiPanel.contains(event.target) && !event.target.closest('.dm-emoji-toggle')) {
+    openEmojiPanel.remove()
+    openEmojiPanel = null
+  }
+})
+function emojiButton(box, changed) {
+  const wrap = el('span', 'dm-emoji')
+  const toggle = button('😊', 'dm-emoji-toggle', () => {
+    if (openEmojiPanel) {
+      const mine = wrap.contains(openEmojiPanel)
+      openEmojiPanel.remove()
+      openEmojiPanel = null
+      if (mine) return
+    }
+    const panel = el('div', 'dm-emoji-panel')
+    for (const [label, list] of EMOJI_GROUPS) {
+      panel.append(el('div', 'dm-emoji-label', label))
+      const grid = el('div', 'dm-emoji-grid')
+      for (const emoji of list.split(' ')) {
+        const key = button(emoji, 'dm-emoji-key', () => {
+          const start = box.selectionStart ?? box.value.length
+          const end = box.selectionEnd ?? start
+          box.value = box.value.slice(0, start) + emoji + box.value.slice(end)
+          box.focus()
+          box.setSelectionRange(start + emoji.length, start + emoji.length)
+          changed()
+        })
+        // Keeps the cursor in the reply while picking.
+        key.addEventListener('mousedown', (event) => event.preventDefault())
+        grid.append(key)
+      }
+      panel.append(grid)
+    }
+    wrap.append(panel)
+    openEmojiPanel = panel
+  })
+  toggle.title = 'Emoji'
+  toggle.setAttribute('aria-label', 'Emoji')
+  toggle.addEventListener('mousedown', (event) => event.preventDefault())
+  wrap.append(toggle)
+  return wrap
+}
+
 // Types a reply into the box over about `ms` (whole words, so it reads naturally), with a caret.
 function typeInto(box, text, ms) {
   const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -488,7 +542,7 @@ function dmBody(item) {
       box.setSelectionRange(box.value.length, box.value.length)
     })
     const bar = el('div', 'dm-bar')
-    bar.append(write, el('span', 'dm-keys', '⌘↩ to send'), send)
+    bar.append(write, emojiButton(box, () => { dmDrafts.set(item.name, box.value); fit() }), el('span', 'dm-keys', '⌘↩ to send'), send)
     const field = el('div', 'dm-field')
     field.append(box, skeleton)
     composer.append(field, bar)
@@ -963,6 +1017,20 @@ function dayLabel(day, style = 'short') {
     : date.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })
 }
 
+// Gemini and OpenAI lines for a day or a total ({ gemini, openai }).
+function providerLines(part) {
+  const box = el('div', 'usage-tip-split')
+  // Anything not marked OpenAI is Gemini (so a total never shows as $0.00 on both).
+  const openai = Number(part.openai) || 0
+  const values = { openai, gemini: Number.isFinite(part.gemini) ? part.gemini : Math.max(0, (part.usd || 0) - openai) }
+  for (const [name, key] of [['Gemini', 'gemini'], ['OpenAI', 'openai']]) {
+    const line = el('div', 'usage-tip-line')
+    line.append(el('i', key), el('span', '', name), el('b', '', money(values[key])))
+    box.append(line)
+  }
+  return box
+}
+
 const usageCard = (() => {
   usageEl.classList.add('loading')
   const value = (className) => el('span', `${className} usage-value`, '')
@@ -980,6 +1048,36 @@ const usageCard = (() => {
   const side = el('div', 'usage-side')
   side.append(stat('This week', week), el('span', 'usage-divider'), stat('This month', month))
   head.append(primary, side)
+  // Hovering a total shows where it comes from: Gemini and OpenAI.
+  const headTip = el('div', 'usage-tip usage-head-tip')
+  headTip.hidden = true
+  let split = null
+  const hoverable = [[primary, 'today', 'Today'], [side.children[0], 'week', 'This week'], [side.children[2], 'month', 'This month']]
+  for (const [node, key, label] of hoverable) {
+    node.classList.add('usage-hoverable')
+    node.tabIndex = 0
+    const show = () => {
+      if (!split) return
+      const part = split[key]
+      headTip.replaceChildren(el('div', 'usage-tip-date', label), el('div', 'usage-tip-value', money(part.usd)), providerLines(part))
+      headTip.hidden = false
+      const box = node.getBoundingClientRect()
+      const area = usageEl.getBoundingClientRect()
+      headTip.style.top = `${box.bottom - area.top + 6}px`
+      if (key === 'today') {
+        headTip.style.right = ''
+        headTip.style.left = `${box.left - area.left}px`
+      } else {
+        headTip.style.left = ''
+        headTip.style.right = `${area.right - box.right}px`
+      }
+    }
+    const hide = () => { headTip.hidden = true }
+    node.addEventListener('mouseenter', show)
+    node.addEventListener('focus', show)
+    node.addEventListener('mouseleave', hide)
+    node.addEventListener('blur', hide)
+  }
 
   const chart = el('div', 'usage-chart')
   const plot = el('div', 'usage-plot')
@@ -1010,25 +1108,29 @@ const usageCard = (() => {
     // Placeholder heights while loading, gently varied so the shimmer reads as a chart.
     bar.style.height = `${12 + ((index * 37) % 23)}%`
     bar.style.transitionDelay = `${index * 14}ms`
+    // The OpenAI share, stacked on top of Gemini's.
+    const top = el('div', 'usage-bar-openai')
+    top.style.height = '0%'
+    bar.append(top)
     column.append(bar)
     column.addEventListener('mouseenter', () => showTip(index))
     column.addEventListener('focus', () => showTip(index))
     column.addEventListener('mouseleave', hideTip)
     column.addEventListener('blur', hideTip)
     bars.append(column)
-    columns.push({ column, bar })
+    columns.push({ column, bar, top })
     axis.append(el('span', '', index === USAGE_DAYS - 1 ? 'Today' : index % 7 === 0 ? dayLabel(localDayString(date)) : ''))
   }
   plot.append(bars)
   chart.append(plot, axis, tip)
   const note = el('p', 'usage-note', '')
-  usageEl.replaceChildren(head, chart, note)
+  usageEl.replaceChildren(head, chart, note, headTip)
 
   function showTip(index) {
     const day = days[index]
     if (!day) return
     hovered = index
-    tip.replaceChildren(el('div', 'usage-tip-date', dayLabel(day.day, 'long')), el('div', 'usage-tip-value', money(day.usd)))
+    tip.replaceChildren(el('div', 'usage-tip-date', dayLabel(day.day, 'long')), el('div', 'usage-tip-value', money(day.usd)), providerLines(day))
     const source = day.billed && day.tracked ? 'Google billing, plus the latest hours tracked live'
       : day.billed ? 'From Google billing'
       : day.tracked ? 'Tracked live by Outreach'
@@ -1059,6 +1161,7 @@ const usageCard = (() => {
 
   function update(data) {
     days = (data.days || []).slice(-USAGE_DAYS)
+    split = data.split || null
     billingConnected = Boolean(data.billing?.connected)
     today.textContent = money(data.today)
     week.textContent = money(data.week)
@@ -1069,10 +1172,16 @@ const usageCard = (() => {
       const slot = columns[index]
       if (!slot) return
       slot.bar.style.height = day.usd > 0 ? `max(3px, ${(day.usd / top) * 100}%)` : '0%'
-      slot.column.setAttribute('aria-label', `${dayLabel(day.day, 'long')}: ${money(day.usd)}`)
+      slot.top.style.height = day.usd > 0 && day.openai > 0 ? `max(2px, ${(day.openai / day.usd) * 100}%)` : '0%'
+      slot.column.setAttribute('aria-label', `${dayLabel(day.day, 'long')}: ${money(day.usd)} (Gemini ${money(day.gemini || 0)}, OpenAI ${money(day.openai || 0)})`)
     })
     const since = billingConnected ? 'from Google billing' : 'Google billing not connected yet, so days before tracking show only live-tracked spend'
-    note.replaceChildren(el('span', 'usage-live', 'Live'), document.createTextNode(` Gemini · ${data.computers > 1 ? 'both Macs' : 'this Mac'} · ${since}`))
+    const legend = (name, className) => {
+      const item = el('span', 'usage-legend')
+      item.append(el('i', className), document.createTextNode(name))
+      return item
+    }
+    note.replaceChildren(el('span', 'usage-live', 'Live'), legend('Gemini', 'gemini'), legend('OpenAI', 'openai'), document.createTextNode(`· ${data.computers > 1 ? 'both Macs' : 'this Mac'} · ${since}`))
     if (usageEl.classList.contains('loading')) {
       usageEl.classList.remove('loading')
       // After the first fill, updates move without the stagger.
