@@ -161,7 +161,7 @@ const PROSPECT_TASK = {
 // decided on its own (Yes, No), what it left for the person, and what it has not checked yet. The four
 // add up; the bar fills with the share already done.
 function modelProgressBar(data) {
-  const { judging = 0, forYou = 0, auto = 0, modelYes = 0, modelNo = 0, checkedToday = 0, yesToday = 0, noToday = 0 } = data.prospecting || {}
+  const { judging = 0, forYou = 0, auto = 0, modelYes = 0, modelNo = 0, modelToday = {} } = data.prospecting || {}
   const done = modelYes + modelNo + auto + forYou
   const total = done + judging
   if (!total) return null
@@ -170,8 +170,9 @@ function modelProgressBar(data) {
   const fill = el('div', 'meter-fill')
   fill.style.width = `${Math.max(2, Math.round((done / total) * 100))}%`
   bar.append(fill)
-  const today = [`${number(checkedToday)} checked`, `${number(yesToday)} Yes`, `${number(noToday)} No`]
-  const now = [`${number(forYou)} for you`]
+  // Of the profiles the model checked today: its own Yes and No (the rest are for you).
+  const today = [`${number(modelToday.checked || 0)} checked`, `${number(modelToday.yes || 0)} Yes`, `${number(modelToday.no || 0)} No`, `${number(modelToday.forYou || 0)} for you`]
+  const now = [`${number(forYou)} waiting for you`]
   if (judging) now.push(`${number(judging)} still to check`)
   box.append(bar, el('div', 'model-progress-text', `Today: ${today.join(' · ')}`), el('div', 'model-progress-text', `Now: ${now.join(' · ')}`))
   return box

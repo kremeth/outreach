@@ -284,7 +284,8 @@ function modelProgress() {
     else judging++
   }
   const written = modelProspect.autoTotals()
-  return { forYou, auto, judging, modelYes: written.yes, modelNo: written.no, yesToday: written.yesToday, noToday: written.noToday, checkedToday: modelProspect.checkedToday() }
+  const today = modelProspect.todayStats()
+  return { forYou, auto, judging, modelYes: written.yes, modelNo: written.no, modelToday: today }
 }
 
 // The next undecided profiles in queue order, for the wearable model to judge ahead of the person
