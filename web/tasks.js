@@ -1893,7 +1893,7 @@ function relaunchScreen(stage) {
     right.append(context)
 
     right.append(el('div', 'section-label', 'Message they will get'))
-    right.append(el('p', 'message-preview', fillTemplate(template)))
+    right.append(el('p', 'message-preview', item.relaunchText || fillTemplate(template)))
     const templateRow = el('div', 'template-row')
     templateRow.append(button(editing ? 'Close template' : 'Edit template', 'link', () => { editing = !editing; render() }))
     right.append(templateRow)

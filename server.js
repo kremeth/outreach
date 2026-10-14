@@ -1593,7 +1593,7 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, {
         stage,
         label: relaunch.STAGES[stage].label,
-        queue: relaunch.due(yesRows, stage).filter((item) => !log.claimedByOther(`relaunch:${item.sheetRow}`)),
+        queue: relaunch.due(yesRows, stage).filter((item) => !log.claimedByOther(`relaunch:${item.sheetRow}`)).map((item) => ({ ...item, relaunchText: relaunch.messageFor(item, stage) })),
         summary: relaunch.summary(yesRows, stage),
         template: relaunch.templates()[stage],
         writeNote: writeNote(),
