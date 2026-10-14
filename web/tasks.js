@@ -987,7 +987,7 @@ function renderLaunch() {
       const when = plan.later ? `from ${timeLabel(plan.startAt)}` : 'from now'
       summary = `Today: ${plan.today.voice} voicenotes, ${plan.today.comment} comments, ${plan.today.dm} relaunch DMs, ${plan.today.unfollow} unfollows, spread ${when} until ${timeLabel(plan.windowEnd)}, about one every ${plan.minutes} min.`
       if ((counts.unfollow || 0) > plan.today.unfollow && launchTasks.unfollow) summary += ` Unfollows go out at most 40 a day; the other ${number(counts.unfollow - plan.today.unfollow)} follow on the next days.`
-      if (plan.dmWanted > plan.today.dm) summary += ` Relaunches go out at 20 first and 10 second relaunches a day, so the other ${number(plan.dmWanted - plan.today.dm)} follow on the next days.`
+      if (plan.dmWanted > plan.today.dm) summary += ` Relaunches go out at 30 first and 30 second relaunches a day, so the other ${number(plan.dmWanted - plan.today.dm)} follow on the next days.`
     }
     card.append(el('p', 'launch-line', summary))
     const blocked = data.guard?.blocked || !data.guard?.app || !data.guard?.loggedIn
