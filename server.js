@@ -1252,6 +1252,7 @@ autopilot.init({
   replyQueue,
   replyStep,
   replySummary: () => replyRelaunch.summary(yesRows, data),
+  autoCommenting: () => autoCommentStatus().on,
   refreshSheet: () => refreshSheet(true).catch((error) => console.error(error)),
   sheetReady: () => Boolean(sheetRefreshedAt),
   voiceCount: () => voiceQueue().length,
