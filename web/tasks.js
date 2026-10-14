@@ -222,8 +222,21 @@ function renderDms(force) {
   })
   head.append(refresh)
   card.append(head)
-  const outLine = outgoingLine(dms.outgoing || [])
-  if (outLine) card.append(el('p', 'dm-out-line', outLine))
+  const outLine = outgoingLine(dms.outgoing || [], dms.sendingNow)
+  if (outLine) {
+    const line = el('p', 'dm-out-line', outLine)
+    const hour = new Date().getHours()
+    if ((hour < 8 || hour >= 21) && !dms.sendingNow) {
+      const now = button('Send now', 'dm-link', async () => {
+        now.disabled = true
+        const result = await api('/api/dms/send-now', {}).catch(() => null)
+        if (result?.dms && todoData) todoData.dms = result.dms
+        renderDms(true)
+      })
+      line.append(' ', now)
+    }
+    card.append(line)
+  }
   if (!dms.scannedAt) card.append(el('p', 'side-empty', 'The inbox is read every 20 minutes while Outreach is open.'))
   else if (!dms.toReply.length) card.append(el('p', 'side-empty', `Nothing to reply to in the last ${dms.looked} conversations.`))
   for (const item of dms.toReply) card.append(dmRow(item))
@@ -242,14 +255,14 @@ setInterval(async () => {
 
 // When the replies on their way go out: between Launch's actions, 8:00 to 21:00, within the safety
 // limits; one waiting on a limit says so.
-function outgoingLine(list) {
+function outgoingLine(list, sendingNow) {
   if (!list.length) return ''
   const hour = new Date().getHours()
   const time = (at) => new Date(at).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' })
   const waiting = list.filter((entry) => entry.waitUntil)
   const ready = list.length - waiting.length
   const parts = []
-  if (ready) parts.push(hour < 8 || hour >= 21 ? `${ready} go out from 8:00 tomorrow morning` : `${ready} go out one by one between Launch's actions`)
+  if (ready) parts.push((hour < 8 || hour >= 21) && !sendingNow ? `${ready} go out from 8:00 tomorrow morning` : `${ready} go out one by one between Launch's actions`)
   const groups = {}
   for (const entry of waiting) {
     const key = `${entry.kind}|${entry.waitReason}|${time(entry.waitUntil)}`
@@ -670,7 +683,7 @@ function renderSafety() {
     return
   }
   const kinds = guard.kinds
-  safetyEl.append(el('span', '', `Instagram today · ${kinds.comment.today} / ${kinds.comment.limit} comments · ${kinds.dm.today} / ${kinds.dm.limit} DMs · ${kinds.voice.today} / ${kinds.voice.limit} voicenotes${kinds.unfollow ? ` · ${kinds.unfollow.today} / ${kinds.unfollow.limit} unfollows` : ''}`))
+  safetyEl.append(el('span', '', `Instagram today · ${kinds.comment.today} / ${kinds.comment.limit} comments · ${kinds.dm.today} / ${kinds.dm.limit} DMs · ${kinds.voice.today} / ${kinds.voice.limit} voicenotes${kinds.unfollow ? ` · ${kinds.unfollow.today} / ${kinds.unfollow.limit} unfollows` : ''}${kinds.answer ? ` · ${kinds.answer.today + (kinds.answerVoice?.today || 0)} / ${kinds.answer.limit + (kinds.answerVoice?.limit || 0)} replies` : ''}`))
 }
 
 function renderSync() {

@@ -387,7 +387,8 @@ function startControl() {
         return reply(200, await inPanel('comment', 'posting a comment', () => ({ target: body.username || '', detail: body.pk || body.permalink }), (wc) => ig.comment(wc, body)))
       }
       if (url.pathname === '/dm') {
-        return reply(200, await inPanel('dm', 'sending a DM', () => ({ target: body.username || '', detail: body.detail || 'dm' }), (wc) => ig.dm(wc, body)))
+        // A reply to someone who wrote to us has its own allowance (answer); outreach DMs count as dm.
+        return reply(200, await inPanel(body.detail === 'reply' ? 'answer' : 'dm', 'sending a DM', () => ({ target: body.username || '', detail: body.detail || 'dm' }), (wc) => ig.dm(wc, body)))
       }
       if (url.pathname === '/unfollow') {
         // Counted only once Unfollow was tapped; reading the chat or a profile we don't follow is not an action.
@@ -478,7 +479,7 @@ function startControl() {
       }
       if (url.pathname === '/voice/reply') {
         const describe = (result, failure) => (result?.sent || failure ? { target: body.username || '', detail: `voice-reply:${body.clipName || ''}` } : null)
-        return reply(200, await inPanel('voice', 'sending a voicenote reply', describe, (wc, account) => voice.sendReply(account, body)))
+        return reply(200, await inPanel('answerVoice', 'sending a voicenote reply', describe, (wc, account) => voice.sendReply(account, body)))
       }
       if (url.pathname === '/voice/status') return reply(200, voice.getStatus())
       if (url.pathname === '/voice/next') {

@@ -24,7 +24,7 @@ from .gemini import BudgetExceeded, Deferred, Gemini
 SCREEN_MODEL = "gemini-3.1-flash-lite"
 BRAND_MODEL = "gemini-3.8-flash"
 PROFILE_GATE = 50
-NEAR = 20
+NEAR = 3  # live (full price) only for the very next few; the rest in Batch Mode at half price (14 Oct: 20 -> 3)
 CURRENT = {"photos-v3", "photos-v4"}
 
 

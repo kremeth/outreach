@@ -1095,6 +1095,7 @@ function dmsForPage() {
   // is read again (then it is gone for good, unless they wrote again). A failed send stays, with why.
   const answered = (item) => item.reply && (['queued', 'sending'].includes(item.reply.status) || (item.reply.status === 'sent' && item.reply.sentAt >= summary.scannedAt))
   summary.outgoing = dmReply.outgoing()
+  summary.sendingNow = Date.now() < replyNowUntil
   summary.toReply = summary.toReply.filter((item) => !answered(item))
   return summary
 }
@@ -1102,13 +1103,14 @@ function dmsForPage() {
 // Sends the queued replies, one at a time, when Launch is not using Instagram. Busy, paused or waiting
 // on a limit: stays queued and is tried again. Anything else: marked failed with the reason.
 let replySending = false
+let replyNowUntil = 0 // "Send now": the queued replies go out even outside Launch's hours, for 3 hours
 async function sendQueuedReplies() {
   if (replySending) return
   const pilot = autopilot.status()
   if (pilot.current) return
-  // Same hours as Launch.
+  // Same hours as Launch, unless "Send now" was pressed.
   const hour = new Date().getHours()
-  if (hour < 8 || hour >= 21) return
+  if ((hour < 8 || hour >= 21) && Date.now() > replyNowUntil) return
   const item = dmReply.next()
   if (!item) return
   replySending = true
@@ -1713,6 +1715,14 @@ const server = http.createServer(async (req, res) => {
       }
       res.writeHead(200, { 'Content-Type': 'audio/mp4', 'Content-Length': fs.statSync(file).size, 'Cache-Control': 'no-cache' })
       fs.createReadStream(file).pipe(res)
+      return
+    }
+    // "Send now": the queued replies go out straight away, outside Launch's hours too (still one at a
+    // time, through the safety limits).
+    if (req.method === 'POST' && url.pathname === '/api/dms/send-now') {
+      replyNowUntil = Date.now() + 3 * 60 * 60 * 1000
+      sendQueuedReplies().catch(() => {})
+      sendJson(res, 200, { ok: true, dms: dmsForPage() })
       return
     }
     if (req.method === 'POST' && url.pathname === '/api/dms/send') {
