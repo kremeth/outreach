@@ -228,8 +228,9 @@ function dmRow(item) {
   }
   const state = item.reply
   if (state && state.status !== 'failed') {
+    const parts = state.kind === 'voice' && state.status !== 'sent' && state.sentParts ? ` (part ${state.sentParts} of 2 sent, part 2 next)` : ''
     const label = { queued: 'Reply queued: it goes out as soon as Instagram is free', sending: 'Sending the reply…', sent: 'Reply sent ✓' }[state.status] || state.status
-    row.append(el('div', `dm-status ${state.status}`, `${state.kind === 'voice' ? 'Voicenote' : 'Text'} · ${label}`))
+    row.append(el('div', `dm-status ${state.status}`, `${state.kind === 'voice' ? 'Voicenotes' : 'Text'} · ${label}${parts}`))
     return row
   }
   if (state?.status === 'failed') row.append(el('div', 'dm-status failed', `Not sent: ${state.error}`))
@@ -265,7 +266,7 @@ function dmRow(item) {
     }).catch((error) => { note.textContent = error.message; send.disabled = false })
   })
   const voices = item.voice ? [item.voice] : ['Romain', 'Mathieu']
-  const voiceButtons = voices.map((voice) => button(`🎙 Send ${voice}'s message 2`, 'ghost small', async (event) => {
+  const voiceButtons = voices.map((voice) => button(`🎙 Send ${voice}'s message 2 (2 voicenotes)`, 'ghost small', async (event) => {
     event.currentTarget.disabled = true
     await api('/api/dms/send', { name: item.name, username: item.username, kind: 'voice', voice }).then(() => {
       item.reply = { status: 'queued', kind: 'voice' }

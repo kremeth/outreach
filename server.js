@@ -1090,9 +1090,15 @@ async function sendQueuedReplies() {
       username = chat.username
       if (!username) throw Object.assign(new Error('Could not find their username.'), { kind: 'notsent' })
     }
-    dmReply.update(item.id, { status: 'sending', username })
-    if (item.kind === 'voice') await instagram.voiceReply({ username, clipName: `${item.voice} Message 2.m4a` })
-    else await instagram.sendDm({ username, message: item.text, detail: 'reply' })
+    dmReply.update(item.id, { status: 'sending', username, startedAt: Date.now() })
+    if (item.kind === 'voice') {
+      // Message 2 is two voicenotes, part 1 then part 2 (each under Instagram's 1 minute), from whoever
+      // sent the first one. A part already sent is never sent again; part 2 follows after the safety gap.
+      for (let part = (item.sentParts || 0) + 1; part <= 2; part++) {
+        await instagram.voiceReply({ username, clipName: `${item.voice} Message 2 part ${part}.m4a` })
+        dmReply.update(item.id, { sentParts: part })
+      }
+    } else await instagram.sendDm({ username, message: item.text, detail: 'reply' })
     dmReply.update(item.id, { status: 'sent', sentAt: Date.now() })
     panelReads.inbox = 0 // the list refreshes on the next pass: this one is answered now
   } catch (error) {
