@@ -377,7 +377,20 @@ const AUTO_COMMENT_PATH = path.join(__dirname, 'data', 'hustle', 'auto-comment.j
 const AUTO_AHEAD = 6
 const DAILY_PICKS = 50
 let autoCommentBusy = false
-const autoCommentPassed = new Set()
+// Posts auto-commenting gave up on (unreadable, taken...): kept on disk so a restart never loads them again.
+const PASSED_PATH = path.join(__dirname, 'data', 'auto-comment-passed.json')
+const autoCommentPassed = (() => {
+  let list = []
+  try { list = JSON.parse(fs.readFileSync(PASSED_PATH, 'utf8')) } catch {}
+  const set = new Set(list.slice(-2000))
+  const add = set.add.bind(set)
+  set.add = (key) => {
+    add(key)
+    try { fs.writeFileSync(PASSED_PATH, JSON.stringify([...set].slice(-2000))) } catch {}
+    return set
+  }
+  return set
+})()
 
 function autoCommentState() {
   try {
@@ -1898,10 +1911,20 @@ async function boot() {
   server.listen(PORT, '127.0.0.1', () => {
     console.log(`Open http://127.0.0.1:${PORT}`)
   })
-  const first = rows.filter((row) => !choiceFor(row)).slice(0, 4).map((row) => data.usernameFrom(row['DIRECT LINK'])).filter(Boolean)
-  first.forEach((username, position) => {
-    preview.profile(username, position === 0 ? true : 'screen').catch(() => {})
-  })
+  // The scraper picks up where it was straight away (not 10 minutes later).
+  setTimeout(() => followingScraper.run(instagram, (text) => console.log(text)).catch((error) => console.error('scraper', error.message)), 60 * 1000).unref()
+  // The first profiles of the Prospecting list, loaded ahead for the screen: at most once every 30
+  // minutes (a restart is not a reason to load them again; they count against the hourly allowance).
+  const BOOT_PATH = path.join(__dirname, 'data', 'boot-preload.json')
+  let lastPreload = 0
+  try { lastPreload = JSON.parse(fs.readFileSync(BOOT_PATH, 'utf8')).at || 0 } catch {}
+  if (Date.now() - lastPreload > 30 * 60 * 1000) {
+    try { fs.writeFileSync(BOOT_PATH, JSON.stringify({ at: Date.now() })) } catch {}
+    const first = rows.filter((row) => !choiceFor(row)).slice(0, 4).map((row) => data.usernameFrom(row['DIRECT LINK'])).filter(Boolean)
+    first.forEach((username, position) => {
+      preview.profile(username, position === 0 ? true : 'screen').catch(() => {})
+    })
+  }
 }
 
 boot()
