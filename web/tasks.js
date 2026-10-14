@@ -574,8 +574,13 @@ function renderLaunch() {
 async function pollLaunch() {
   clearTimeout(launchTimer)
   try {
-    const [autopilot, latest] = await Promise.all([api('/api/autopilot', null, 30000), api('/api/counts', null, 15000)])
+    const [autopilot, latest, scraper] = await Promise.all([api('/api/autopilot', null, 30000), api('/api/counts', null, 15000), api('/api/scraper', null, 10000).catch(() => null)])
     launchData = autopilot
+    // The scraper card follows the scraper live.
+    if (todoData && scraper && JSON.stringify(scraper) !== JSON.stringify(todoData.scraper)) {
+      todoData.scraper = scraper
+      if (route === 'home') renderScraper()
+    }
     if (todoData) {
       todoData.guard = autopilot.guard
       todoData.prospecting = { ...todoData.prospecting, remaining: latest.remaining, yesToday: latest.yesToday, yesTarget: latest.yesTarget }

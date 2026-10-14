@@ -1604,6 +1604,10 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, { ok: true, item })
       return
     }
+    if (req.method === 'GET' && url.pathname === '/api/scraper') {
+      sendJson(res, 200, followingScraper.summary())
+      return
+    }
     if (req.method === 'POST' && url.pathname === '/api/scraper/login') {
       await instagram.scraperOpen().catch(() => {})
       sendJson(res, 200, { ok: true })
@@ -1802,6 +1806,6 @@ boot()
 
 // Write any queued training rows before the app closes.
 process.on('SIGTERM', () => {
-  training.flush().finally(() => process.exit(0))
+  Promise.allSettled([training.flush(), followingScraper.flushPending()]).finally(() => process.exit(0))
   setTimeout(() => process.exit(0), 8000)
 })
