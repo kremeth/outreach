@@ -1590,6 +1590,10 @@ const server = http.createServer(async (req, res) => {
       }
       return
     }
+    if (req.method === 'GET' && url.pathname === '/api/dms') {
+      sendJson(res, 200, dmsForPage())
+      return
+    }
     // "No reply needed": off the list until they write something new.
     if (req.method === 'POST' && url.pathname === '/api/dms/dismiss') {
       const body = await readBody(req)

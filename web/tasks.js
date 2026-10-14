@@ -227,6 +227,16 @@ function renderDms(force) {
   dmsEl.append(card)
 }
 
+// The list follows the inbox on its own (read every 20 minutes, and after each reply sent): checked
+// every 30 seconds on the To do page; redrawn only when it changed, never while you are typing.
+setInterval(async () => {
+  if (route !== 'home' || !todoData) return
+  const dms = await api('/api/dms', null, 10000).catch(() => null)
+  if (!dms) return
+  todoData.dms = dms
+  renderDms()
+}, 30000)
+
 function initials(name) {
   const words = String(name).replace(/[^\p{L}\p{N} ]/gu, ' ').trim().split(/\s+/).filter(Boolean)
   if (words.length > 2 && words.every((word) => word.length === 1)) return words.slice(0, 2).join('').toUpperCase() // "L A U R I S S A"
