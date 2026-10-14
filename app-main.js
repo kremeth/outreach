@@ -228,6 +228,8 @@ function createWindow() {
 // web API from inside that logged-in page (same requests the site makes), one at a time.
 const SCRAPER_PARTITION = 'persist:scraper'
 let scraperWin = null
+let appQuitting = false
+app.on('before-quit', () => { appQuitting = true })
 let scraperView = null
 
 function openScraper(show = true) {
@@ -247,7 +249,8 @@ function openScraper(show = true) {
   scraperWin.on('resize', fit)
   fit()
   scraperWin.on('close', (event) => {
-    // Closing only hides it: the scraper keeps its page.
+    // Closing only hides it (the scraper keeps its page), except when Outreach itself is quitting.
+    if (appQuitting) return
     event.preventDefault()
     scraperWin.hide()
   })
@@ -260,16 +263,8 @@ async function scraperAccount() {
   return cookies[0]?.value || ''
 }
 
-// One GET to Instagram's web API from inside the scraper's logged-in page. Returns { status, json, text }.
-async function scraperFetch(url) {
-  const wc = openScraper(false)
-  if (!/^https:\/\/www\.instagram\.com\//.test(wc.getURL())) {
-    await wc.loadURL('https://www.instagram.com/')
-  }
-  return wc.executeJavaScript(`fetch(${JSON.stringify(url)}, { credentials: 'include', headers: { 'x-ig-app-id': '936619743392459', 'x-requested-with': 'XMLHttpRequest' } })
-    .then(async (response) => { const text = await response.text(); let json = null; try { json = JSON.parse(text) } catch {} return { status: response.status, json, text: json ? '' : text.slice(0, 300), url: response.url } })
-    .catch((error) => ({ status: 0, error: String(error) }))`, true)
-}
+let scraperBusy = false
+const scraperUi = require('./app/scraper')
 
 // The logged-in Instagram account (its numeric id), so limits are counted per account across computers.
 async function accountId() {
@@ -455,13 +450,20 @@ function startControl() {
         const outreach = await accountId()
         return reply(200, { loggedIn: Boolean(id), id, sameAsOutreach: Boolean(id && id === outreach) })
       }
-      if (url.pathname === '/scraper/fetch') {
-        // Reads only, and only Instagram's own web API.
-        if (!/^https:\/\/www\.instagram\.com\/api\/v1\/(users\/web_profile_info\/|friendships\/\d+\/following\/)/.test(String(body.url || ''))) return reply(400, { error: 'Not an allowed read.' })
+      // The scraper account, driven like a person (app/scraper.js): one profile, or one creator's whole
+      // following list. Never the outreach account; one thing at a time.
+      if (url.pathname === '/scraper/profile' || url.pathname === '/scraper/following') {
         const id = await scraperAccount()
         if (!id) return reply(409, { error: 'The scraper account is not logged in.', kind: 'login' })
         if (id === (await accountId())) return reply(409, { error: 'The scraper window is logged into the outreach account. Log into the scraper account there instead.', kind: 'login' })
-        return reply(200, await scraperFetch(String(body.url || '')))
+        if (scraperBusy) return reply(409, { error: 'The scraper is busy.', kind: 'busy' })
+        scraperBusy = true
+        try {
+          const wc = openScraper(false)
+          return reply(200, url.pathname === '/scraper/profile' ? await scraperUi.profile(wc, body) : await scraperUi.following(wc, body))
+        } finally {
+          scraperBusy = false
+        }
       }
       // Read-only look at a chat (no action, nothing sent), to build on.
       if (url.pathname === '/probe-chat') {
