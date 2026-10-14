@@ -271,7 +271,7 @@ function outgoingLine(list, sendingNow) {
   }
   for (const [key, count] of Object.entries(groups)) {
     const [kind, reason, at] = key.split('|')
-    parts.push(`${count} ${kind === 'voice' ? 'voicenote' : 'text'} ${count === 1 ? 'reply waits' : 'replies wait'} until ${at}${reason ? ` (${reason.replace(/\.$/, '')})` : ''}`)
+    parts.push(`${count} ${kind === 'like' ? (count === 1 ? 'like waits' : 'likes wait') : `${kind === 'voice' ? 'voicenote' : 'text'} ${count === 1 ? 'reply waits' : 'replies wait'}`} until ${at}${reason ? ` (${reason.replace(/\.$/, '')})` : ''}`)
   }
   return parts.join(' · ')
 }
@@ -391,7 +391,7 @@ function dmRow(item) {
   top.append(el('span', 'dm-name', item.name))
   if (state && state.status !== 'failed') {
     const label = { queued: 'Queued', sending: 'Sending…', sent: 'Sent ✓' }[state.status] || state.status
-    top.append(el('span', `dm-tag ${state.status === 'sent' ? 'sent' : 'queued'}`, `${state.kind === 'voice' ? '🎙 ' : ''}${label}`))
+    top.append(el('span', `dm-tag ${state.status === 'sent' ? 'sent' : 'queued'}`, state.kind === 'like' ? (state.status === 'sent' ? 'Liked ❤️' : 'Liking…') : `${state.kind === 'voice' ? '🎙 ' : ''}${label}`))
   } else if (state?.status === 'failed') top.append(el('span', 'dm-tag declined', 'Not sent'))
   else if (DM_TAGS[item.tag]) top.append(el('span', `dm-tag ${DM_TAGS[item.tag][1]}`, DM_TAGS[item.tag][0]))
   top.append(el('span', 'dm-age', item.age || ''))
@@ -626,7 +626,17 @@ function dmBody(item) {
       skip.disabled = false
     }
   })
-  foot.append(skip)
+  const like = button('Like message ❤️', 'dm-link', async () => {
+    like.disabled = true
+    try {
+      await api('/api/dms/send', { name: item.name, username: item.username, kind: 'like' })
+      dmAnswered(item, 'like')
+    } catch (error) {
+      note.textContent = error.message
+      like.disabled = false
+    }
+  })
+  foot.append(like, skip)
   if (item.username) {
     const link = el('a', 'dm-link', 'Open on Instagram ↗')
     link.href = `https://ig.me/m/${item.username}`
@@ -638,33 +648,106 @@ function dmBody(item) {
   return body
 }
 
-// Ongoing partnerships: Story ticks when our own story reposts theirs, Post when one of their posts names
-// nutricode; both can be ticked by hand. Kept on the "Ongoing Partnerships" tab of the sheet.
+// Ongoing partnerships: the deal is a story when the box arrives, then a reel once the month is done.
+// Each creator: the story (its date starts the month), a timeline to the reel's due date (a month later)
+// with today on it, and a countdown. The story ticks on its own when they mention us in their story (DM
+// inbox) or our story reposts theirs; the reel when one of their posts names nutricode. Anything can be
+// ticked, unticked or re-dated by hand. Kept on the "Ongoing Partnerships" tab of the sheet.
+
+function partnerState(partner) {
+  if (partner.post) return { rank: 3, tone: 'done', label: partner.reelDate ? `Reel posted ${shortDate(partner.reelDate)}` : 'Reel posted' }
+  if (!partner.story) return { rank: 2, tone: 'waiting', label: 'Waiting for their story' }
+  const days = partner.daysLeft
+  if (days < 0) return { rank: 0, tone: 'late', label: `Reel ${-days} ${-days === 1 ? 'day' : 'days'} late` }
+  if (days === 0) return { rank: 0, tone: 'soon', label: 'Reel due today' }
+  if (days === 1) return { rank: 1, tone: 'soon', label: 'Reel due tomorrow' }
+  return { rank: 1, tone: days <= 7 ? 'soon' : 'running', label: `Reel in ${days} days` }
+}
+
+// A date picked by hand: a native date picker, opened from the date itself.
+function datePicker(partner, kind, current, onPicked) {
+  const input = document.createElement('input')
+  input.type = 'date'
+  input.className = 'partner-date-input'
+  input.value = current || new Date().toISOString().slice(0, 10)
+  input.max = new Date().toISOString().slice(0, 10)
+  input.addEventListener('change', async () => {
+    if (!input.value) return
+    const result = await api('/api/partners/date', { username: partner.username, kind, date: input.value }).catch(() => null)
+    onPicked(result)
+  })
+  return input
+}
+
 function renderPartners() {
   partnersEl.replaceChildren()
   const list = todoData?.partners
   if (!list) return
-  const card = el('div', 'side-card')
+  const card = el('div', 'side-card partner-card')
   if (!list.length) card.append(el('p', 'side-empty', 'No ongoing partnerships (add them on the "Ongoing Partnerships" tab).'))
-  for (const partner of list) {
-    const row = el('div', 'partner-row')
+  const refresh = (result) => {
+    if (result?.partners && todoData) todoData.partners = result.partners
+    renderPartners()
+  }
+  const sorted = [...list].map((partner) => ({ partner, state: partnerState(partner) }))
+    .sort((a, b) => a.state.rank - b.state.rank || (a.partner.daysLeft ?? 99) - (b.partner.daysLeft ?? 99))
+  for (const { partner, state } of sorted) {
+    const row = el('div', `partner-row ${state.tone}`)
+    const head = el('div', 'partner-head')
     const who = el('a', 'partner-name', `@${partner.username}`)
     who.href = `https://www.instagram.com/${partner.username}/`
     who.target = '_blank'
     who.rel = 'noopener'
-    const checks = el('div', 'partner-checks')
-    for (const kind of ['story', 'post']) {
-      const on = partner[kind]
-      const chip = button(`${on ? '✓' : '○'} ${kind === 'story' ? 'Story' : 'Post'}`, `partner-check${on ? ' on' : ''}`, async () => {
-        chip.disabled = true
-        const result = await api('/api/partners/mark', { username: partner.username, kind, value: !on }).catch(() => null)
-        if (result?.partners && todoData) todoData.partners = result.partners
-        renderPartners()
-      })
-      chip.title = on ? (partner[`${kind}Seen`] || 'Ticked') : `Not seen yet. Click to tick by hand.`
-      checks.append(chip)
-    }
-    row.append(who, el('span', 'partner-date', partner.date || ''), checks)
+    head.append(avatar(partner.username), who, el('span', `partner-pill ${state.tone}`, state.label))
+    row.append(head)
+
+    // The month: story -> today -> reel due.
+    const line = el('div', 'partner-line')
+    const storyStep = el('div', `partner-step${partner.story ? ' on' : ''}`)
+    const storyTick = button(partner.story ? '✓' : '', 'partner-tick', async () => {
+      storyTick.disabled = true
+      refresh(await api('/api/partners/mark', { username: partner.username, kind: 'story', value: !partner.story }).catch(() => null))
+    })
+    storyTick.title = partner.story ? `Story: ${partner.storySeen || 'ticked'} (click to untick)` : 'Mark the story as posted today'
+    const storyText = el('div', 'partner-step-text')
+    storyText.append(el('span', 'partner-step-label', 'Story'))
+    if (partner.story) {
+      const when = el('label', 'partner-when', shortDate(partner.storyDate) || 'date?')
+      when.title = 'Change the story date'
+      when.append(datePicker(partner, 'story', partner.storyDate, refresh))
+      storyText.append(when)
+    } else storyText.append(el('span', 'partner-when muted', 'not yet'))
+    storyStep.append(storyTick, storyText)
+
+    const track = el('div', 'partner-track')
+    const fill = el('div', 'partner-fill')
+    if (partner.post) fill.style.width = '100%'
+    else if (partner.story && partner.storyDate && partner.reelDue) {
+      const start = new Date(`${partner.storyDate}T00:00:00`).getTime()
+      const due = new Date(`${partner.reelDue}T00:00:00`).getTime()
+      const now = Date.now()
+      fill.style.width = `${Math.max(3, Math.min(100, ((now - start) / (due - start)) * 100))}%`
+    } else fill.style.width = '0%'
+    track.append(fill)
+
+    const reelStep = el('div', `partner-step reel${partner.post ? ' on' : ''}`)
+    const reelTick = button(partner.post ? '✓' : '', 'partner-tick', async () => {
+      reelTick.disabled = true
+      refresh(await api('/api/partners/mark', { username: partner.username, kind: 'post', value: !partner.post }).catch(() => null))
+    })
+    reelTick.title = partner.post ? `Reel: ${partner.postSeen || 'ticked'} (click to untick)` : 'Mark the reel as posted today'
+    const reelText = el('div', 'partner-step-text')
+    reelText.append(el('span', 'partner-step-label', 'Reel'))
+    if (partner.post) {
+      const when = el('label', 'partner-when', shortDate(partner.reelDate) || 'posted')
+      when.title = 'Change the reel date'
+      when.append(datePicker(partner, 'post', partner.reelDate, refresh))
+      reelText.append(when)
+    } else reelText.append(el('span', 'partner-when muted', partner.reelDue ? `due ${shortDate(partner.reelDue)}` : 'a month after the story'))
+    reelStep.append(reelText, reelTick)
+
+    line.append(storyStep, track, reelStep)
+    row.append(line)
     card.append(row)
   }
   partnersEl.append(card)

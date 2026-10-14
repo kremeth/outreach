@@ -774,6 +774,77 @@ function replyRelaunch(wc, options) {
   return untilSent((progress) => replyRelaunchSteps(wc, options, progress))
 }
 
+// Likes (❤️) their latest message in the chat: a double-click on it (as on the phone), or the react
+// menu if that does not take. Done only when the heart shows under it. dryRun: finds the message only.
+const THEIR_LAST = String.raw`(() => {
+  const bubbles = [...document.querySelectorAll('[role="main"] [role="article"]')].filter((bubble) => bubble.getBoundingClientRect().height > 0)
+  const theirs = bubbles.filter((bubble) => {
+    const lane = bubble.closest('[role="group"]') || bubble.parentElement
+    const area = lane.getBoundingClientRect()
+    const box = bubble.getBoundingClientRect()
+    return box.left + box.width / 2 <= area.left + area.width / 2
+  })
+  const last = theirs.sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top).pop()
+  if (!last) return null
+  last.scrollIntoView({ block: 'center' })
+  const r = last.getBoundingClientRect()
+  return { x: Math.round(r.left + Math.min(r.width / 2, 60)), y: Math.round(r.top + r.height / 2), text: (last.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 80) }
+})()`
+
+function hearted(messages, text) {
+  const theirs = messages.filter((message) => !message.ours)
+  const last = theirs[theirs.length - 1]
+  return Boolean(last && (!text || last.text.slice(0, 40) === text.slice(0, 40)) && /❤|♥/.test(last.reaction || ''))
+}
+
+async function likeLastSteps(wc, { username, dryRun = false }, progress) {
+  const messages = await openThread(wc, username)
+  if (!messages.some((message) => !message.ours)) throw fail('They have no message in this chat to like.', 'notsent')
+  if (hearted(messages)) return { ok: true, already: true }
+  await sleep(600)
+  const target = await run(wc, THEIR_LAST)
+  if (!target) throw fail('Could not find their message, so nothing was liked.', 'notsent')
+  if (dryRun) return { ok: true, dryRun: true, target }
+  await sleep(500)
+  progress.pressed = true
+  await doubleClick(wc, target)
+  let done = await waitFor(async () => ({ done: hearted(await readThread(wc), target.text) }), 4000, 500)
+  if (!done?.done) {
+    // The react menu: hover the message, its React button, then the heart.
+    wc.sendInputEvent({ type: 'mouseMove', x: Math.round(target.x * (wc.getZoomFactor() || 1)), y: Math.round(target.y * (wc.getZoomFactor() || 1)) })
+    await sleep(700)
+    const react = await run(wc, String.raw`(() => {
+      const el = [...document.querySelectorAll('[aria-label]')].filter((node) => /^react/i.test(node.getAttribute('aria-label')) && node.getBoundingClientRect().width).pop()
+      if (!el) return null
+      const r = (el.closest('button, [role="button"]') || el).getBoundingClientRect()
+      return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }
+    })()`).catch(() => null)
+    if (react) {
+      await click(wc, react)
+      await sleep(700)
+      const heart = await run(wc, String.raw`(() => {
+        const el = [...document.querySelectorAll('[role="dialog"] *, [role="menu"] *, [role="listbox"] *, div[style*="position"] *')]
+          .find((node) => node.children.length <= 1 && /^(❤️|❤)$/.test((node.innerText || node.getAttribute('aria-label') || '').trim()) && node.getBoundingClientRect().width)
+        if (!el) return null
+        const r = (el.closest('button, [role="button"]') || el).getBoundingClientRect()
+        return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }
+      })()`).catch(() => null)
+      if (heart) await click(wc, heart)
+      else await key(wc, 'Escape').catch(() => {})
+      done = await waitFor(async () => ({ done: hearted(await readThread(wc), target.text) }), 4000, 500)
+    }
+  }
+  if (!done?.done) throw fail('The heart did not show on their message. Check the chat in the Instagram panel.')
+  await sleep(1000)
+  const after = problemError(await pageProblem(wc))
+  if (after?.kind === 'blocked') throw after
+  return { ok: true }
+}
+
+function likeLast(wc, options) {
+  return untilSent((progress) => likeLastSteps(wc, options, progress))
+}
+
 // The chat as it is, read only (no action): who sent each message and when.
 async function chatState(wc, { username, transcribe = false }) {
   const messages = await openThread(wc, username)
@@ -1024,4 +1095,4 @@ async function probeChat(wc, { username, gifQuery }) {
   return result
 }
 
-module.exports = { openUrl, run, click, key, sleep, aborted, comment, dm, unfollow, pageProblem, readThread, threadAllows, lastVoiceWaveform, probeChat, chatState, replyRelaunch, inboxState, openInboxRow, ourStories }
+module.exports = { openUrl, run, click, key, sleep, aborted, comment, dm, unfollow, pageProblem, readThread, threadAllows, lastVoiceWaveform, probeChat, chatState, replyRelaunch, likeLast, inboxState, openInboxRow, ourStories }

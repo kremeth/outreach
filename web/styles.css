@@ -1542,14 +1542,43 @@ a.person.current {
 .side-card { border: 1px solid var(--line); border-radius: 16px; background: var(--surface); padding: 6px 0; }
 .side-empty, .side-foot { margin: 0; padding: 12px 22px; font-size: 13px; color: var(--muted); }
 .side-foot { padding-top: 8px; }
-.partner-row { display: flex; align-items: center; gap: 12px; padding: 10px 22px; border-bottom: 1px solid var(--line); }
+
+/* Ongoing partnerships: story -> a month -> reel, with a countdown */
+.partner-card { padding: 0; }
+.partner-row { display: grid; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--line); }
 .partner-row:last-child { border-bottom: 0; }
-.partner-name { font-weight: 600; color: inherit; text-decoration: none; }
+.partner-head { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.partner-head .dm-avatar { width: 34px; height: 34px; font-size: 12px; }
+.partner-name { font-size: 15px; font-weight: 600; color: inherit; text-decoration: none; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .partner-name:hover { text-decoration: underline; }
-.partner-date { font-size: 13px; color: var(--muted); }
-.partner-checks { margin-left: auto; display: flex; gap: 8px; }
-.partner-check { padding: 5px 12px; border: 1px solid var(--line-strong); border-radius: 99px; background: transparent; color: var(--muted); font: inherit; font-size: 13px; cursor: pointer; }
-.partner-check.on { border-color: var(--fill); background: #eef7d8; color: #2f5d0a; font-weight: 600; }
+.partner-pill { margin-left: auto; flex: none; padding: 4px 11px; border-radius: 99px; font-size: 12px; font-weight: 650; font-variant-numeric: tabular-nums; background: var(--chip); color: var(--ink-2); }
+.partner-pill.running { background: #eef7d8; color: #2f5d0a; }
+.partner-pill.soon { background: #fdf0d9; color: #8a5300; }
+.partner-pill.late { background: #f6e3df; color: #7a2e22; }
+.partner-pill.done { background: #2f5d0a; color: #fff; }
+.partner-pill.waiting { background: var(--sunken); color: var(--muted); }
+.partner-line { display: grid; grid-template-columns: auto minmax(60px, 1fr) auto; align-items: center; gap: 14px; padding-left: 46px; }
+.partner-step { display: flex; align-items: center; gap: 9px; }
+.partner-step.reel { text-align: right; }
+.partner-step-text { display: grid; gap: 1px; }
+.partner-step-label { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.partner-when { position: relative; font-size: 14px; font-weight: 600; color: var(--ink); cursor: pointer; border-bottom: 1px dashed transparent; }
+.partner-when:hover { border-bottom-color: var(--line-focus); }
+.partner-when.muted { font-weight: 500; color: var(--muted); cursor: default; }
+.partner-when.muted:hover { border-bottom-color: transparent; }
+.partner-date-input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; border: 0; padding: 0; }
+.partner-date-input::-webkit-calendar-picker-indicator { position: absolute; inset: 0; width: 100%; height: 100%; cursor: pointer; }
+.partner-tick { flex: none; display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 1.5px solid var(--line-strong); border-radius: 50%; background: var(--surface); color: #fff; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; transition: background-color 0.15s ease, border-color 0.15s ease; }
+.partner-tick:hover { border-color: var(--fill); }
+.partner-step.on .partner-tick { border-color: #6f9632; background: #6f9632; }
+.partner-track { position: relative; height: 6px; border-radius: 99px; background: var(--track); overflow: hidden; }
+.partner-fill { height: 100%; border-radius: 99px; background: linear-gradient(90deg, #b8e05a, #6f9632); transition: width 0.6s cubic-bezier(0.22, 1, 0.36, 1); }
+.partner-row.soon .partner-fill { background: linear-gradient(90deg, #f3cf7a, #d18f12); }
+.partner-row.late .partner-fill { background: linear-gradient(90deg, #e8a597, #b54a35); }
+.partner-row.done .partner-fill { background: #2f5d0a; }
+@media (max-width: 560px) {
+  .partner-line { padding-left: 0; gap: 10px; }
+}
 
 /* DMs to reply: compact rows that open into the chat and one reply box */
 .dm-card { padding: 0; }

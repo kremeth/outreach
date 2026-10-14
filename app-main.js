@@ -437,6 +437,12 @@ function startControl() {
           panelTask = ''
         }
       }
+      // Likes their latest message (from the DMs to reply list): a reply action, in the replies' allowance.
+      if (url.pathname === '/like-last') {
+        if (body.dryRun) return reply(200, await inPanel('answer', 'finding a message to like', () => null, (wc) => ig.likeLast(wc, body)))
+        const describe = (result, failure) => (result?.already ? null : { target: body.username || '', detail: 'like-message' })
+        return reply(200, await inPanel('answer', 'liking a message', describe, (wc) => ig.likeLast(wc, body)))
+      }
       if (url.pathname === '/reply-relaunch') {
         const describe = () => ({ target: body.username || '', detail: `reply${Number(body.step) === 2 ? 2 : 1}:${body.sheetRow || ''}` })
         return reply(200, await inPanel('dm', 'sending a reply relaunch', describe, (wc) => ig.replyRelaunch(wc, body)))

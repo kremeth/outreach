@@ -1061,6 +1061,29 @@ async function markUnreachableByUsername(name, inboxRow) {
   return true
 }
 
+// A partner mentioning nutricode.io in their story shows in the DM inbox ("Mentioned you in their story"):
+// their story is ticked and dated (the reel countdown starts). The inbox shows display names, matched to
+// the partner through the contact list's NAME (or the username itself). A story already dated keeps its
+// date (the month started with the first one).
+async function partnerStoryMentions() {
+  const inbox = (() => { try { return JSON.parse(fs.readFileSync(path.join(__dirname, 'data', 'dm-inbox.json'), 'utf8')) } catch { return { rows: [] } } })()
+  const mentions = (inbox.rows || []).filter((row) => /mentioned you in (their|a|his|her) story/i.test(row.preview || ''))
+  if (!mentions.length) return
+  const list = await partners.list()
+  const norm = (text) => String(text || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
+  for (const mention of mentions) {
+    const named = [...rows, ...yesRows].filter((row) => norm(row.name || row['NAME']) === norm(mention.name)).map((row) => data.usernameFrom(row.link || row['DIRECT LINK'])).filter(Boolean)
+    const partner = list.find((item) => named.includes(item.username) || norm(item.username) === norm(mention.name))
+    if (!partner || (partner.story && partner.storyDated)) continue
+    // When: the row's age ("3h", "2d", "1w") back from the inbox read.
+    const age = String(mention.age || '').match(/^(\d+)\s*([mhdw])/i)
+    const ms = age ? Number(age[1]) * { m: 60e3, h: 3600e3, d: 86400e3, w: 7 * 86400e3 }[age[2].toLowerCase()] : 0
+    const when = new Date((inbox.scannedAt || Date.now()) - ms)
+    await partners.mark(partner.username, 'story', true, `${when.toLocaleDateString('en-AU')} · mentioned us in their story`, when, { keepDate: true })
+    console.log(`partner @${partner.username}: story mention, ${when.toLocaleDateString('en-AU')}`)
+  }
+}
+
 async function checkPartnerPosts() {
   for (const partner of await partners.list()) {
     if (partner.post) continue
@@ -1129,9 +1152,12 @@ async function sendQueuedReplies() {
         await instagram.voiceReply({ username, clipName: `${item.voice} Message 2 part ${part}.m4a` })
         dmReply.update(item.id, { sentParts: part })
       }
+    } else if (item.kind === 'like') {
+      const result = await instagram.likeLast({ username })
+      if (result?.already) console.log(`dm like @${username}: already liked`)
     } else await instagram.sendDm({ username, message: item.text, detail: 'reply' })
     dmReply.update(item.id, { status: 'sent', sentAt: Date.now() })
-    dmChats.addOurs(item.name, item.kind === 'voice' ? { voice: true, text: `(${item.voice}'s Message 2 voicenotes, part 1 and part 2)` } : { text: item.text })
+    dmChats.addOurs(item.name, item.kind === 'voice' ? { voice: true, text: `(${item.voice}'s Message 2 voicenotes, part 1 and part 2)` } : item.kind === 'like' ? { text: '(liked their last message ❤️)' } : { text: item.text })
     panelReads.inbox = 0 // the list refreshes on the next pass: this one is answered now
   } catch (error) {
     if (['wait', 'limit'].includes(error.kind)) {
@@ -1212,6 +1238,7 @@ async function backgroundReads() {
       panelReads.inbox = now
       try {
         await dmInbox.scan(instagram, markUnreachableByUsername)
+        await partnerStoryMentions().catch((error) => { panelReads.errors.mentions = error.message })
         await refreshSheet(true).catch(() => {})
       } catch (error) {
         panelReads.errors.inbox = error.message
@@ -1225,9 +1252,9 @@ async function backgroundReads() {
         const { frames } = await instagram.ourStories({ account: OUR_ACCOUNT })
         const list = await partners.list()
         for (const partner of list) {
-          if (partner.story) continue
+          if (partner.story && partner.storyDated) continue
           const frame = frames.find((item) => item.names.includes(partner.username))
-          if (frame) await partners.mark(partner.username, 'story', true, `${new Date().toLocaleDateString('en-AU')} · reposted on our story`)
+          if (frame) await partners.mark(partner.username, 'story', true, `${new Date().toLocaleDateString('en-AU')} · reposted on our story`, new Date(), { keepDate: true })
         }
       } catch (error) {
         panelReads.errors.stories = error.message
@@ -1633,6 +1660,13 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, ok ? 200 : 404, { ok, partners: await partners.list() })
       return
     }
+    // A story or reel date set by hand (the countdown follows).
+    if (req.method === 'POST' && url.pathname === '/api/partners/date') {
+      const body = await readBody(req)
+      const ok = await partners.setDate(String(body.username || ''), body.kind === 'post' ? 'post' : 'story', String(body.date || ''))
+      sendJson(res, ok ? 200 : 400, { ok, partners: await partners.list() })
+      return
+    }
     // A proposed reply: the one drafted ahead when there is one (instant), otherwise drafted now from the
     // chat saved on this computer (a few seconds, Instagram untouched). Only a conversation never read
     // whose latest is hidden ("2 new messages", a voicenote) is opened in the panel first.
@@ -1728,7 +1762,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && url.pathname === '/api/dms/send') {
       const body = await readBody(req)
-      const kind = body.kind === 'voice' ? 'voice' : 'text'
+      const kind = body.kind === 'voice' ? 'voice' : body.kind === 'like' ? 'like' : 'text'
       const text = String(body.text || '').trim()
       const voice = /^(romain|mathieu)$/i.test(body.voice || '') ? body.voice[0].toUpperCase() + body.voice.slice(1).toLowerCase() : ''
       if (!body.name || (kind === 'text' && !text) || (kind === 'voice' && !voice)) {
