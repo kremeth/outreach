@@ -196,6 +196,7 @@ const dmDrafts = new Map()
 const dmMessages = new Map()
 const dmModes = new Map()
 const dmVoices = new Map()
+const dmNotes = new Map()
 let dmOpen = ''
 let dmShown = ''
 
@@ -520,7 +521,7 @@ function dmBody(item) {
       // The shimmer only shows if the answer takes more than a blink.
       const later = setTimeout(() => composer.classList.add('writing'), 120)
       try {
-        const result = await api('/api/dms/draft', { name: item.name, username: item.username, fresh }, 120000)
+        const result = await api('/api/dms/draft', { name: item.name, username: item.username, fresh, note: noteBox.value }, 120000)
         if (result.username && !item.username) item.username = result.username
         clearTimeout(later)
         composer.classList.remove('writing')
@@ -529,7 +530,7 @@ function dmBody(item) {
         composer.classList.remove('typing')
         dmDrafts.set(item.name, result.reply)
         draftedOnce = true
-        write.textContent = '✨ Write another'
+        write.textContent = noteBox.value.trim() ? '✨ Write with this info' : '✨ Write another'
       } catch (error) {
         clearTimeout(later)
         composer.classList.remove('writing', 'typing')
@@ -545,7 +546,28 @@ function dmBody(item) {
     bar.append(write, emojiButton(box, () => { dmDrafts.set(item.name, box.value); fit() }), el('span', 'dm-keys', '⌘↩ to send'), send)
     const field = el('div', 'dm-field')
     field.append(box, skeleton)
-    composer.append(field, bar)
+    // Extra information for the reply ("we don't connect to Coros"): used by the next one written, and
+    // Enter writes it straight away.
+    const noteRow = el('label', 'dm-context')
+    noteRow.append(el('span', 'dm-context-label', 'Add info'))
+    const noteBox = document.createElement('input')
+    noteBox.type = 'text'
+    noteBox.className = 'dm-context-input'
+    noteBox.placeholder = "e.g. we don't connect to Coros yet, so suggest a Garmin"
+    noteBox.value = dmNotes.get(item.name) || ''
+    noteBox.addEventListener('input', () => {
+      dmNotes.set(item.name, noteBox.value)
+      write.textContent = noteBox.value.trim() ? '✨ Write with this info' : draftedOnce ? '✨ Write another' : '✨ Write it for me'
+    })
+    noteBox.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault()
+        if (!write.disabled) write.click()
+      }
+    })
+    noteRow.append(noteBox)
+    if (noteBox.value.trim()) write.textContent = '✨ Write with this info'
+    composer.append(field, noteRow, bar)
     requestAnimationFrame(fit)
   } else {
     const voice = voiceKnown || dmVoices.get(item.name) || ''

@@ -1652,6 +1652,13 @@ a.person.current {
 @media (prefers-reduced-motion: reduce) {
   .dm-skeleton-line, .dm-thinking, .dm-composer.writing::before, .dm-composer.typing::before { animation: none; }
 }
+/* Extra information for the reply */
+.dm-context { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 10px; background: var(--sunken); cursor: text; }
+.dm-context:focus-within { background: #f1f6e4; box-shadow: inset 0 0 0 1px var(--fill); }
+.dm-context-label { flex: none; font-size: 12px; font-weight: 600; color: var(--accent-text); }
+.dm-context-input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--ink); font: inherit; font-size: 13px; }
+.dm-context-input::placeholder { color: var(--muted); }
+
 /* Emoji keyboard of the reply box */
 .dm-emoji { position: relative; display: inline-flex; }
 .dm-emoji-toggle { width: 32px; height: 32px; padding: 0; border: 1px solid var(--line-strong); border-radius: 50%; background: var(--surface); font-size: 16px; line-height: 1; cursor: pointer; filter: grayscale(0.4); transition: filter 0.15s ease, background-color 0.15s ease; }

@@ -1642,7 +1642,8 @@ const server = http.createServer(async (req, res) => {
       const listed = dmsForPage().toReply.find((entry) => entry.name === body.name)
       const item = listed || { name: String(body.name || ''), username: String(body.username || ''), preview: '', voice: '' }
       try {
-        const ready = !body.fresh && dmChats.draftFor(item, dmReply.MODEL)
+        const note = String(body.note || '').trim().slice(0, 500)
+        const ready = !body.fresh && !note && dmChats.draftFor(item, dmReply.MODEL)
         if (ready) {
           sendJson(res, 200, { reply: ready.reply, username: item.username, instant: true })
           return
@@ -1660,7 +1661,7 @@ const server = http.createServer(async (req, res) => {
           dmChats.remember({ name: item.name, username: chat.username, messages: chat.messages || [] })
           history = dmChats.history(item) || { messages: chat.messages || [], complete: true }
         }
-        const reply = await dmReply.draft({ name: item.name, messages: history.messages.slice(-20) })
+        const reply = await dmReply.draft({ name: item.name, messages: history.messages.slice(-20), note })
         if (listed) dmChats.rememberDraft(item, reply, history.complete ? 'chat' : 'list', dmReply.MODEL)
         sendJson(res, 200, { reply, username: item.username || '' })
       } catch (error) {
