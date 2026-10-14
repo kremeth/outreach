@@ -1553,3 +1553,6 @@ a.person.current {
 .dm-status.failed { color: var(--danger-ink); }
 .dm-buttons .small:not(.ghost) { padding: 6px 14px; border: 0; border-radius: 99px; background: var(--ink); color: var(--surface); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
 .dm-buttons .small:not(.ghost):disabled { opacity: 0.5; }
+.dm-messages { margin-top: 6px; display: grid; gap: 4px; }
+.dm-message { padding: 7px 11px; border-radius: 12px; background: var(--chip); font-size: 14px; color: var(--ink); white-space: pre-wrap; }
+.dm-row > .ghost.small { margin-top: 6px; }

@@ -161,7 +161,7 @@ const PROSPECT_TASK = {
 // decided on its own (Yes, No), what it left for the person, and what it has not checked yet. The four
 // add up; the bar fills with the share already done.
 function modelProgressBar(data) {
-  const { judging = 0, forYou = 0, auto = 0, modelYes = 0, modelNo = 0, checkedToday = 0 } = data.prospecting || {}
+  const { judging = 0, forYou = 0, auto = 0, modelYes = 0, modelNo = 0, checkedToday = 0, yesToday = 0, noToday = 0 } = data.prospecting || {}
   const done = modelYes + modelNo + auto + forYou
   const total = done + judging
   if (!total) return null
@@ -170,9 +170,10 @@ function modelProgressBar(data) {
   const fill = el('div', 'meter-fill')
   fill.style.width = `${Math.max(2, Math.round((done / total) * 100))}%`
   bar.append(fill)
-  const parts = [`${number(modelYes)} Yes`, `${number(modelNo + auto)} No`, `${number(forYou)} for you`]
-  if (judging) parts.push(`${number(judging)} still to check`)
-  box.append(bar, el('div', 'model-progress-text', `Model: ${parts.join(' · ')}`), el('div', 'model-progress-text', `${number(checkedToday)} checked today`))
+  const today = [`${number(checkedToday)} checked`, `${number(yesToday)} Yes`, `${number(noToday)} No`]
+  const now = [`${number(forYou)} for you`]
+  if (judging) now.push(`${number(judging)} still to check`)
+  box.append(bar, el('div', 'model-progress-text', `Today: ${today.join(' · ')}`), el('div', 'model-progress-text', `Now: ${now.join(' · ')}`))
   return box
 }
 
@@ -196,11 +197,34 @@ function renderDms() {
 // the whole chat, editable) to send as a text, or the "Message 2" voicenote of whoever sent the first one.
 // Sending waits in a queue while Launch is using Instagram.
 const dmDrafts = new Map()
+const dmMessages = new Map()
 function dmRow(item) {
   const row = el('div', `dm-row${item.unread ? ' unread' : ''}`)
   const top = el('div', 'dm-top')
   top.append(el('strong', '', item.name), el('span', 'dm-handle', item.username ? `@${item.username}` : ''), el('span', 'dm-age', item.unread ? 'Unread' : item.age || ''))
   row.append(top, el('div', 'dm-words', `${item.voice && /voice/i.test(item.preview) ? '🎙 ' : ''}${item.preview}`))
+  // "2 new messages" or a voicenote: the list does not show them; one click reads the chat (Instagram
+  // then marks it as read) and shows what they wrote.
+  const shown = dmMessages.get(item.name)
+  if (shown) {
+    const list = el('div', 'dm-messages')
+    for (const message of shown) list.append(el('div', 'dm-message', `${message.voice ? '🎙 ' : ''}${message.text}`))
+    row.append(list)
+  } else if (/^\d+ new messages?$/i.test(item.preview) || /voice message/i.test(item.preview)) {
+    const show = button(/voice/i.test(item.preview) ? 'Show the voicenote' : `Show the ${item.preview.match(/^\d+/)[0]} messages`, 'ghost small', async () => {
+      show.disabled = true
+      show.textContent = 'Reading the chat…'
+      try {
+        const result = await api('/api/dms/messages', { name: item.name, username: item.username }, 90000)
+        dmMessages.set(item.name, result.messages.length ? result.messages : [{ text: '(nothing new from them)' }])
+        row.replaceWith(dmRow(item))
+      } catch (error) {
+        show.disabled = false
+        show.textContent = error.message || 'Could not read the chat. Try again.'
+      }
+    })
+    row.append(show)
+  }
   const state = item.reply
   if (state && state.status !== 'failed') {
     const label = { queued: 'Reply queued: it goes out as soon as Instagram is free', sending: 'Sending the reply…', sent: 'Reply sent ✓' }[state.status] || state.status

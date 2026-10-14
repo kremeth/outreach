@@ -284,7 +284,7 @@ function modelProgress() {
     else judging++
   }
   const written = modelProspect.autoTotals()
-  return { forYou, auto, judging, modelYes: written.yes, modelNo: written.no, checkedToday: modelProspect.checkedToday() }
+  return { forYou, auto, judging, modelYes: written.yes, modelNo: written.no, yesToday: written.yesToday, noToday: written.noToday, checkedToday: modelProspect.checkedToday() }
 }
 
 // The next undecided profiles in queue order, for the wearable model to judge ahead of the person
@@ -1553,6 +1553,30 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 200, { reply, username: chat.username || '' })
       } catch (error) {
         sendJson(res, error.kind === 'busy' ? 409 : 502, { error: error.message || 'Could not draft a reply.' })
+      }
+      return
+    }
+    // Their newest messages in one conversation (for "2 new messages" and voicenotes): opens the chat,
+    // so Instagram marks it as read; only when asked.
+    if (req.method === 'POST' && url.pathname === '/api/dms/messages') {
+      const body = await readBody(req)
+      if (autopilot.status().current || replySending) {
+        sendJson(res, 409, { error: 'Instagram is busy with Launch right now. Try again in a minute.' })
+        return
+      }
+      try {
+        const chat = body.username
+          ? { ...(await instagram.chatState({ username: String(body.username), transcribe: true })), username: String(body.username) }
+          : await instagram.openInboxRow({ name: String(body.name || ''), transcribe: true })
+        const messages = chat.messages || []
+        const lastOurs = messages.map((message) => message.ours).lastIndexOf(true)
+        const theirs = messages.slice(lastOurs + 1).filter((message) => !message.ours).map((message) => ({
+          voice: message.voice,
+          text: message.voice ? String(message.text || '').replace(/\d+:\d{2}/, '').replace(/(view|hide) transcription/gi, '').trim() || '(voicenote, no transcription)' : message.text || '(photo, GIF or attachment)',
+        }))
+        sendJson(res, 200, { username: chat.username || '', messages: theirs })
+      } catch (error) {
+        sendJson(res, error.kind === 'busy' ? 409 : 502, { error: error.message || 'Could not read the chat.' })
       }
       return
     }
