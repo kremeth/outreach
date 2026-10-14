@@ -21,6 +21,7 @@ const replyRelaunch = require('./lib/reply-relaunch')
 const dmInbox = require('./lib/dm-inbox')
 const partners = require('./lib/partners')
 const dmReply = require('./lib/dm-reply')
+const dmChats = require('./lib/dm-chats')
 const followingScraper = require('./lib/following-scraper')
 const pickModel = require('./lib/pick-model')
 const apiUsage = require('./lib/api-usage')
@@ -1071,7 +1072,12 @@ function dmsForPage() {
     const matches = yesRows.filter((row) => norm(row.name) === norm(item.name))
     const row = matches.length === 1 ? matches[0] : null
     return { ...item, username: row ? data.usernameFrom(row.link) : '', voice: row && /^(romain|mathieu)$/i.test(row.voice || '') ? row.voice : '', reply: sent[item.name] || null }
-  })
+  }).map((item) => ({
+    ...item,
+    // A reply sent before this inbox read: they wrote again since, so it is a new conversation turn.
+    reply: item.reply && item.reply.status === 'sent' && item.reply.sentAt < summary.scannedAt ? null : item.reply,
+    draftReady: Boolean(dmChats.draftFor(item)),
+  }))
   // Answered from here: off the list straight away (queued or sending), and once sent until the inbox
   // is read again (then it is gone for good, unless they wrote again). A failed send stays, with why.
   const answered = (item) => item.reply && (['queued', 'sending'].includes(item.reply.status) || (item.reply.status === 'sent' && item.reply.sentAt >= summary.scannedAt))
@@ -1107,6 +1113,7 @@ async function sendQueuedReplies() {
       }
     } else await instagram.sendDm({ username, message: item.text, detail: 'reply' })
     dmReply.update(item.id, { status: 'sent', sentAt: Date.now() })
+    dmChats.addOurs(item.name, item.kind === 'voice' ? { voice: true, text: `(${item.voice}'s Message 2 voicenotes, part 1 and part 2)` } : { text: item.text })
     panelReads.inbox = 0 // the list refreshes on the next pass: this one is answered now
   } catch (error) {
     if (['busy', 'wait', 'hidden', 'app', 'timeout'].includes(error.kind)) dmReply.update(item.id, { status: 'queued' })
@@ -1116,7 +1123,55 @@ async function sendQueuedReplies() {
   }
 }
 
+// Replies drafted ahead for every conversation waiting on us (from the saved chat, or our first voicenote
+// and their message from the inbox list), so "Write it for me" is instant. About $0.002 each, once per
+// new message from them.
+let predrafting = false
+async function predraftReplies() {
+  if (predrafting) return
+  predrafting = true
+  try {
+    for (const item of dmsForPage().toReply) {
+      if (dmChats.draftFor(item) || (item.reply && item.reply.status !== 'failed')) continue
+      const history = dmChats.history(item)
+      if (!history) continue
+      try {
+        const reply = await dmReply.draft({ name: item.name, messages: history.messages.slice(-20) })
+        dmChats.rememberDraft(item, reply, history.complete ? 'chat' : 'list')
+      } catch (error) {
+        console.error('dm predraft', item.name, error.message)
+        break
+      }
+    }
+  } finally {
+    predrafting = false
+  }
+}
+
+// In a quiet moment, the full chat of conversations already read on Instagram (opening them changes
+// nothing there), so drafts see the whole conversation. Unread ones are never opened. At most 3 a pass.
+async function readChatsAhead() {
+  let read = 0
+  for (const item of dmsForPage().toReply) {
+    if (read >= 3 || !panelFree()) break
+    if (item.unread || !item.username) continue
+    const saved = dmChats.chatOf(item.name, item.username)
+    const latest = String(item.preview || '').trim()
+    if (saved && (dmChats.HIDDEN_PREVIEW.test(latest) || saved.readAt > (dmInbox.summary().scannedAt || 0) || saved.messages.some((message) => !message.ours && message.text.trim() === latest))) continue
+    try {
+      const chat = await instagram.chatState({ username: item.username, transcribe: true })
+      dmChats.remember({ name: item.name, username: item.username, messages: chat.messages || [] })
+      read++
+    } catch (error) {
+      panelReads.errors.chats = error.message
+      break
+    }
+  }
+  predraftReplies().catch(() => {})
+}
+
 async function backgroundReads() {
+  predraftReplies().catch(() => {})
   if (panelReads.busy) return
   panelReads.busy = true
   try {
@@ -1137,6 +1192,7 @@ async function backgroundReads() {
         panelReads.errors.inbox = error.message
       }
     }
+    await readChatsAhead()
     if (!panelFree()) return
     if (now - panelReads.stories > 4 * 60 * 60 * 1000) {
       panelReads.stories = now
@@ -1186,6 +1242,7 @@ async function replyStep(item) {
   let chat
   try {
     chat = await instagram.chatState({ username })
+    dmChats.remember({ username, messages: chat.messages })
   } catch (error) {
     // Instagram busy, paused, logged out, warning...: try again later as usual. Anything else about
     // this chat (gone, unreadable): looked at again tomorrow, not every few minutes.
@@ -1551,21 +1608,36 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, ok ? 200 : 404, { ok, partners: await partners.list() })
       return
     }
-    // A proposed reply: opens that conversation (it was going to be answered anyway), reads it (their
-    // voicenotes transcribed by Instagram) and drafts the next message from the whole chat.
+    // A proposed reply: the one drafted ahead when there is one (instant), otherwise drafted now from the
+    // chat saved on this computer (a few seconds, Instagram untouched). Only a conversation never read
+    // whose latest is hidden ("2 new messages", a voicenote) is opened in the panel first.
+    // fresh: another version, drafted now.
     if (req.method === 'POST' && url.pathname === '/api/dms/draft') {
       const body = await readBody(req)
-      if (autopilot.status().current || replySending) {
-        sendJson(res, 409, { error: 'Instagram is busy with Launch right now. Try again in a minute.' })
-        return
-      }
+      const listed = dmsForPage().toReply.find((entry) => entry.name === body.name)
+      const item = listed || { name: String(body.name || ''), username: String(body.username || ''), preview: '', voice: '' }
       try {
-        // By username when it is known (straight to the chat), otherwise by the name in the inbox list.
-        const chat = body.username
-          ? { ...(await instagram.chatState({ username: String(body.username), transcribe: true })), username: String(body.username) }
-          : await instagram.openInboxRow({ name: String(body.name || ''), transcribe: true })
-        const reply = await dmReply.draft({ name: body.name, messages: (chat.messages || []).slice(-20) })
-        sendJson(res, 200, { reply, username: chat.username || '' })
+        const ready = !body.fresh && dmChats.draftFor(item)
+        if (ready) {
+          sendJson(res, 200, { reply: ready.reply, username: item.username, instant: true })
+          return
+        }
+        let history = dmChats.history(item)
+        if (!history) {
+          if (autopilot.status().current || replySending) {
+            sendJson(res, 409, { error: 'Instagram is busy with Launch right now. Try again in a minute.' })
+            return
+          }
+          const chat = item.username
+            ? { ...(await instagram.chatState({ username: item.username, transcribe: true })), username: item.username }
+            : await instagram.openInboxRow({ name: item.name, transcribe: true })
+          if (chat.username && !item.username) item.username = chat.username
+          dmChats.remember({ name: item.name, username: chat.username, messages: chat.messages || [] })
+          history = dmChats.history(item) || { messages: chat.messages || [], complete: true }
+        }
+        const reply = await dmReply.draft({ name: item.name, messages: history.messages.slice(-20) })
+        if (listed) dmChats.rememberDraft(item, reply, history.complete ? 'chat' : 'list')
+        sendJson(res, 200, { reply, username: item.username || '' })
       } catch (error) {
         sendJson(res, error.kind === 'busy' ? 409 : 502, { error: error.message || 'Could not draft a reply.' })
       }
@@ -1584,6 +1656,7 @@ const server = http.createServer(async (req, res) => {
           ? { ...(await instagram.chatState({ username: String(body.username), transcribe: true })), username: String(body.username) }
           : await instagram.openInboxRow({ name: String(body.name || ''), transcribe: true })
         const messages = chat.messages || []
+        dmChats.remember({ name: String(body.name || ''), username: chat.username || '', messages })
         const lastOurs = messages.map((message) => message.ours).lastIndexOf(true)
         const theirs = messages.slice(lastOurs + 1).filter((message) => !message.ours).map((message) => ({
           voice: message.voice,

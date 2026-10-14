@@ -1607,6 +1607,34 @@ a.person.current {
 .dm-done.failed { color: var(--danger-ink); }
 .dm-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; }
 .dm-foot .dm-hint { margin-right: auto; }
+/* Write it for me: shimmering lines and a slow glow while it writes, then the words type in */
+.dm-composer { position: relative; isolation: isolate; }
+.dm-field { position: relative; }
+.dm-skeleton { position: absolute; inset: 0; display: none; flex-direction: column; gap: 10px; padding: 8px 4px; pointer-events: none; }
+.dm-skeleton-line { display: block; height: 11px; border-radius: 99px; background: linear-gradient(90deg, #eef1e6 0%, #dfeec0 40%, #eef1e6 80%); background-size: 250% 100%; animation: dm-shimmer 1.6s ease-in-out infinite; }
+.dm-skeleton-line:nth-child(2) { animation-delay: 0.12s; }
+.dm-skeleton-line:nth-child(3) { animation-delay: 0.24s; }
+.dm-skeleton-line:nth-child(4) { animation-delay: 0.36s; }
+.dm-thinking { margin-top: 2px; font-size: 12px; font-weight: 600; color: var(--accent-text); animation: dm-breathe 1.6s ease-in-out infinite; }
+.dm-composer.writing .dm-skeleton { display: flex; }
+.dm-composer.writing .dm-box, .dm-composer.writing .dm-box::placeholder { color: transparent; caret-color: transparent; }
+.dm-composer.writing::before, .dm-composer.typing::before {
+  content: ''; position: absolute; inset: -3px; z-index: -1; border-radius: 17px; filter: saturate(1.2);
+  background: conic-gradient(from var(--dm-angle, 0deg), #d6ff4a, #9fcc1a, #e9f7c4, #b8e05a, #d6ff4a);
+  animation: dm-spin 2.4s linear infinite; opacity: 0.85;
+}
+.dm-composer.writing::after, .dm-composer.typing::after { content: ''; position: absolute; inset: 0; z-index: -1; border-radius: 14px; background: var(--surface); box-shadow: 0 0 18px rgba(159, 204, 26, 0.35); }
+.dm-composer.writing, .dm-composer.typing { border-color: transparent; }
+.dm-composer.typing .dm-box { caret-color: var(--fill); }
+.dm-magic:not(:disabled):hover { border-color: var(--fill); background: #f4fbe3; }
+.dm-composer.writing .dm-magic { border-color: var(--fill); background: #f4fbe3; color: var(--accent-text); }
+@property --dm-angle { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
+@keyframes dm-spin { to { --dm-angle: 360deg; } }
+@keyframes dm-shimmer { 0% { background-position: 100% 0; } 100% { background-position: -150% 0; } }
+@keyframes dm-breathe { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .dm-skeleton-line, .dm-thinking, .dm-composer.writing::before, .dm-composer.typing::before { animation: none; }
+}
 @media (max-width: 640px) {
   .dm-body { padding-left: 20px; }
   .dm-keys { display: none; }

@@ -249,6 +249,29 @@ function dmAnswered(item, kind) {
   renderDms(true)
 }
 
+// Types a reply into the box over about `ms` (whole words, so it reads naturally), with a caret.
+function typeInto(box, text, ms) {
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  if (reduce) {
+    box.value = text
+    return Promise.resolve()
+  }
+  const tokens = text.match(/\S+\s*|\s+/g) || [text]
+  const per = Math.max(8, ms / tokens.length)
+  box.value = ''
+  return new Promise((resolve) => {
+    let at = 0
+    const tick = () => {
+      box.value += tokens[at++]
+      box.style.height = 'auto'
+      box.style.height = `${Math.min(320, box.scrollHeight + 2)}px`
+      if (at < tokens.length) setTimeout(tick, per)
+      else resolve()
+    }
+    tick()
+  })
+}
+
 function initials(name) {
   const words = String(name).replace(/[^\p{L}\p{N} ]/gu, ' ').trim().split(/\s+/).filter(Boolean)
   if (words.length > 2 && words.every((word) => word.length === 1)) return words.slice(0, 2).join('').toUpperCase() // "L A U R I S S A"
@@ -383,30 +406,55 @@ function dmBody(item) {
     }
     box.addEventListener('input', () => { dmDrafts.set(item.name, box.value); fit() })
     box.addEventListener('keydown', (event) => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) send.click() })
-    const write = button(box.value ? '✨ Write another' : '✨ Write it for me', 'dm-ghost', async () => {
+    // Writing: shimmering lines and a slow glow round the box while it thinks, then the reply types
+    // itself in. A reply drafted ahead appears at once (typed in quickly).
+    const skeleton = el('div', 'dm-skeleton')
+    for (const width of [92, 78, 86, 54]) {
+      const line = el('span', 'dm-skeleton-line')
+      line.style.width = `${width}%`
+      skeleton.append(line)
+    }
+    const thinking = el('div', 'dm-thinking', '')
+    skeleton.append(thinking)
+    let draftedOnce = Boolean(box.value)
+    const write = button(draftedOnce ? '✨ Write another' : '✨ Write it for me', 'dm-ghost dm-magic', async () => {
       write.disabled = true
-      box.disabled = true
-      const before = write.textContent
-      write.textContent = 'Reading the chat and writing…'
+      send.disabled = true
       note.textContent = ''
+      const fresh = draftedOnce
+      const steps = ['Reading the chat…', 'Remembering how you write…', 'Finding the right words…', 'Polishing…']
+      let step = 0
+      thinking.textContent = steps[0]
+      const ticker = setInterval(() => { step = Math.min(step + 1, steps.length - 1); thinking.textContent = steps[step] }, 1600)
+      // The shimmer only shows if the answer takes more than a blink.
+      const later = setTimeout(() => composer.classList.add('writing'), 120)
       try {
-        const result = await api('/api/dms/draft', { name: item.name, username: item.username }, 90000)
-        box.value = result.reply
-        dmDrafts.set(item.name, result.reply)
+        const result = await api('/api/dms/draft', { name: item.name, username: item.username, fresh }, 120000)
         if (result.username && !item.username) item.username = result.username
+        clearTimeout(later)
+        composer.classList.remove('writing')
+        composer.classList.add('typing')
+        await typeInto(box, result.reply, result.instant ? 500 : 900)
+        composer.classList.remove('typing')
+        dmDrafts.set(item.name, result.reply)
+        draftedOnce = true
         write.textContent = '✨ Write another'
       } catch (error) {
+        clearTimeout(later)
+        composer.classList.remove('writing', 'typing')
         note.textContent = error.message || 'Could not write a reply.'
-        write.textContent = before
       }
+      clearInterval(ticker)
       write.disabled = false
-      box.disabled = false
       fit()
       box.focus()
+      box.setSelectionRange(box.value.length, box.value.length)
     })
     const bar = el('div', 'dm-bar')
     bar.append(write, el('span', 'dm-keys', '⌘↩ to send'), send)
-    composer.append(box, bar)
+    const field = el('div', 'dm-field')
+    field.append(box, skeleton)
+    composer.append(field, bar)
     requestAnimationFrame(fit)
   } else {
     const voice = voiceKnown || dmVoices.get(item.name) || ''
