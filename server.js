@@ -21,6 +21,7 @@ const replyRelaunch = require('./lib/reply-relaunch')
 const dmInbox = require('./lib/dm-inbox')
 const partners = require('./lib/partners')
 const dmReply = require('./lib/dm-reply')
+const followingScraper = require('./lib/following-scraper')
 const pickModel = require('./lib/pick-model')
 const apiUsage = require('./lib/api-usage')
 const modelProspect = require('./lib/model-prospect')
@@ -829,6 +830,7 @@ async function todo() {
   return {
     guard,
     dms: dmsForPage(),
+    scraper: followingScraper.summary(),
     partners: await partners.list().catch(() => []),
     prospecting: { remaining: counts().remaining, ...modelProgress(), total: rows.length, yesToday: counts().yesToday, yesTarget: sendQueue.DAILY_LIMIT },
     voice: { toSend: voice.length, sentToday: Math.max(sendQueue.sentToday(), guard.app ? guard.kinds.voice.today : 0), limit: sendQueue.DAILY_LIMIT },
@@ -1602,6 +1604,16 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, { ok: true, item })
       return
     }
+    if (req.method === 'POST' && url.pathname === '/api/scraper/login') {
+      await instagram.scraperOpen().catch(() => {})
+      sendJson(res, 200, { ok: true })
+      return
+    }
+    if (req.method === 'POST' && url.pathname === '/api/scraper/start') {
+      followingScraper.run(instagram, (text) => console.log(text)).catch((error) => console.error('scraper', error.message))
+      sendJson(res, 200, { ok: true })
+      return
+    }
     if (req.method === 'POST' && url.pathname === '/api/dms/scan') {
       panelReads.inbox = 0
       backgroundReads().catch((error) => console.error('background reads', error.message))
@@ -1769,6 +1781,8 @@ async function boot() {
   setInterval(autoComment, 90 * 1000).unref()
   setInterval(() => backgroundReads().catch((error) => console.error('background reads', error.message)), 5 * 60 * 1000).unref()
   setInterval(() => sendQueuedReplies().catch((error) => console.error('dm replies', error.message)), 20 * 1000).unref()
+  // The following scraper (scraper account, lib/following-scraper.js): runs on its own between 8:00 and 21:00.
+  setInterval(() => followingScraper.run(instagram, (text) => console.log(text)).catch((error) => console.error('scraper', error.message)), 10 * 60 * 1000).unref()
   // Keeps the model's list ahead of the person (it moves on as profiles get decided).
   setInterval(() => { if (rows.length) writeUpcoming() }, 5 * 60 * 1000).unref()
   apiUsage.startSync()

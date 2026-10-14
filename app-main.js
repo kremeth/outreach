@@ -223,6 +223,54 @@ function createWindow() {
   panel.webContents.loadURL('https://www.instagram.com/').catch(() => {})
 }
 
+// The scraper account (a second Instagram account, logged in by the person in its own window, its own
+// session: never the outreach account). Its window opens on request; the scraper reads Instagram's own
+// web API from inside that logged-in page (same requests the site makes), one at a time.
+const SCRAPER_PARTITION = 'persist:scraper'
+let scraperWin = null
+let scraperView = null
+
+function openScraper(show = true) {
+  if (scraperWin && !scraperWin.isDestroyed()) {
+    if (show) scraperWin.show()
+    return scraperView.webContents
+  }
+  const scraperSession = session.fromPartition(SCRAPER_PARTITION)
+  scraperSession.setUserAgent(CHROME_UA)
+  scraperWin = new BaseWindow({ width: 900, height: 900, title: 'Outreach · scraper account', show })
+  scraperView = new WebContentsView({ webPreferences: { partition: SCRAPER_PARTITION, contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false } })
+  scraperWin.contentView.addChildView(scraperView)
+  const fit = () => {
+    const [width, height] = scraperWin.getContentSize()
+    scraperView.setBounds({ x: 0, y: 0, width, height })
+  }
+  scraperWin.on('resize', fit)
+  fit()
+  scraperWin.on('close', (event) => {
+    // Closing only hides it: the scraper keeps its page.
+    event.preventDefault()
+    scraperWin.hide()
+  })
+  scraperView.webContents.loadURL('https://www.instagram.com/').catch(() => {})
+  return scraperView.webContents
+}
+
+async function scraperAccount() {
+  const cookies = await session.fromPartition(SCRAPER_PARTITION).cookies.get({ url: 'https://www.instagram.com', name: 'ds_user_id' })
+  return cookies[0]?.value || ''
+}
+
+// One GET to Instagram's web API from inside the scraper's logged-in page. Returns { status, json, text }.
+async function scraperFetch(url) {
+  const wc = openScraper(false)
+  if (!/^https:\/\/www\.instagram\.com\//.test(wc.getURL())) {
+    await wc.loadURL('https://www.instagram.com/')
+  }
+  return wc.executeJavaScript(`fetch(${JSON.stringify(url)}, { credentials: 'include', headers: { 'x-ig-app-id': '936619743392459', 'x-requested-with': 'XMLHttpRequest' } })
+    .then(async (response) => { const text = await response.text(); let json = null; try { json = JSON.parse(text) } catch {} return { status: response.status, json, text: json ? '' : text.slice(0, 300), url: response.url } })
+    .catch((error) => ({ status: 0, error: String(error) }))`, true)
+}
+
 // The logged-in Instagram account (its numeric id), so limits are counted per account across computers.
 async function accountId() {
   const cookies = await session.fromPartition('persist:instagram').cookies.get({ url: 'https://www.instagram.com', name: 'ds_user_id' })
@@ -396,6 +444,24 @@ function startControl() {
       if (url.pathname === '/reply-relaunch') {
         const describe = () => ({ target: body.username || '', detail: `reply${Number(body.step) === 2 ? 2 : 1}:${body.sheetRow || ''}` })
         return reply(200, await inPanel('dm', 'sending a reply relaunch', describe, (wc) => ig.replyRelaunch(wc, body)))
+      }
+      // The scraper account: open its window (to log in), whether it is logged in, and one API read.
+      if (url.pathname === '/scraper/open') {
+        openScraper(true)
+        return reply(200, { ok: true })
+      }
+      if (url.pathname === '/scraper/status') {
+        const id = await scraperAccount()
+        const outreach = await accountId()
+        return reply(200, { loggedIn: Boolean(id), id, sameAsOutreach: Boolean(id && id === outreach) })
+      }
+      if (url.pathname === '/scraper/fetch') {
+        // Reads only, and only Instagram's own web API.
+        if (!/^https:\/\/www\.instagram\.com\/api\/v1\/(users\/web_profile_info\/|friendships\/\d+\/following\/)/.test(String(body.url || ''))) return reply(400, { error: 'Not an allowed read.' })
+        const id = await scraperAccount()
+        if (!id) return reply(409, { error: 'The scraper account is not logged in.', kind: 'login' })
+        if (id === (await accountId())) return reply(409, { error: 'The scraper window is logged into the outreach account. Log into the scraper account there instead.', kind: 'login' })
+        return reply(200, await scraperFetch(String(body.url || '')))
       }
       // Read-only look at a chat (no action, nothing sent), to build on.
       if (url.pathname === '/probe-chat') {

@@ -10,6 +10,7 @@ const tasksEl = document.getElementById('tasks')
 const prospectCard = document.getElementById('prospect-card')
 const dmsEl = document.getElementById('dms')
 const partnersEl = document.getElementById('partners')
+const scraperEl = document.getElementById('scraper')
 const safetyEl = document.getElementById('safety')
 const launchEl = document.getElementById('launch')
 
@@ -312,7 +313,36 @@ function renderPartners() {
   partnersEl.append(card)
 }
 
+// Finding new creators: the scraper account reads the following lists of the creators on the list;
+// today's progress, what was added where, and the creator in progress.
+function renderScraper() {
+  scraperEl.replaceChildren()
+  const scraper = todoData?.scraper
+  if (!scraper) return
+  const card = el('div', 'side-card scraper-card')
+  const t = scraper.today || {}
+  const head = el('div', 'scraper-head')
+  const label = { running: 'Running', 'needs login': 'Needs the scraper account', 'done for today': 'Done for today', stopped: 'Stopped for today', idle: 'Waiting' }[scraper.status] || scraper.status
+  head.append(el('strong', '', `${number(t.scraped || 0)} / ${number(scraper.daily)} scraped today`), el('span', `scraper-state ${String(scraper.status).replace(/\s/g, '-')}`, label))
+  const bar = el('div', 'meter')
+  const fill = el('div', 'meter-fill')
+  fill.style.width = `${Math.max(1, Math.min(100, Math.round(((t.scraped || 0) / scraper.daily) * 100)))}%`
+  bar.append(fill)
+  const lines = el('div', 'scraper-lines')
+  lines.append(el('div', '', `${number(t.contacts || 0)} added to 1. Influencer Contact List · ${number(t.reach || 0)} added to Customer Reach Out · ${number(t.discarded || 0)} not in Australia`))
+  if (scraper.current) lines.append(el('div', '', `Now: @${scraper.current.username}'s following, ${number(scraper.current.done)} of ${number(scraper.current.following)}`))
+  if (t.creators) lines.append(el('div', '', `${number(t.creators)} creators finished today (added to Scraped)`))
+  if (scraper.message) lines.append(el('div', 'scraper-message', scraper.message))
+  const buttons = el('div', 'dm-buttons')
+  if (scraper.status === 'needs login') buttons.append(button('Open the scraper window to log in', 'small', () => api('/api/scraper/login', {}).catch(() => {})))
+  else buttons.append(button('Scraper window', 'ghost small', () => api('/api/scraper/login', {}).catch(() => {})))
+  if (scraper.status !== 'running') buttons.append(button('Start now', 'ghost small', async () => { await api('/api/scraper/start', {}).catch(() => {}); setTimeout(() => loadTodo(false), 3000) }))
+  card.append(head, bar, lines, buttons)
+  scraperEl.append(card)
+}
+
 function renderTasks() {
+  renderScraper()
   renderDms()
   renderPartners()
   tasksEl.replaceChildren()

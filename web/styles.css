@@ -1556,3 +1556,13 @@ a.person.current {
 .dm-messages { margin-top: 6px; display: grid; gap: 4px; }
 .dm-message { padding: 7px 11px; border-radius: 12px; background: var(--chip); font-size: 14px; color: var(--ink); white-space: pre-wrap; }
 .dm-row > .ghost.small { margin-top: 6px; }
+
+/* Finding new creators */
+.scraper-card { padding: 16px 22px; display: grid; gap: 10px; }
+.scraper-head { display: flex; align-items: baseline; gap: 10px; }
+.scraper-head strong { font-size: 17px; }
+.scraper-state { margin-left: auto; font-size: 13px; color: var(--muted); }
+.scraper-state.running { color: #2f5d0a; font-weight: 600; }
+.scraper-state.stopped-for-today, .scraper-state.stopped, .scraper-state.needs-login { color: var(--danger-ink); font-weight: 600; }
+.scraper-lines { display: grid; gap: 3px; font-size: 13px; color: var(--muted); }
+.scraper-message { color: var(--ink-2); }
