@@ -864,7 +864,7 @@ async function pollLaunch() {
     }
     if (todoData) {
       todoData.guard = autopilot.guard
-      todoData.prospecting = { ...todoData.prospecting, remaining: latest.remaining, yesToday: latest.yesToday, yesTarget: latest.yesTarget }
+      todoData.prospecting = { ...todoData.prospecting, ...(latest.model || {}), remaining: latest.remaining, yesToday: latest.yesToday, yesTarget: latest.yesTarget }
     }
     if (route === 'home') {
       renderLaunch()

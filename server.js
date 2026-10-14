@@ -1780,7 +1780,8 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'GET' && url.pathname === '/api/counts') {
       await log.refresh(4000).catch((error) => console.error(error))
-      sendJson(res, 200, counts())
+      // With the model's numbers, so the Prospecting card follows the day (today's counts reset at midnight).
+      sendJson(res, 200, { ...counts(), model: modelProgress() })
       return
     }
     if (req.method === 'GET' && url.pathname === '/api/autopilot/running') {
