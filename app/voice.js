@@ -3,6 +3,8 @@
 // wait for it to end, press Send, mark Pending in the sheet.
 const fs = require('fs')
 const path = require('path')
+// Instagram on desktop ends a voicenote recording at 1 minute.
+const MAX_CLIP_SECONDS = 59
 const queue = require('../lib/send-queue')
 const guard = require('../lib/ig-guard')
 const log = require('../lib/shared-log')
@@ -227,6 +229,7 @@ async function sendTo(item, account) {
   await ensureHook()
   const loaded = await ig.run(wc, `window.__loadVoice(${JSON.stringify(audio)})`)
   clipSeconds = loaded?.duration || 30
+  if (clipSeconds > MAX_CLIP_SECONDS) throw fail(`${path.basename(item.clip)} is ${Math.round(clipSeconds)} s; Instagram on desktop stops voicenotes at 1 minute, so it was not sent. Cut it under ${MAX_CLIP_SECONDS} s.`, 'notsent')
   await ig.sleep(SETTLE_BEFORE_SEND_MS)
 
   // Instagram draws the waveform from the live audio only while the page is visible; a hidden page
@@ -274,6 +277,8 @@ async function replyTo({ username, clipName }, account) {
   await ensureHook()
   const loaded = await ig.run(wc, `window.__loadVoice(${JSON.stringify(audio)})`)
   clipSeconds = loaded?.duration || 30
+  // Instagram on desktop stops recording at 1 minute: a longer clip would go out cut off.
+  if (clipSeconds > MAX_CLIP_SECONDS) throw fail(`${path.basename(clip)} is ${Math.round(clipSeconds)} s; Instagram on desktop stops voicenotes at 1 minute, so it was not sent. Cut it under ${MAX_CLIP_SECONDS} s.`, 'notsent')
   await ig.sleep(SETTLE_BEFORE_SEND_MS)
   if ((await ig.run(wc, 'document.visibilityState')) !== 'visible') await ensureLive()
   if ((await ig.run(wc, 'document.visibilityState')) !== 'visible') throw fail('macOS paused the Instagram panel, so the voicenote was not recorded. It will try again shortly.', 'hidden')

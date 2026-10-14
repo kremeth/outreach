@@ -822,6 +822,26 @@ async function transcribeTheirs(wc, messages) {
       if (button) button.click()
     }
   })()`)
+  await sleep(1500)
+  // The first time, Instagram asks for consent to transcribe ("Turn audio messages into text"): the
+  // person said yes to it (14 Oct), so Continue is pressed once, then the transcriptions load.
+  const consent = await run(wc, String.raw`(() => {
+    const dialog = [...document.querySelectorAll('[role="dialog"]')].find((el) => /turn audio messages into text/i.test(el.innerText || ''))
+    const go = dialog && [...dialog.querySelectorAll('button, [role="button"]')].find((el) => /^continue$/i.test((el.innerText || '').trim()))
+    if (!go) return null
+    const r = go.getBoundingClientRect()
+    return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }
+  })()`).catch(() => null)
+  if (consent) {
+    await click(wc, consent)
+    await sleep(1500)
+    // Ask again now that it is allowed.
+    await run(wc, String.raw`(() => {
+      for (const el of document.querySelectorAll('[role="main"] [role="article"] div, [role="main"] [role="article"] span')) {
+        if (el.children.length === 0 && /^view transcription$/i.test((el.innerText || '').trim())) el.click()
+      }
+    })()`)
+  }
   await sleep(2500)
   return readThread(wc)
 }
