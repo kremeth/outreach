@@ -79,15 +79,32 @@ async function following(wc, { username, max = 100000 }) {
   await ig.openUrl(wc, `https://www.instagram.com/${encodeURIComponent(username)}/`)
   await sleep(between(1500, 2500))
   await checkPage(wc)
-  const link = await ig.run(wc, String.raw`(() => {
-    const el = document.querySelector('header a[href$="/following/"]')
-    if (!el) return null
-    const r = el.getBoundingClientRect()
-    return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }
-  })()`)
+  // "992 following" in the header: a link on some layouts, a clickable span on others. Found by its
+  // text and clicked where a person would click.
+  let link = null
+  for (let tries = 0; tries < 10 && !link; tries++) {
+    link = await ig.run(wc, String.raw`(() => {
+      const header = document.querySelector('header') || document.body
+      const el = header.querySelector('a[href$="/following/"]') || [...header.querySelectorAll('a, span, div, li, button')]
+        .filter((node) => /^[\d.,]+\s*[kKmM]?\s*following$/i.test((node.innerText || '').trim()))
+        .sort((a, b) => a.innerText.length - b.innerText.length || a.querySelectorAll('*').length - b.querySelectorAll('*').length)[0]
+      if (!el) return null
+      const target = el.closest('a, [role="link"], [role="button"]') || el
+      const r = target.getBoundingClientRect()
+      return r.width ? { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), tag: target.tagName } : null
+    })()`).catch(() => null)
+    if (!link) await sleep(500)
+  }
   if (!link) throw stop(`@${username}'s following list could not be opened (private or not shown).`, 'unreadable')
   await ig.click(wc, link)
-  await sleep(between(1500, 2500))
+  // The list opens as a dialog.
+  let opened = false
+  for (let tries = 0; tries < 16 && !opened; tries++) {
+    await sleep(500)
+    opened = await ig.run(wc, `Boolean([...document.querySelectorAll('[role="dialog"]')].find((d) => /following/i.test(d.innerText || '')))`).catch(() => false)
+  }
+  if (!opened) throw stop(`@${username}'s following list did not open.`, 'unreadable')
+  await sleep(between(800, 1500))
   const seen = new Set()
   const order = []
   let still = 0
