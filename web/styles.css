@@ -1542,6 +1542,7 @@ a.person.current {
 .dm-head strong { font-size: 15px; }
 .dm-head-note { font-size: 13px; color: var(--muted); }
 .dm-head .dm-link { margin-left: auto; }
+.dm-out-line { margin: 0; padding: 9px 20px; border-bottom: 1px solid var(--line); background: #f3f7fd; font-size: 13px; color: #1d4ea8; }
 .dm-outgoing { padding: 2px 9px; border-radius: 99px; background: #e3edfd; color: #1d4ea8; font-size: 12px; font-weight: 600; }
 .dm-link { padding: 0; border: 0; background: none; color: var(--accent-text); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; text-decoration: none; }
 .dm-link:hover { text-decoration: underline; }

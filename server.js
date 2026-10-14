@@ -1094,7 +1094,7 @@ function dmsForPage() {
   // Answered from here: off the list straight away (queued or sending), and once sent until the inbox
   // is read again (then it is gone for good, unless they wrote again). A failed send stays, with why.
   const answered = (item) => item.reply && (['queued', 'sending'].includes(item.reply.status) || (item.reply.status === 'sent' && item.reply.sentAt >= summary.scannedAt))
-  summary.outgoing = summary.toReply.filter((item) => item.reply && ['queued', 'sending'].includes(item.reply.status)).map((item) => ({ name: item.name, kind: item.reply.kind, status: item.reply.status }))
+  summary.outgoing = dmReply.outgoing()
   summary.toReply = summary.toReply.filter((item) => !answered(item))
   return summary
 }
@@ -1106,6 +1106,9 @@ async function sendQueuedReplies() {
   if (replySending) return
   const pilot = autopilot.status()
   if (pilot.current) return
+  // Same hours as Launch.
+  const hour = new Date().getHours()
+  if (hour < 8 || hour >= 21) return
   const item = dmReply.next()
   if (!item) return
   replySending = true
@@ -1129,7 +1132,14 @@ async function sendQueuedReplies() {
     dmChats.addOurs(item.name, item.kind === 'voice' ? { voice: true, text: `(${item.voice}'s Message 2 voicenotes, part 1 and part 2)` } : { text: item.text })
     panelReads.inbox = 0 // the list refreshes on the next pass: this one is answered now
   } catch (error) {
-    if (['busy', 'wait', 'hidden', 'app', 'timeout'].includes(error.kind)) dmReply.update(item.id, { status: 'queued' })
+    if (['wait', 'limit'].includes(error.kind)) {
+      // Waiting on a safety limit: this one steps aside (the others keep going) until it has room.
+      const daily = error.kind === 'limit' || /daily/i.test(error.message)
+      const tomorrow = new Date()
+      tomorrow.setDate(tomorrow.getDate() + 1)
+      tomorrow.setHours(8, 0, 0, 0)
+      dmReply.update(item.id, { status: 'queued', waitUntil: daily ? tomorrow.getTime() : Date.now() + Math.max(30000, error.waitMs || 60000), waitReason: error.message })
+    } else if (['busy', 'hidden', 'app', 'timeout'].includes(error.kind)) dmReply.update(item.id, { status: 'queued' })
     else dmReply.update(item.id, { status: 'failed', error: error.message })
   } finally {
     replySending = false

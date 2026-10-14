@@ -222,6 +222,8 @@ function renderDms(force) {
   })
   head.append(refresh)
   card.append(head)
+  const outLine = outgoingLine(dms.outgoing || [])
+  if (outLine) card.append(el('p', 'dm-out-line', outLine))
   if (!dms.scannedAt) card.append(el('p', 'side-empty', 'The inbox is read every 20 minutes while Outreach is open.'))
   else if (!dms.toReply.length) card.append(el('p', 'side-empty', `Nothing to reply to in the last ${dms.looked} conversations.`))
   for (const item of dms.toReply) card.append(dmRow(item))
@@ -237,6 +239,28 @@ setInterval(async () => {
   todoData.dms = dms
   renderDms()
 }, 30000)
+
+// When the replies on their way go out: between Launch's actions, 8:00 to 21:00, within the safety
+// limits; one waiting on a limit says so.
+function outgoingLine(list) {
+  if (!list.length) return ''
+  const hour = new Date().getHours()
+  const time = (at) => new Date(at).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' })
+  const waiting = list.filter((entry) => entry.waitUntil)
+  const ready = list.length - waiting.length
+  const parts = []
+  if (ready) parts.push(hour < 8 || hour >= 21 ? `${ready} go out from 8:00 tomorrow morning` : `${ready} go out one by one between Launch's actions`)
+  const groups = {}
+  for (const entry of waiting) {
+    const key = `${entry.kind}|${entry.waitReason}|${time(entry.waitUntil)}`
+    groups[key] = (groups[key] || 0) + 1
+  }
+  for (const [key, count] of Object.entries(groups)) {
+    const [kind, reason, at] = key.split('|')
+    parts.push(`${count} ${kind === 'voice' ? 'voicenote' : 'text'} ${count === 1 ? 'reply waits' : 'replies wait'} until ${at}${reason ? ` (${reason.replace(/\.$/, '')})` : ''}`)
+  }
+  return parts.join(' · ')
+}
 
 // Sent from here: the conversation leaves the list at once (the reply goes out in the background).
 function dmAnswered(item, kind) {
