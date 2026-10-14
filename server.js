@@ -1072,6 +1072,11 @@ function dmsForPage() {
     const row = matches.length === 1 ? matches[0] : null
     return { ...item, username: row ? data.usernameFrom(row.link) : '', voice: row && /^(romain|mathieu)$/i.test(row.voice || '') ? row.voice : '', reply: sent[item.name] || null }
   })
+  // Answered from here: off the list straight away (queued or sending), and once sent until the inbox
+  // is read again (then it is gone for good, unless they wrote again). A failed send stays, with why.
+  const answered = (item) => item.reply && (['queued', 'sending'].includes(item.reply.status) || (item.reply.status === 'sent' && item.reply.sentAt >= summary.scannedAt))
+  summary.outgoing = summary.toReply.filter((item) => item.reply && ['queued', 'sending'].includes(item.reply.status)).map((item) => ({ name: item.name, kind: item.reply.kind, status: item.reply.status }))
+  summary.toReply = summary.toReply.filter((item) => !answered(item))
   return summary
 }
 

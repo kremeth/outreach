@@ -210,8 +210,9 @@ function renderDms(force) {
   const card = el('div', 'side-card dm-card')
   const when = dms.scannedAt ? new Date(dms.scannedAt).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' }) : ''
   const head = el('div', 'dm-head')
-  const waiting = dms.toReply.filter((item) => !item.reply || item.reply.status === 'failed').length
+  const waiting = dms.toReply.length
   head.append(el('strong', '', !dms.scannedAt ? 'Inbox not read yet' : waiting ? `${waiting} waiting on you` : 'All answered'))
+  if (dms.outgoing?.length) head.append(el('span', 'dm-outgoing', `${dms.outgoing.length} ${dms.outgoing.length === 1 ? 'reply' : 'replies'} going out`))
   if (dms.scannedAt) head.append(el('span', 'dm-head-note', `checked ${when}`))
   const refresh = button('Check now', 'dm-link', async () => {
     refresh.disabled = true
@@ -236,6 +237,17 @@ setInterval(async () => {
   todoData.dms = dms
   renderDms()
 }, 30000)
+
+// Sent from here: the conversation leaves the list at once (the reply goes out in the background).
+function dmAnswered(item, kind) {
+  const dms = todoData?.dms
+  if (!dms) return
+  dms.toReply = dms.toReply.filter((entry) => entry.name !== item.name)
+  dms.outgoing = [...(dms.outgoing || []).filter((entry) => entry.name !== item.name), { name: item.name, kind, status: 'queued' }]
+  dmOpen = ''
+  if (document.activeElement && dmsEl.contains(document.activeElement)) document.activeElement.blur()
+  renderDms(true)
+}
 
 function initials(name) {
   const words = String(name).replace(/[^\p{L}\p{N} ]/gu, ' ').trim().split(/\s+/).filter(Boolean)
@@ -357,9 +369,7 @@ function dmBody(item) {
       try {
         await api('/api/dms/send', { name: item.name, username: item.username, kind: 'text', text: box.value })
         dmDrafts.delete(item.name)
-        item.reply = { status: 'queued', kind: 'text' }
-        dmOpen = ''
-        redraw()
+        dmAnswered(item, 'text')
       } catch (error) {
         note.textContent = error.message
         send.disabled = false
@@ -427,9 +437,7 @@ function dmBody(item) {
       send.textContent = 'Queuing…'
       try {
         await api('/api/dms/send', { name: item.name, username: item.username, kind: 'voice', voice })
-        item.reply = { status: 'queued', kind: 'voice' }
-        dmOpen = ''
-        redraw()
+        dmAnswered(item, 'voice')
       } catch (error) {
         note.textContent = error.message
         send.disabled = false
