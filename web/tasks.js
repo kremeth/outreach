@@ -618,7 +618,7 @@ function dmBody(item) {
   const skip = button('No reply needed', 'dm-link', async () => {
     skip.disabled = true
     try {
-      const result = await api('/api/dms/dismiss', { name: item.name, username: item.username, preview: item.rawPreview ?? item.preview })
+      const result = await api('/api/dms/dismiss', { name: item.name, username: item.username, preview: item.rawPreview ?? item.preview, unread: Boolean(item.unread) })
       if (todoData && result.dms) todoData.dms = result.dms
       dmOpen = ''
       renderDms(true)

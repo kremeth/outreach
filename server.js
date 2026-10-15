@@ -1144,7 +1144,7 @@ function dmsForPage() {
   // Answered from here: off the list straight away (queued or sending), and once sent until the inbox
   // is read again (then it is gone for good, unless they wrote again). A failed send stays, with why.
   const answered = (item) => item.reply && (['queued', 'sending'].includes(item.reply.status) || (item.reply.status === 'sent' && item.reply.sentAt >= summary.scannedAt))
-  summary.outgoing = dmReply.outgoing()
+  summary.outgoing = dmReply.outgoing().filter((entry) => entry.kind !== 'read')
   summary.sendingNow = Date.now() < replyNowUntil
   summary.toReply = summary.toReply.filter((item) => !answered(item))
   return summary
@@ -1184,13 +1184,16 @@ async function sendQueuedReplies() {
         if (error.sentParts) dmReply.update(item.id, { sentParts: (item.sentParts || 0) + error.sentParts })
         throw error
       }
+    } else if (item.kind === 'read') {
+      // Only opens the chat (Instagram marks it read); nothing is sent.
+      await instagram.chatState({ username })
     } else if (item.kind === 'like') {
       const result = await instagram.likeLast({ username })
       if (result?.already) console.log(`dm like @${username}: already liked`)
     } else await instagram.sendDm({ username, message: item.text, detail: 'reply' })
     dmReply.update(item.id, { status: 'sent', sentAt: Date.now() })
     dmMissed.answered(username)
-    dmChats.addOurs(item.name, item.kind === 'voice' ? { voice: true, text: `(${item.voice}'s Message 2 voicenotes, part 1 and part 2)` } : item.kind === 'like' ? { text: '(liked their last message ❤️)' } : { text: item.text })
+    if (item.kind !== 'read') dmChats.addOurs(item.name, item.kind === 'voice' ? { voice: true, text: `(${item.voice}'s Message 2 voicenotes, part 1 and part 2)` } : item.kind === 'like' ? { text: '(liked their last message ❤️)' } : { text: item.text })
     panelReads.inbox = 0 // the list refreshes on the next pass: this one is answered now
   } catch (error) {
     if (['wait', 'limit'].includes(error.kind)) {
@@ -1800,6 +1803,11 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req)
       dmInbox.dismiss(String(body.name || ''), String(body.preview || ''))
       if (body.username) dmMissed.dismiss(String(body.username))
+      // Still unread on Instagram: opened once (read) when Instagram is free, so it is done there too.
+      if (body.unread) {
+        dmReply.add({ name: String(body.name || ''), username: String(body.username || ''), kind: 'read' })
+        sendQueuedReplies().catch(() => {})
+      }
       sendJson(res, 200, { ok: true, dms: dmsForPage() })
       return
     }
