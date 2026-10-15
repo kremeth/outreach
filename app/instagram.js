@@ -845,10 +845,76 @@ function likeLast(wc, options) {
   return untilSent((progress) => likeLastSteps(wc, options, progress))
 }
 
+// Their voicenotes' audio, for Gemini to transcribe: each one is played with the panel muted, and the
+// audio file Instagram loads for it is caught on the panel's own network (nothing is sent). Returns the
+// file addresses; app-main downloads them with the panel's session. probe: also returns what the
+// voice bubbles look like (to adjust this to Instagram's page).
+const VOICE_BUBBLES = String.raw`(() => {
+  const voiceMark = '[aria-label="Waveform for audio message"], [aria-label="Voice clip"], [aria-label="Audio progress bar"]'
+  return [...document.querySelectorAll('[role="main"] [role="article"]')]
+    .filter((bubble) => bubble.getBoundingClientRect().height > 0)
+    .map((bubble, index) => {
+      const lane = bubble.closest('[role="group"]') || bubble.parentElement
+      const area = lane.getBoundingClientRect()
+      const box = bubble.getBoundingClientRect()
+      const ours = box.left + box.width / 2 > area.left + area.width / 2
+      const voice = Boolean(bubble.querySelector(voiceMark)) || /view transcription/i.test(bubble.innerText || '')
+      return { index, ours, voice, text: (bubble.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 120) }
+    })
+})()`
+
+async function voiceAudio(wc, { username, max = 4, probe = false }) {
+  // Nothing is played (nothing can be heard): Instagram downloads every voicenote's file when the chat
+  // opens (cdn.fbsbx.com/.../audioclip-<sent ms>-<length ms>.mp4|ogg). Those downloads are caught on the
+  // panel's own network and matched to their bubbles by length ("0:21" = 21 s). The panel stays muted.
+  const dbg = wc.debugger
+  const ownsDebugger = !dbg.isAttached()
+  if (ownsDebugger) dbg.attach('1.3')
+  await dbg.sendCommand('Network.enable')
+  const clips = new Map()
+  const onMessage = (_event, method, params) => {
+    if (method !== 'Network.responseReceived') return
+    const url = String(params.response.url || '')
+    const m = url.match(/audioclip-(\d+)-(\d+)\.(mp4|m4a|ogg|aac)/i)
+    if (m) clips.set(url.split('?')[0], { url, sentAt: Number(m[1]), ms: Number(m[2]), mime: params.response.mimeType || '' })
+  }
+  dbg.on('message', onMessage)
+  wc.setAudioMuted(true)
+  const out = { username, voices: [] }
+  try {
+    await openThread(wc, username)
+    await sleep(2500)
+    const bubbles = await run(wc, VOICE_BUBBLES)
+    const lastOurs = bubbles.map((bubble) => bubble.ours).lastIndexOf(true)
+    const voices = bubbles.filter((bubble) => !bubble.ours && bubble.voice).filter((bubble) => bubble.index > lastOurs || probe).slice(-max)
+    const pool = [...clips.values()].sort((a, b) => b.sentAt - a.sentAt)
+    const used = new Set()
+    // Newest bubble first, each to the newest unused clip of the same length (a second either way).
+    for (const voice of [...voices].reverse()) {
+      const length = (voice.text.match(/(\d+):(\d{2})/) || []).slice(1).map(Number)
+      const seconds = length.length ? length[0] * 60 + length[1] : null
+      const clip = pool.find((item) => !used.has(item.url) && (seconds == null || Math.abs(item.ms / 1000 - seconds) <= 1.5))
+      if (clip) used.add(clip.url)
+      out.voices.unshift({ index: voice.index, text: voice.text, seconds, url: clip ? clip.url : '', sentAt: clip ? clip.sentAt : 0 })
+    }
+    if (probe) out.clips = pool.map((item) => ({ ms: item.ms, sentAt: item.sentAt, mime: item.mime }))
+  } finally {
+    dbg.removeListener('message', onMessage)
+    if (ownsDebugger) { try { dbg.detach() } catch {} }
+    setTimeout(() => wc.setAudioMuted(false), 1000)
+  }
+  return out
+}
+
 // The chat as it is, read only (no action): who sent each message and when.
 async function chatState(wc, { username, transcribe = false }) {
   const messages = await openThread(wc, username)
-  return { messages: transcribe ? await transcribeTheirs(wc, messages) : messages }
+  // Their profile picture (the chat header's), shown next to their messages in Outreach.
+  const avatar = await run(wc, String.raw`(() => {
+    const img = [...document.querySelectorAll('[role="main"] img')].find((el) => /profile picture/i.test(el.alt || '') && el.getBoundingClientRect().width >= 24)
+    return img ? (img.currentSrc || img.src || '') : ''
+  })()`).catch(() => '')
+  return { messages: transcribe ? await transcribeTheirs(wc, messages) : messages, avatar }
 }
 
 // The DM inbox list, read only (no conversation is opened): scrolls the list until it has `limit`
@@ -1095,4 +1161,4 @@ async function probeChat(wc, { username, gifQuery }) {
   return result
 }
 
-module.exports = { openUrl, run, click, key, sleep, aborted, comment, dm, unfollow, pageProblem, readThread, threadAllows, lastVoiceWaveform, probeChat, chatState, replyRelaunch, likeLast, inboxState, openInboxRow, ourStories }
+module.exports = { openUrl, run, click, key, sleep, aborted, comment, dm, unfollow, pageProblem, readThread, threadAllows, lastVoiceWaveform, probeChat, chatState, voiceAudio, replyRelaunch, likeLast, inboxState, openInboxRow, ourStories }

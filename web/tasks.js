@@ -197,6 +197,8 @@ const dmMessages = new Map()
 const dmModes = new Map()
 const dmVoices = new Map()
 const dmNotes = new Map()
+const dmCopilot = new Map()
+const dmFullChat = new Map()
 let dmOpen = ''
 let dmShown = ''
 
@@ -423,18 +425,42 @@ function dmBody(item) {
     const row = [...dmsEl.querySelectorAll('.dm-row')].find((node) => node.dataset.name === item.name)
     if (row) row.replaceWith(dmRow(item))
   }
+  // Their side of the chat, with their profile picture; View chat shows the whole conversation.
   const thread = el('div', 'dm-thread')
+  const face = () => {
+    const pic = el('span', 'dm-face')
+    if (item.username) {
+      const img = document.createElement('img')
+      img.src = `/api/dms/avatar?u=${encodeURIComponent(item.username)}`
+      img.alt = ''
+      img.addEventListener('error', () => { img.remove(); pic.textContent = initials(item.name) })
+      pic.append(img)
+    } else pic.textContent = initials(item.name)
+    return pic
+  }
+  const bubbleLine = (message) => {
+    const line = el('div', `dm-line ${message.ours ? 'ours' : 'theirs'}`)
+    const bubble = el('div', `dm-bubble${message.ours ? ' ours' : ''}${message.voice ? ' voice' : ''}`)
+    if (message.voice) bubble.append(el('span', 'dm-voice-tag', message.transcribed ? '🎙 Voicenote · transcribed' : '🎙 Voicenote'))
+    bubble.append(el('span', '', String(message.text || '').replace(/\d+:\d{2}\s*(view|hide) transcription/i, '').trim() || (message.voice ? '(no words)' : '(photo, GIF or attachment)')))
+    if (!message.ours) line.append(face())
+    line.append(bubble)
+    return line
+  }
+  const full = dmFullChat.get(item.name)
   const shown = dmMessages.get(item.name)
   const hidden = /^\d+ new messages?$|^new message$/i.test(item.preview) || /voice message/i.test(item.preview)
-  if (shown) for (const message of shown) thread.append(el('div', 'dm-bubble', `${message.voice ? '🎙 ' : ''}${message.text}`))
+  if (full) for (const message of full) thread.append(bubbleLine(message))
+  else if (shown) for (const message of shown) thread.append(bubbleLine({ ...message, ours: false }))
   else if (hidden) {
+    const line = el('div', 'dm-line theirs')
     const bubble = el('div', 'dm-bubble placeholder')
     const count = item.preview.match(/^\d+/)?.[0]
     const load = button(/voice/i.test(item.preview) ? 'Read the voicenote' : count ? `Read the ${count} messages` : 'Read the message', 'dm-link', async () => {
       load.disabled = true
-      load.textContent = 'Reading the chat…'
+      load.textContent = /voice/i.test(item.preview) ? 'Reading and transcribing…' : 'Reading the chat…'
       try {
-        const result = await api('/api/dms/messages', { name: item.name, username: item.username }, 90000)
+        const result = await api('/api/dms/messages', { name: item.name, username: item.username }, 180000)
         if (result.username && !item.username) item.username = result.username
         dmMessages.set(item.name, result.messages.length ? result.messages : [{ text: '(nothing new from them)' }])
         redraw()
@@ -443,10 +469,30 @@ function dmBody(item) {
         load.textContent = error.message || 'Could not read the chat. Try again.'
       }
     })
-    bubble.append(el('span', '', /voice/i.test(item.preview) ? 'They sent a voicenote. ' : count ? `They sent ${item.preview.toLowerCase()}. ` : 'They wrote last (Instagram added its own line after it). '), load)
-    bubble.append(el('div', 'dm-hint', 'Opens the chat, so Instagram marks it as read.'))
-    thread.append(bubble)
-  } else thread.append(el('div', 'dm-bubble', item.preview))
+    bubble.append(el('span', '', /voice/i.test(item.preview) ? 'They sent a voicenote. ' : count ? `They sent ${item.preview.toLowerCase()}. ` : 'They wrote last. '), load)
+    bubble.append(el('div', 'dm-hint', /voice/i.test(item.preview) ? 'Gemini transcribes it (nothing is played out loud). Instagram marks the chat as read.' : 'Opens the chat, so Instagram marks it as read.'))
+    line.append(face(), bubble)
+    thread.append(line)
+  } else thread.append(bubbleLine({ ours: false, text: item.preview }))
+  const view = button(full ? 'Hide full chat' : 'View chat', 'dm-link dm-view', async () => {
+    if (full) {
+      dmFullChat.delete(item.name)
+      redraw()
+      return
+    }
+    view.disabled = true
+    view.textContent = 'Loading the chat…'
+    try {
+      const result = await api('/api/dms/chat', { name: item.name, username: item.username }, 180000)
+      if (result.username && !item.username) item.username = result.username
+      dmFullChat.set(item.name, (result.messages || []).slice(-30))
+      redraw()
+    } catch (error) {
+      view.disabled = false
+      view.textContent = error.message || 'Could not load the chat.'
+    }
+  })
+  thread.append(view)
   body.append(thread)
 
   const state = item.reply
@@ -473,103 +519,189 @@ function dmBody(item) {
   composer.append(tabs)
   const note = el('div', 'dm-note', '')
   if (mode === 'text') {
-    const box = document.createElement('textarea')
-    box.className = 'dm-box'
-    box.rows = 4
-    box.placeholder = `Reply to ${item.name.split(/\s+/)[0]}…`
-    box.value = dmDrafts.get(item.name) || ''
-    const send = button('Send', 'dm-primary', async () => {
-      if (!box.value.trim()) return
-      send.disabled = true
-      send.textContent = 'Queuing…'
-      try {
-        await api('/api/dms/send', { name: item.name, username: item.username, kind: 'text', text: box.value })
-        dmDrafts.delete(item.name)
-        dmAnswered(item, 'text')
-      } catch (error) {
-        note.textContent = error.message
-        send.disabled = false
-        send.textContent = 'Send'
-      }
-    })
-    const fit = () => {
-      box.style.height = 'auto'
-      box.style.height = `${Math.min(320, box.scrollHeight + 2)}px`
-      send.disabled = !box.value.trim()
+    // Drafting with GPT, like a chat: its versions of the reply (editable, one picked to send), what you
+    // tell it ("we don't have NSF", "shorter"), and a new version each time. An earlier note can be edited:
+    // everything after it is written again.
+    const entries = dmCopilot.get(item.name) || []
+    dmCopilot.set(item.name, entries)
+    const selectedIndex = () => {
+      const picked = entries.findIndex((entry) => entry.role === 'draft' && entry.picked)
+      if (picked >= 0) return picked
+      for (let i = entries.length - 1; i >= 0; i--) if (entries[i].role === 'draft') return i
+      return -1
     }
-    box.addEventListener('input', () => { dmDrafts.set(item.name, box.value); fit() })
-    box.addEventListener('keydown', (event) => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) send.click() })
-    // Writing: shimmering lines and a slow glow round the box while it thinks, then the reply types
-    // itself in. A reply drafted ahead appears at once (typed in quickly).
-    const skeleton = el('div', 'dm-skeleton')
-    for (const width of [92, 78, 86, 54]) {
-      const line = el('span', 'dm-skeleton-line')
-      line.style.width = `${width}%`
-      skeleton.append(line)
+    const turnsUpTo = (end) => {
+      const turns = []
+      for (let i = 0; i < end; i++) {
+        if (entries[i].role !== 'me') continue
+        const before = [...entries.slice(0, i)].reverse().find((entry) => entry.role === 'draft')
+        turns.push({ draft: before ? before.text : '', feedback: entries[i].text })
+      }
+      return turns
+    }
+    const pane = el('div', 'dm-copilot')
+    const list = el('div', 'dm-copilot-list')
+    const send = button('Send reply', 'dm-primary', () => pickAndSend())
+    const render = () => {
+      list.replaceChildren()
+      const chosen = selectedIndex()
+      entries.forEach((entry, index) => {
+        if (entry.role === 'me') {
+          const me = el('div', 'dm-me')
+          if (entry.editing) {
+            const edit = document.createElement('textarea')
+            edit.className = 'dm-me-edit'
+            edit.value = entry.text
+            edit.rows = 2
+            const save = button('Save & rewrite', 'dm-chip on', () => {
+              if (!edit.value.trim()) return
+              entry.text = edit.value.trim()
+              entry.editing = false
+              entries.splice(index + 1)
+              generate()
+            })
+            const cancel = button('Cancel', 'dm-chip', () => { entry.editing = false; render() })
+            edit.addEventListener('keydown', (event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); save.click() } })
+            me.append(edit, el('div', 'dm-me-actions'))
+            me.lastChild.append(cancel, save)
+            requestAnimationFrame(() => edit.focus())
+          } else {
+            const bubble = el('button', 'dm-me-bubble', entry.text)
+            bubble.type = 'button'
+            bubble.title = 'Edit this (everything after it is written again)'
+            bubble.addEventListener('click', () => { if (!busy) { entry.editing = true; render() } })
+            me.append(bubble)
+          }
+          list.append(me)
+          return
+        }
+        const card = el('div', `dm-draft${index === chosen ? ' chosen' : ''}`)
+        const head = el('div', 'dm-draft-head')
+        head.append(el('span', 'dm-draft-label', entry.own ? 'Your version' : `Version ${entries.slice(0, index + 1).filter((e) => e.role === 'draft').length}`))
+        const pick = button(index === chosen ? '● Will send' : '○ Pick this one', `dm-pick${index === chosen ? ' on' : ''}`, () => {
+          entries.forEach((other) => { other.picked = false })
+          entry.picked = true
+          render()
+        })
+        head.append(pick)
+        const text = document.createElement('textarea')
+        text.className = 'dm-draft-text'
+        text.value = entry.text
+        text.rows = 3
+        text.addEventListener('input', () => { entry.text = text.value; fitArea(text); send.disabled = busy || !entries[selectedIndex()]?.text.trim() })
+        text.addEventListener('focus', () => { if (selectedIndex() !== index) { entries.forEach((other) => { other.picked = false }); entry.picked = true; card.classList.add('chosen') } lastFocus = text })
+        text.addEventListener('keydown', (event) => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) send.click() })
+        card.append(head, text)
+        list.append(card)
+        requestAnimationFrame(() => fitArea(text))
+      })
+      if (busy) {
+        const card = el('div', 'dm-draft writing')
+        const skeleton = el('div', 'dm-skeleton')
+        for (const width of [92, 78, 86, 54]) {
+          const line = el('span', 'dm-skeleton-line')
+          line.style.width = `${width}%`
+          skeleton.append(line)
+        }
+        skeleton.append(thinking)
+        card.append(skeleton)
+        list.append(card)
+      } else if (!entries.length) list.append(el('p', 'dm-copilot-empty', 'No reply yet. Ask for one, or write your own.'))
+      send.disabled = busy || !entries[selectedIndex()]?.text.trim()
+      list.scrollTop = list.scrollHeight
+    }
+    const fitArea = (area) => {
+      area.style.height = 'auto'
+      area.style.height = `${Math.min(360, area.scrollHeight + 2)}px`
     }
     const thinking = el('div', 'dm-thinking', '')
-    skeleton.append(thinking)
-    let draftedOnce = Boolean(box.value)
-    const write = button(draftedOnce ? '✨ Write another' : '✨ Write it for me', 'dm-ghost dm-magic', async () => {
-      write.disabled = true
-      send.disabled = true
+    let busy = false
+    let lastFocus = null
+    const generate = async ({ fresh = false } = {}) => {
+      busy = true
       note.textContent = ''
-      const fresh = draftedOnce
       const steps = ['Reading the chat…', 'Remembering how you write…', 'Finding the right words…', 'Polishing…']
       let step = 0
       thinking.textContent = steps[0]
       const ticker = setInterval(() => { step = Math.min(step + 1, steps.length - 1); thinking.textContent = steps[step] }, 1600)
-      // The shimmer only shows if the answer takes more than a blink.
-      const later = setTimeout(() => composer.classList.add('writing'), 120)
+      render()
       try {
-        const result = await api('/api/dms/draft', { name: item.name, username: item.username, fresh, note: noteBox.value }, 120000)
+        const turns = turnsUpTo(entries.length)
+        const result = await api('/api/dms/draft', { name: item.name, username: item.username, fresh: fresh || turns.length > 0 || entries.length > 0, turns }, 180000)
         if (result.username && !item.username) item.username = result.username
-        clearTimeout(later)
-        composer.classList.remove('writing')
-        composer.classList.add('typing')
-        await typeInto(box, result.reply, result.instant ? 500 : 900)
-        composer.classList.remove('typing')
-        dmDrafts.set(item.name, result.reply)
-        draftedOnce = true
-        write.textContent = noteBox.value.trim() ? '✨ Write with this info' : '✨ Write another'
+        entries.forEach((other) => { other.picked = false })
+        entries.push({ role: 'draft', text: '', fresh: true })
+        busy = false
+        render()
+        const area = [...list.querySelectorAll('.dm-draft-text')].pop()
+        if (area) {
+          await typeInto(area, result.reply, result.instant ? 450 : 800)
+          entries[entries.length - 1].text = result.reply
+        }
       } catch (error) {
-        clearTimeout(later)
-        composer.classList.remove('writing', 'typing')
         note.textContent = error.message || 'Could not write a reply.'
       }
       clearInterval(ticker)
-      write.disabled = false
-      fit()
-      box.focus()
-      box.setSelectionRange(box.value.length, box.value.length)
+      busy = false
+      render()
+    }
+    // Your note to GPT.
+    const ask = document.createElement('textarea')
+    ask.className = 'dm-ask'
+    ask.rows = 1
+    ask.placeholder = "Tell GPT what to change… e.g. we don't have NSF, make it shorter"
+    ask.value = dmNotes.get(item.name) || ''
+    ask.addEventListener('input', () => { dmNotes.set(item.name, ask.value); fitArea(ask) })
+    const askSend = button('↑', 'dm-ask-send', () => {
+      const text = ask.value.trim()
+      if (!text || busy) return
+      entries.push({ role: 'me', text })
+      ask.value = ''
+      dmNotes.delete(item.name)
+      generate()
     })
-    const bar = el('div', 'dm-bar')
-    bar.append(write, emojiButton(box, () => { dmDrafts.set(item.name, box.value); fit() }), el('span', 'dm-keys', '⌘↩ to send'), send)
-    const field = el('div', 'dm-field')
-    field.append(box, skeleton)
-    // Extra information for the reply ("we don't connect to Coros"): used by the next one written, and
-    // Enter writes it straight away.
-    const noteRow = el('label', 'dm-context')
-    noteRow.append(el('span', 'dm-context-label', 'Add info'))
-    const noteBox = document.createElement('input')
-    noteBox.type = 'text'
-    noteBox.className = 'dm-context-input'
-    noteBox.placeholder = "e.g. we don't connect to Coros yet, so suggest a Garmin"
-    noteBox.value = dmNotes.get(item.name) || ''
-    noteBox.addEventListener('input', () => {
-      dmNotes.set(item.name, noteBox.value)
-      write.textContent = noteBox.value.trim() ? '✨ Write with this info' : draftedOnce ? '✨ Write another' : '✨ Write it for me'
+    askSend.title = 'Send to GPT (Enter)'
+    ask.addEventListener('keydown', (event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); askSend.click() } })
+    const askRow = el('div', 'dm-ask-row')
+    askRow.append(ask, askSend)
+    const again = button('↻ Another version', 'dm-ghost', () => { if (!busy) generate({ fresh: true }) })
+    const own = button('✍️ Write my own', 'dm-ghost', () => {
+      entries.forEach((other) => { other.picked = false })
+      entries.push({ role: 'draft', text: '', own: true, picked: true })
+      render()
+      requestAnimationFrame(() => [...list.querySelectorAll('.dm-draft-text')].pop()?.focus())
     })
-    noteBox.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter') {
-        event.preventDefault()
-        if (!write.disabled) write.click()
+    const emoji = emojiButton({ get selectionStart() { return (lastFocus || [...list.querySelectorAll('.dm-draft-text')].pop())?.selectionStart }, get selectionEnd() { return (lastFocus || [...list.querySelectorAll('.dm-draft-text')].pop())?.selectionEnd }, get value() { return (lastFocus || [...list.querySelectorAll('.dm-draft-text')].pop())?.value || '' }, set value(v) { const area = lastFocus || [...list.querySelectorAll('.dm-draft-text')].pop(); if (area) { area.value = v; area.dispatchEvent(new Event('input')) } }, focus() { (lastFocus || [...list.querySelectorAll('.dm-draft-text')].pop())?.focus() }, setSelectionRange(a, b) { (lastFocus || [...list.querySelectorAll('.dm-draft-text')].pop())?.setSelectionRange(a, b) } }, () => {})
+    // Send: the picked version is clearly the one that goes out (a short highlight), then it is queued.
+    const pickAndSend = async () => {
+      const index = selectedIndex()
+      const entry = entries[index]
+      if (!entry || !entry.text.trim() || busy) return
+      send.disabled = true
+      const cards = [...list.querySelectorAll('.dm-draft')]
+      const card = cards[entries.slice(0, index + 1).filter((e) => e.role === 'draft').length - 1]
+      pane.classList.add('sending')
+      card?.classList.add('picked')
+      card?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+      await new Promise((resolve) => setTimeout(resolve, 900))
+      try {
+        await api('/api/dms/send', { name: item.name, username: item.username, kind: 'text', text: entry.text })
+        dmCopilot.delete(item.name)
+        dmAnswered(item, 'text')
+      } catch (error) {
+        pane.classList.remove('sending')
+        card?.classList.remove('picked')
+        note.textContent = error.message
+        send.disabled = false
       }
-    })
-    noteRow.append(noteBox)
-    if (noteBox.value.trim()) write.textContent = '✨ Write with this info'
-    composer.append(field, noteRow, bar)
-    requestAnimationFrame(fit)
+    }
+    const bar = el('div', 'dm-bar')
+    bar.append(again, own, emoji, el('span', 'dm-keys', '⌘↩ to send'), send)
+    pane.append(list, askRow, bar)
+    composer.append(pane)
+    render()
+    // The first version straight away (instant when it was written ahead).
+    if (!entries.length) generate()
   } else {
     const voice = voiceKnown || dmVoices.get(item.name) || ''
     const who = el('div', 'dm-who')

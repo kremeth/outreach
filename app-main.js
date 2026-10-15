@@ -421,6 +421,33 @@ function startControl() {
           panelTask = ''
         }
       }
+      // Their voicenotes' audio (read only, panel muted), downloaded with the panel's own session, for
+      // Gemini to transcribe.
+      if (url.pathname === '/voice-audio') {
+        if (panelTask) return reply(409, { error: `Instagram is busy (${panelTask}).`, kind: 'busy' })
+        panelTask = 'reading voicenotes'
+        try {
+          await ensurePanelLive()
+          const result = await ig.voiceAudio(panel.webContents, body)
+          const igSession = session.fromPartition('persist:instagram')
+          for (const voice of result.voices) {
+            if (!voice.url) continue
+            try {
+              const response = await igSession.fetch(voice.url)
+              const buffer = Buffer.from(await response.arrayBuffer())
+              if (response.ok && buffer.length > 1000 && buffer.length < 20 * 1024 * 1024) {
+                voice.audio = buffer.toString('base64')
+                voice.mime = (response.headers.get('content-type') || 'audio/mp4').split(';')[0]
+              }
+            } catch (error) {
+              voice.error = error.message
+            }
+          }
+          return reply(200, result)
+        } finally {
+          panelTask = ''
+        }
+      }
       if (url.pathname === '/inbox-state') {
         if (panelTask) return reply(409, { error: `Instagram is busy (${panelTask}).`, kind: 'busy' })
         panelTask = 'reading the inbox'

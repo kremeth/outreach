@@ -24,6 +24,7 @@ const dmReply = require('./lib/dm-reply')
 const dmChats = require('./lib/dm-chats')
 const runners = require('./lib/runners')
 const dmMissed = require('./lib/dm-missed')
+const voiceText = require('./lib/voice-transcribe')
 const followingScraper = require('./lib/following-scraper')
 const pickModel = require('./lib/pick-model')
 const apiUsage = require('./lib/api-usage')
@@ -1210,6 +1211,36 @@ async function sendQueuedReplies() {
   }
 }
 
+// A conversation read in full, for drafts and View chat: their voicenotes transcribed by Gemini (from
+// the files the panel already loaded, nothing played), their profile picture kept, and the chat saved.
+async function readFullChat({ name, username }) {
+  const chat = username
+    ? { ...(await instagram.chatState({ username, transcribe: true })), username }
+    : await instagram.openInboxRow({ name, transcribe: true })
+  let messages = chat.messages || []
+  if (chat.username) messages = await voiceText.fill(instagram, chat.username, messages).catch((error) => { console.error('voicenotes', error.message); return messages })
+  if (chat.username && chat.avatar) saveAvatar(chat.username, chat.avatar).catch(() => {})
+  dmChats.remember({ name, username: chat.username || username, messages })
+  return { ...chat, messages }
+}
+
+// Profile pictures for DMs to reply: the wearable model's copy when it has one, else the chat header's.
+const AVATAR_DIR = path.join(__dirname, 'data', 'dm-avatars')
+async function saveAvatar(username, url) {
+  const file = path.join(AVATAR_DIR, `${String(username).replace(/[^\w.]/g, '')}.jpg`)
+  if (fs.existsSync(file) && Date.now() - fs.statSync(file).mtimeMs < 14 * 86400000) return
+  const response = await fetch(url, { signal: AbortSignal.timeout(15000) })
+  if (!response.ok) return
+  fs.mkdirSync(AVATAR_DIR, { recursive: true })
+  fs.writeFileSync(file, Buffer.from(await response.arrayBuffer()))
+}
+function avatarFile(username) {
+  const clean = String(username || '').replace(/[^\w.]/g, '')
+  if (!clean) return ''
+  for (const file of [path.join(AVATAR_DIR, `${clean}.jpg`), path.join(__dirname, 'data', 'wearable', 'images', clean, 'avatar.jpg')]) if (fs.existsSync(file)) return file
+  return ''
+}
+
 // Replies drafted ahead for every conversation waiting on us (from the saved chat, or our first voicenote
 // and their message from the inbox list), so "Write it for me" is instant. About $0.002 each, once per
 // new message from them.
@@ -1246,8 +1277,7 @@ async function readChatsAhead() {
     const latest = String(item.preview || '').trim()
     if (saved && (dmChats.HIDDEN_PREVIEW.test(latest) || saved.readAt > (dmInbox.summary().scannedAt || 0) || saved.messages.some((message) => !message.ours && message.text.trim() === latest))) continue
     try {
-      const chat = await instagram.chatState({ username: item.username, transcribe: true })
-      dmChats.remember({ name: item.name, username: item.username, messages: chat.messages || [] })
+      await readFullChat({ name: item.name, username: item.username })
       read++
     } catch (error) {
       panelReads.errors.chats = error.message
@@ -1743,7 +1773,8 @@ const server = http.createServer(async (req, res) => {
       const item = listed || { name: String(body.name || ''), username: String(body.username || ''), preview: '', voice: '' }
       try {
         const note = String(body.note || '').trim().slice(0, 500)
-        const ready = !body.fresh && !note && dmChats.draftFor(item, dmReply.MODEL)
+        const turns = Array.isArray(body.turns) ? body.turns.slice(-8) : []
+        const ready = !body.fresh && !note && !turns.length && dmChats.draftFor(item, dmReply.MODEL)
         if (ready) {
           sendJson(res, 200, { reply: ready.reply, username: item.username, instant: true })
           return
@@ -1754,15 +1785,12 @@ const server = http.createServer(async (req, res) => {
             sendJson(res, 409, { error: 'Instagram is busy with Launch right now. Try again in a minute.' })
             return
           }
-          const chat = item.username
-            ? { ...(await instagram.chatState({ username: item.username, transcribe: true })), username: item.username }
-            : await instagram.openInboxRow({ name: item.name, transcribe: true })
+          const chat = await readFullChat({ name: item.name, username: item.username })
           if (chat.username && !item.username) item.username = chat.username
-          dmChats.remember({ name: item.name, username: chat.username, messages: chat.messages || [] })
           history = dmChats.history(item) || { messages: chat.messages || [], complete: true }
         }
-        const reply = await dmReply.draft({ name: item.name, messages: history.messages.slice(-20), note })
-        if (listed) dmChats.rememberDraft(item, reply, history.complete ? 'chat' : 'list', dmReply.MODEL)
+        const reply = await dmReply.draft({ name: item.name, messages: history.messages.slice(-20), note, turns })
+        if (listed && !turns.length) dmChats.rememberDraft(item, reply, history.complete ? 'chat' : 'list', dmReply.MODEL)
         sendJson(res, 200, { reply, username: item.username || '' })
       } catch (error) {
         sendJson(res, error.kind === 'busy' ? 409 : 502, { error: error.message || 'Could not draft a reply.' })
@@ -1778,11 +1806,8 @@ const server = http.createServer(async (req, res) => {
         return
       }
       try {
-        const chat = body.username
-          ? { ...(await instagram.chatState({ username: String(body.username), transcribe: true })), username: String(body.username) }
-          : await instagram.openInboxRow({ name: String(body.name || ''), transcribe: true })
+        const chat = await readFullChat({ name: String(body.name || ''), username: String(body.username || '') })
         const messages = chat.messages || []
-        dmChats.remember({ name: String(body.name || ''), username: chat.username || '', messages })
         const lastOurs = messages.map((message) => message.ours).lastIndexOf(true)
         const theirs = messages.slice(lastOurs + 1).filter((message) => !message.ours).map((message) => ({
           voice: message.voice,
@@ -1796,6 +1821,38 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'GET' && url.pathname === '/api/dms') {
       sendJson(res, 200, dmsForPage())
+      return
+    }
+    // View chat: the whole conversation (saved on this Mac; read again from Instagram when asked or
+    // when nothing is saved yet).
+    if (req.method === 'POST' && url.pathname === '/api/dms/chat') {
+      const body = await readBody(req)
+      const saved = dmChats.chatOf(String(body.name || ''), String(body.username || ''))
+      if (saved && !body.fresh) {
+        sendJson(res, 200, { messages: saved.messages, readAt: saved.readAt, username: saved.username || body.username || '' })
+        return
+      }
+      if (autopilot.status().current || replySending) {
+        sendJson(res, 409, { error: 'Instagram is busy with Launch right now. Try again in a minute.', messages: saved?.messages || [] })
+        return
+      }
+      try {
+        const chat = await readFullChat({ name: String(body.name || ''), username: String(body.username || '') })
+        sendJson(res, 200, { messages: chat.messages || [], readAt: Date.now(), username: chat.username || '' })
+      } catch (error) {
+        sendJson(res, error.kind === 'busy' ? 409 : 502, { error: error.message || 'Could not read the chat.' })
+      }
+      return
+    }
+    if (req.method === 'GET' && url.pathname === '/api/dms/avatar') {
+      const file = avatarFile(url.searchParams.get('u'))
+      if (!file) {
+        res.writeHead(404)
+        res.end()
+        return
+      }
+      res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'max-age=86400' })
+      fs.createReadStream(file).pipe(res)
       return
     }
     // "No reply needed": off the list until they write something new.
