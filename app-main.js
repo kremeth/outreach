@@ -291,8 +291,21 @@ async function ensurePanelLive() {
     await sleep(400)
     if ((await state()) === 'visible') return
   }
+  // Still not live: the panel's page is stuck (blank or frozen renderer). Reloaded, at most every 5
+  // minutes, so Launch never sits on a dead panel.
+  if (Date.now() - lastPanelReload > 5 * 60 * 1000) {
+    lastPanelReload = Date.now()
+    console.log('Instagram panel stuck: reloading it')
+    if (panel.webContents.isCrashed()) panel.webContents.reload()
+    else panel.webContents.loadURL('https://www.instagram.com/').catch(() => {})
+    for (let attempt = 0; attempt < 30; attempt++) {
+      await sleep(500)
+      if ((await state()) === 'visible') return
+    }
+  }
   throw Object.assign(new Error('macOS paused the Instagram panel, so nothing was clicked. It will try again shortly.'), { kind: 'hidden' })
 }
+let lastPanelReload = 0
 
 // describe(result, failure) says what to record in the shared log: { target, detail }, or null for nothing.
 async function inPanel(kind, label, describe, task) {
