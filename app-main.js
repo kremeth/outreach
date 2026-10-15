@@ -453,6 +453,11 @@ function startControl() {
         openScraper(true)
         return reply(200, { ok: true })
       }
+      // Out of sight while it scrapes (it runs the same hidden; it is only shown to log in or verify).
+      if (url.pathname === '/scraper/hide') {
+        if (scraperWin && !scraperWin.isDestroyed() && scraperWin.isVisible()) scraperWin.hide()
+        return reply(200, { ok: true })
+      }
       if (url.pathname === '/scraper/status') {
         const id = await scraperAccount()
         const outreach = await accountId()
