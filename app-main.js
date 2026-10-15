@@ -313,8 +313,9 @@ async function inPanel(kind, label, describe, task) {
     }
     const reachedInstagram = !failure || !['missing', 'unreachable', 'duplicate', 'login', 'busy', 'replied', 'mismatch', 'hidden'].includes(failure.kind)
     const outcome = !failure ? '' : failure.kind === 'notsent' ? ' notsent' : ' failed'
-    const entry = reachedInstagram ? describe(result, failure) : null
-    if (entry) await guard.record(kind, account, entry.target, `${entry.detail}${outcome}`).catch((error) => console.error(error))
+    // describe can name several actions (Message 2: two voicenotes back to back).
+    const entries = reachedInstagram ? [].concat(describe(result, failure) || []) : []
+    for (const entry of entries) await guard.record(kind, account, entry.target, `${entry.detail}${outcome}`).catch((error) => console.error(error))
     if (failure?.kind === 'blocked') await guard.trip(account, failure.message).catch((error) => console.error(error))
     if (failure) throw failure
     return result
@@ -484,7 +485,13 @@ function startControl() {
         }
       }
       if (url.pathname === '/voice/reply') {
-        const describe = (result, failure) => (result?.sent || failure ? { target: body.username || '', detail: `voice-reply:${body.clipName || ''}` } : null)
+        // One record per voicenote that went out (or was attempted).
+        const describe = (result, failure) => {
+          if (!result?.sent && !failure) return null
+          const names = [].concat(body.clipNames && body.clipNames.length ? body.clipNames : body.clipName)
+          const count = result?.parts || Math.max(1, failure?.sentParts || 0)
+          return names.slice(0, count).map((name) => ({ target: body.username || '', detail: `voice-reply:${name || ''}` }))
+        }
         return reply(200, await inPanel('answerVoice', 'sending a voicenote reply', describe, (wc, account) => voice.sendReply(account, body)))
       }
       if (url.pathname === '/voice/status') return reply(200, voice.getStatus())
@@ -498,7 +505,7 @@ function startControl() {
       reply(404, { error: 'Not found' })
     } catch (error) {
       console.error(error)
-      reply(502, { error: error.message || 'Instagram action failed.', kind: error.kind || 'error', waitMs: error.waitMs || 0, thread: error.thread || undefined })
+      reply(502, { error: error.message || 'Instagram action failed.', kind: error.kind || 'error', waitMs: error.waitMs || 0, thread: error.thread || undefined, sentParts: error.sentParts || 0 })
     }
   })
   control.listen(CONTROL_PORT, '127.0.0.1')

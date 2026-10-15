@@ -256,11 +256,14 @@ async function sendTo(item, account) {
 // A voicenote into an ongoing conversation (a reply from the DMs to reply list): the named clip
 // (e.g. "Romain Message 2.m4a" from data/voice/clips), recorded the same way as the first voicenote.
 // No follow, and the chat does not need to be empty.
-async function replyTo({ username, clipName }, account) {
+async function replyTo({ username, clipName, clipNames }, account) {
   const clips = path.join(__dirname, '..', 'data', 'voice', 'clips')
-  const clip = path.join(clips, path.basename(String(clipName || '')))
-  if (!clipName || !fs.existsSync(clip)) throw fail(`No clip called ${clipName}.`, 'notsent')
-  await guard.lock(account, 5 * 60 * 1000)
+  // One clip, or several sent back to back in the same chat (Message 2: part 1 then part 2 straight
+  // after, nothing else in between).
+  const files = [].concat(clipNames && clipNames.length ? clipNames : clipName).filter(Boolean).map((name) => path.join(clips, path.basename(String(name))))
+  if (!files.length) throw fail('No clip to send.', 'notsent')
+  for (const file of files) if (!fs.existsSync(file)) throw fail(`No clip called ${path.basename(file)}.`, 'notsent')
+  await guard.lock(account, 10 * 60 * 1000)
   status = { phase: 'preparing', text: `Opening the DM with @${username}` }
   await openUrl(`https://ig.me/m/${encodeURIComponent(username)}`)
   const state = await ig.run(wc, 'window.__igPageState()')
@@ -273,27 +276,39 @@ async function replyTo({ username, clipName }, account) {
   const warning = await confirmWarning('Warning while opening the DM')
   if (warning) throw fail(`Instagram showed a warning: ${warning}`, 'blocked')
   if (!composer?.ok) throw fail('The DM opened, but the voice button never appeared.', 'notsent')
-  const audio = fs.readFileSync(clip).toString('base64')
   await ensureHook()
-  const loaded = await ig.run(wc, `window.__loadVoice(${JSON.stringify(audio)})`)
-  clipSeconds = loaded?.duration || 30
-  // Instagram on desktop stops recording at 1 minute: a longer clip would go out cut off.
-  if (clipSeconds > MAX_CLIP_SECONDS) throw fail(`${path.basename(clip)} is ${Math.round(clipSeconds)} s; Instagram on desktop stops voicenotes at 1 minute, so it was not sent. Cut it under ${MAX_CLIP_SECONDS} s.`, 'notsent')
-  await ig.sleep(SETTLE_BEFORE_SEND_MS)
-  if ((await ig.run(wc, 'document.visibilityState')) !== 'visible') await ensureLive()
-  if ((await ig.run(wc, 'document.visibilityState')) !== 'visible') throw fail('macOS paused the Instagram panel, so the voicenote was not recorded. It will try again shortly.', 'hidden')
-  status = { phase: 'recording', text: `Voicenote reply to @${username}` }
-  await startRecording()
-  await waitForEnd()
-  const result = await ig.run(wc, 'window.__finishIgRecord()')
-  if (!result?.ok) {
-    await ig.run(wc, 'window.__cancelIgRecord()').catch(() => {})
-    throw fail('The voicenote ended, but Instagram did not show Send.', 'failed')
+  // Every clip under Instagram's 1 minute before the first one goes out (never half a Message 2).
+  const audios = files.map((file) => fs.readFileSync(file).toString('base64'))
+  for (const [index, audio] of audios.entries()) {
+    const loaded = await ig.run(wc, `window.__loadVoice(${JSON.stringify(audio)})`)
+    if ((loaded?.duration || 0) > MAX_CLIP_SECONDS) throw fail(`${path.basename(files[index])} is ${Math.round(loaded.duration)} s; Instagram on desktop stops voicenotes at 1 minute, so nothing was sent. Cut it under ${MAX_CLIP_SECONDS} s.`, 'notsent')
   }
-  await ig.sleep(1500)
-  const after = await confirmWarning('Warning after a voicenote')
-  if (after) throw fail(`Instagram showed a warning after sending: ${after}`, 'blocked')
-  return { sent: true, username, clip: path.basename(clip) }
+  let sent = 0
+  try {
+    for (const [index, audio] of audios.entries()) {
+      const loaded = await ig.run(wc, `window.__loadVoice(${JSON.stringify(audio)})`)
+      clipSeconds = loaded?.duration || 30
+      await ig.sleep(index ? 1200 + Math.random() * 1500 : SETTLE_BEFORE_SEND_MS)
+      if ((await ig.run(wc, 'document.visibilityState')) !== 'visible') await ensureLive()
+      if ((await ig.run(wc, 'document.visibilityState')) !== 'visible') throw fail('macOS paused the Instagram panel, so the voicenote was not recorded. It will try again shortly.', 'hidden')
+      status = { phase: 'recording', text: `Voicenote reply to @${username}${files.length > 1 ? ` (part ${index + 1} of ${files.length})` : ''}` }
+      await startRecording()
+      await waitForEnd()
+      const result = await ig.run(wc, 'window.__finishIgRecord()')
+      if (!result?.ok) {
+        await ig.run(wc, 'window.__cancelIgRecord()').catch(() => {})
+        throw fail('The voicenote ended, but Instagram did not show Send.', 'failed')
+      }
+      sent++
+      await ig.sleep(1500)
+      const after = await confirmWarning('Warning after a voicenote')
+      if (after) throw fail(`Instagram showed a warning after sending: ${after}`, 'blocked')
+    }
+  } catch (error) {
+    error.sentParts = sent
+    throw error
+  }
+  return { sent: true, parts: sent, username, clip: files.map((file) => path.basename(file)).join(' + ') }
 }
 
 async function sendReply(account, options) {

@@ -1148,10 +1148,15 @@ async function sendQueuedReplies() {
     dmReply.update(item.id, { status: 'sending', username, startedAt: Date.now() })
     if (item.kind === 'voice') {
       // Message 2 is two voicenotes, part 1 then part 2 (each under Instagram's 1 minute), from whoever
-      // sent the first one. A part already sent is never sent again; part 2 follows after the safety gap.
-      for (let part = (item.sentParts || 0) + 1; part <= 2; part++) {
-        await instagram.voiceReply({ username, clipName: `${item.voice} Message 2 part ${part}.m4a` })
-        dmReply.update(item.id, { sentParts: part })
+      // sent the first one, sent back to back in one go (nothing in between). A part already sent is
+      // never sent again.
+      const parts = [1, 2].filter((part) => part > (item.sentParts || 0))
+      try {
+        await instagram.voiceReply({ username, clipNames: parts.map((part) => `${item.voice} Message 2 part ${part}.m4a`) })
+        dmReply.update(item.id, { sentParts: 2 })
+      } catch (error) {
+        if (error.sentParts) dmReply.update(item.id, { sentParts: (item.sentParts || 0) + error.sentParts })
+        throw error
       }
     } else if (item.kind === 'like') {
       const result = await instagram.likeLast({ username })
