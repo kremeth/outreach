@@ -396,7 +396,7 @@ function dmRow(item) {
   else if (DM_TAGS[item.tag]) top.append(el('span', `dm-tag ${DM_TAGS[item.tag][1]}`, DM_TAGS[item.tag][0]))
   top.append(el('span', 'dm-age', item.age || ''))
   if (item.unread) top.append(el('span', 'dm-dot'))
-  const preview = /^\d+ new messages?$/i.test(item.preview) ? `💬 ${item.preview}` : item.voice && /voice/i.test(item.preview) ? '🎙 Voicenote' : item.preview
+  const preview = /^\d+ new messages?$|^new message$/i.test(item.preview) ? `💬 ${item.preview}` : item.voice && /voice/i.test(item.preview) ? '🎙 Voicenote' : item.preview
   text.append(top, el('span', 'dm-preview', preview))
   summary.append(avatar(item.name), text, el('span', 'dm-chevron', '›'))
   summary.addEventListener('click', () => {
@@ -425,11 +425,12 @@ function dmBody(item) {
   }
   const thread = el('div', 'dm-thread')
   const shown = dmMessages.get(item.name)
-  const hidden = /^\d+ new messages?$/i.test(item.preview) || /voice message/i.test(item.preview)
+  const hidden = /^\d+ new messages?$|^new message$/i.test(item.preview) || /voice message/i.test(item.preview)
   if (shown) for (const message of shown) thread.append(el('div', 'dm-bubble', `${message.voice ? '🎙 ' : ''}${message.text}`))
   else if (hidden) {
     const bubble = el('div', 'dm-bubble placeholder')
-    const load = button(/voice/i.test(item.preview) ? 'Read the voicenote' : `Read the ${item.preview.match(/^\d+/)[0]} messages`, 'dm-link', async () => {
+    const count = item.preview.match(/^\d+/)?.[0]
+    const load = button(/voice/i.test(item.preview) ? 'Read the voicenote' : count ? `Read the ${count} messages` : 'Read the message', 'dm-link', async () => {
       load.disabled = true
       load.textContent = 'Reading the chat…'
       try {
@@ -442,7 +443,7 @@ function dmBody(item) {
         load.textContent = error.message || 'Could not read the chat. Try again.'
       }
     })
-    bubble.append(el('span', '', /voice/i.test(item.preview) ? 'They sent a voicenote. ' : `They sent ${item.preview.toLowerCase()}. `), load)
+    bubble.append(el('span', '', /voice/i.test(item.preview) ? 'They sent a voicenote. ' : count ? `They sent ${item.preview.toLowerCase()}. ` : 'They wrote last (Instagram added its own line after it). '), load)
     bubble.append(el('div', 'dm-hint', 'Opens the chat, so Instagram marks it as read.'))
     thread.append(bubble)
   } else thread.append(el('div', 'dm-bubble', item.preview))
@@ -617,7 +618,7 @@ function dmBody(item) {
   const skip = button('No reply needed', 'dm-link', async () => {
     skip.disabled = true
     try {
-      const result = await api('/api/dms/dismiss', { name: item.name, preview: item.preview })
+      const result = await api('/api/dms/dismiss', { name: item.name, preview: item.rawPreview ?? item.preview })
       if (todoData && result.dms) todoData.dms = result.dms
       dmOpen = ''
       renderDms(true)
