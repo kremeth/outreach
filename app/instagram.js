@@ -911,7 +911,8 @@ async function chatState(wc, { username, transcribe = false }) {
   const messages = await openThread(wc, username)
   // Their profile picture (the chat header's), shown next to their messages in Outreach.
   const avatar = await run(wc, String.raw`(() => {
-    const img = [...document.querySelectorAll('[role="main"] img')].find((el) => /profile picture/i.test(el.alt || '') && el.getBoundingClientRect().width >= 24)
+    const imgs = [...document.querySelectorAll('[role="main"] img')].filter((el) => { const r = el.getBoundingClientRect(); return r.width >= 24 && r.width <= 120 && Math.abs(r.width - r.height) < 4 })
+    const img = imgs.find((el) => /profile picture/i.test(el.alt || '')) || imgs.sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)[0]
     return img ? (img.currentSrc || img.src || '') : ''
   })()`).catch(() => '')
   return { messages: transcribe ? await transcribeTheirs(wc, messages) : messages, avatar }
