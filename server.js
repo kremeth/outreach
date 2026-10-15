@@ -23,6 +23,7 @@ const partners = require('./lib/partners')
 const dmReply = require('./lib/dm-reply')
 const dmChats = require('./lib/dm-chats')
 const runners = require('./lib/runners')
+const dmMissed = require('./lib/dm-missed')
 const followingScraper = require('./lib/following-scraper')
 const pickModel = require('./lib/pick-model')
 const apiUsage = require('./lib/api-usage')
@@ -1115,6 +1116,31 @@ function dmsForPage() {
     reply: item.reply && item.reply.status === 'sent' && item.reply.sentAt < summary.scannedAt ? null : item.reply,
     draftReady: Boolean(dmChats.draftFor(item, dmReply.MODEL)),
   }))
+  // Missed replies found in chats read for other reasons (however old): added as unread, unless the
+  // inbox already lists them, or the inbox shows our message last (answered since).
+  const inboxRows = (() => { try { return JSON.parse(fs.readFileSync(path.join(__dirname, 'data', 'dm-inbox.json'), 'utf8')).rows || [] } catch { return [] } })()
+  const listed = new Set(summary.toReply.map((item) => item.username).filter(Boolean))
+  for (const missed of dmMissed.list()) {
+    if (listed.has(missed.username)) continue
+    const row = yesRows.find((entry) => data.usernameFrom(entry.link) === missed.username)
+    const name = missed.name || row?.name || `@${missed.username}`
+    const inbox = inboxRows.find((entry) => norm(entry.name) === norm(name))
+    if (inbox && inbox.ours) {
+      dmMissed.answered(missed.username)
+      continue
+    }
+    if (summary.toReply.some((item) => norm(item.name) === norm(name))) continue
+    const at = missed.at || missed.notedAt
+    const days = Math.floor((Date.now() - at) / 86400000)
+    summary.toReply.push({
+      name, username: missed.username, unread: true, missed: true,
+      age: days >= 7 ? `${Math.floor(days / 7)}w` : days >= 1 ? `${days}d` : `${Math.max(1, Math.round((Date.now() - at) / 3600000))}h`,
+      voice: row && /^(romain|mathieu)$/i.test(row.voice || '') ? row.voice : '',
+      tag: dmInbox.tagOf(missed.text), preview: missed.text, rawPreview: missed.text,
+      reply: sent[name] || null,
+    })
+  }
+  summary.toReply = summary.toReply.map((item) => (item.missed ? { ...item, draftReady: Boolean(dmChats.draftFor(item, dmReply.MODEL)) } : item))
   // Answered from here: off the list straight away (queued or sending), and once sent until the inbox
   // is read again (then it is gone for good, unless they wrote again). A failed send stays, with why.
   const answered = (item) => item.reply && (['queued', 'sending'].includes(item.reply.status) || (item.reply.status === 'sent' && item.reply.sentAt >= summary.scannedAt))
@@ -1163,6 +1189,7 @@ async function sendQueuedReplies() {
       if (result?.already) console.log(`dm like @${username}: already liked`)
     } else await instagram.sendDm({ username, message: item.text, detail: 'reply' })
     dmReply.update(item.id, { status: 'sent', sentAt: Date.now() })
+    dmMissed.answered(username)
     dmChats.addOurs(item.name, item.kind === 'voice' ? { voice: true, text: `(${item.voice}'s Message 2 voicenotes, part 1 and part 2)` } : item.kind === 'like' ? { text: '(liked their last message ❤️)' } : { text: item.text })
     panelReads.inbox = 0 // the list refreshes on the next pass: this one is answered now
   } catch (error) {
@@ -1738,6 +1765,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/api/dms/dismiss') {
       const body = await readBody(req)
       dmInbox.dismiss(String(body.name || ''), String(body.preview || ''))
+      if (body.username) dmMissed.dismiss(String(body.username))
       sendJson(res, 200, { ok: true, dms: dmsForPage() })
       return
     }
@@ -1969,6 +1997,11 @@ async function boot() {
   // Keeps the model's list ahead of the person (it moves on as profiles get decided).
   setInterval(() => { if (rows.length) writeUpcoming() }, 5 * 60 * 1000).unref()
   apiUsage.startSync()
+  // Missed replies: every chat read for any reason that ends with their message goes on DMs to reply;
+  // the chats the reply checks read before this are added once.
+  instagram.onThread((username, messages, name) => dmMissed.note(username, messages, name))
+  const backfilled = dmMissed.backfill()
+  if (backfilled) console.log(`dm missed: ${backfilled} earlier chats where they wrote last`)
   // The wearable model's photo downloader and model, kept running on this Mac.
   runners.start((text) => console.log(text))
   // The HUSTLING list straight from the sheet (no Instagram), so Hustling is never empty after a restart.
