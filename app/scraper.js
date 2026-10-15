@@ -120,9 +120,24 @@ async function following(wc, { username, max = 100000 }) {
       const dialog = [...document.querySelectorAll('[role="dialog"]')].pop()
       if (!dialog) return { gone: true }
       const names = []
+      // Only the people they follow: Instagram appends (or, when it holds the list back, shows only)
+      // "Suggested for you" accounts, which are never taken.
+      const suggested = (a) => {
+        let row = a
+        for (let up = 0; up < 6 && row.parentElement && row.parentElement !== dialog; up++) {
+          row = row.parentElement
+          if (row.querySelectorAll('a[href]').length > 3) break
+          if (/suggested for you/i.test(row.innerText || '')) return true
+        }
+        return false
+      }
+      const header = [...dialog.querySelectorAll('h4, h3, h2, span, div')].find((el) => el.children.length === 0 && /^suggested for you$/i.test((el.innerText || '').trim()))
       for (const a of dialog.querySelectorAll('a[href]')) {
         const m = (a.getAttribute('href') || '').match(/^\/([A-Za-z0-9._]{1,30})\/$/)
-        if (m && m[1].toLowerCase() !== owner) names.push(m[1].toLowerCase())
+        if (!m || m[1].toLowerCase() === owner || suggested(a)) continue
+        // Below a "Suggested for you" heading: not theirs.
+        if (header && (header.compareDocumentPosition(a) & Node.DOCUMENT_POSITION_FOLLOWING)) continue
+        names.push(m[1].toLowerCase())
       }
       // Scroll the list (the dialog's scrollable part) one screen further.
       const box = [...dialog.querySelectorAll('div')].find((el) => el.scrollHeight > el.clientHeight + 30 && /auto|scroll/.test(getComputedStyle(el).overflowY))
