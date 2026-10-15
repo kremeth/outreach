@@ -207,6 +207,9 @@ function renderDms(force) {
   const key = JSON.stringify(dms || null)
   if (!force && key === dmShown) return
   if (!force && dmsEl.contains(document.activeElement) && document.activeElement !== document.body) return
+  // A conversation open: the list waits (it refreshes once it is closed), so a reply being written or
+  // edited is never rebuilt under you.
+  if (!force && dmOpen && (todoData?.dms?.toReply || []).some((item) => item.name === dmOpen)) return
   dmShown = key
   dmsEl.replaceChildren()
   if (!dms) return
@@ -442,7 +445,8 @@ function dmBody(item) {
     const line = el('div', `dm-line ${message.ours ? 'ours' : 'theirs'}`)
     const bubble = el('div', `dm-bubble${message.ours ? ' ours' : ''}${message.voice ? ' voice' : ''}`)
     if (message.voice) bubble.append(el('span', 'dm-voice-tag', message.transcribed ? '🎙 Voicenote · transcribed' : '🎙 Voicenote'))
-    bubble.append(el('span', '', String(message.text || '').replace(/\d+:\d{2}\s*(view|hide) transcription/i, '').trim() || (message.voice ? '(no words)' : '(photo, GIF or attachment)')))
+    const words = String(message.text || '').replace(/\d+:\d{2}/, '').replace(/(view|hide) transcription|unable to transcribe,?\s*(try again)?/gi, '').trim()
+    bubble.append(el('span', '', words || (message.voice ? (message.ours ? 'Our voicenote' : '(no words)') : '(photo, GIF or attachment)')))
     if (!message.ours) line.append(face())
     line.append(bubble)
     return line
@@ -630,20 +634,19 @@ function dmBody(item) {
         const result = await api('/api/dms/draft', { name: item.name, username: item.username, fresh: fresh || turns.length > 0 || entries.length > 0, turns }, 180000)
         if (result.username && !item.username) item.username = result.username
         entries.forEach((other) => { other.picked = false })
-        entries.push({ role: 'draft', text: '', fresh: true })
+        // Kept first, then typed in (only the look).
+        entries.push({ role: 'draft', text: result.reply })
         busy = false
         render()
         const area = [...list.querySelectorAll('.dm-draft-text')].pop()
-        if (area) {
-          await typeInto(area, result.reply, result.instant ? 450 : 800)
-          entries[entries.length - 1].text = result.reply
-        }
+        if (area && body.isConnected) await typeInto(area, result.reply, result.instant ? 450 : 800)
       } catch (error) {
         note.textContent = error.message || 'Could not write a reply.'
       }
       clearInterval(ticker)
       busy = false
-      render()
+      if (body.isConnected) render()
+      else redraw()
     }
     // Your note to GPT.
     const ask = document.createElement('textarea')
