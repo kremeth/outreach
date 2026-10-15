@@ -1264,7 +1264,9 @@ async function checkMissed() {
   try {
     const partnerNames = new Set((await partners.list().catch(() => [])).map((partner) => partner.username))
     for (const item of dmMissed.unchecked()) {
-      if (!item.thread || !item.thread.some((message) => !message.ours)) {
+      // Only a chat read in full can close someone out; a single remembered line (chats checked before
+      // 15 Oct) stays on the list for the person to judge.
+      if (item.partial || !item.thread || !item.thread.some((message) => !message.ours)) {
         dmMissed.setVerdict(item.username, item.text, 'ongoing')
         continue
       }
