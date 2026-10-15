@@ -1785,6 +1785,12 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, { ok: true })
       return
     }
+    // After the person verified the scraper account (or logged it back in) in its window.
+    if (req.method === 'POST' && url.pathname === '/api/scraper/resume') {
+      followingScraper.resume(instagram, (text) => console.log(text)).catch((error) => console.error('scraper', error.message))
+      sendJson(res, 200, { ok: true })
+      return
+    }
     if (req.method === 'POST' && url.pathname === '/api/scraper/start') {
       followingScraper.run(instagram, (text) => console.log(text)).catch((error) => console.error('scraper', error.message))
       sendJson(res, 200, { ok: true })

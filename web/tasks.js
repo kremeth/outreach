@@ -763,7 +763,7 @@ function renderScraper() {
   const card = el('div', 'side-card scraper-card')
   const t = scraper.today || {}
   const head = el('div', 'scraper-head')
-  const label = { running: 'Running', 'needs login': 'Needs the scraper account', 'done for today': 'Done for today', stopped: 'Stopped for today', idle: 'Waiting' }[scraper.status] || scraper.status
+  const label = { running: 'Running', 'needs login': 'Needs you: log in', 'needs check': 'Needs you', 'done for today': 'Done for today', stopped: 'Stopped for today', idle: 'Waiting' }[scraper.status] || scraper.status
   head.append(el('strong', '', `${number(t.scraped || 0)} / ${number(scraper.daily)} scraped today`), el('span', `scraper-state ${String(scraper.status).replace(/\s/g, '-')}`, label))
   const bar = el('div', 'meter')
   const fill = el('div', 'meter-fill')
@@ -773,11 +773,33 @@ function renderScraper() {
   lines.append(el('div', '', `${number(t.contacts || 0)} added to 1. Influencer Contact List · ${number(t.reach || 0)} added to Customer Reach Out · ${number(t.discarded || 0)} not in Australia`))
   if (scraper.current) lines.append(el('div', '', `Now: @${scraper.current.username}'s following, ${number(scraper.current.done)} of ${number(scraper.current.following)}`))
   if (t.creators) lines.append(el('div', '', `${number(t.creators)} creators finished today (added to Scraped)`))
-  if (scraper.message) lines.append(el('div', 'scraper-message', scraper.message))
+  const needsYou = scraper.status === 'needs check' || scraper.status === 'needs login'
+  if (scraper.message && !needsYou) lines.append(el('div', 'scraper-message', scraper.message))
   const buttons = el('div', 'dm-buttons')
-  if (scraper.status === 'needs login') buttons.append(button('Open the scraper window to log in', 'small', () => api('/api/scraper/login', {}).catch(() => {})))
-  else buttons.append(button('Scraper window', 'ghost small', () => api('/api/scraper/login', {}).catch(() => {})))
-  if (scraper.status !== 'running') buttons.append(button('Start now', 'ghost small', async () => { await api('/api/scraper/start', {}).catch(() => {}); setTimeout(() => loadTodo(false), 3000) }))
+  const resume = async (node) => {
+    node.disabled = true
+    node.textContent = 'Resuming…'
+    await api('/api/scraper/resume', {}).catch(() => {})
+    setTimeout(() => loadTodo(false), 4000)
+  }
+  if (needsYou) {
+    // Instagram wants the scraper account checked (confirm you're human, a code...) or logged in again:
+    // done by the person in the scraper's own window, then resumed from here.
+    const alert = el('div', 'scraper-alert')
+    alert.append(
+      el('strong', '', scraper.status === 'needs login' ? 'The scraper account is logged out' : 'Instagram wants to check the scraper account'),
+      el('span', '', scraper.status === 'needs login'
+        ? 'Open its window, log in (and any code Instagram asks for), then resume.'
+        : `Open its window and do what Instagram asks (confirm you're human, a code by email or text), then resume.${scraper.message ? ` Instagram said: "${scraper.message.replace(/^Instagram showed a warning:\s*/, '').slice(0, 140)}"` : ''}`),
+    )
+    lines.append(alert)
+    buttons.append(button(scraper.status === 'needs login' ? 'Log in to the scraper account' : 'Verify the scraper account', 'small', () => api('/api/scraper/login', {}).catch(() => {})))
+    const done = button("Done, resume", 'ghost small', () => resume(done))
+    buttons.append(done)
+  } else {
+    buttons.append(button('Scraper window', 'ghost small', () => api('/api/scraper/login', {}).catch(() => {})))
+    if (scraper.status !== 'running') buttons.append(button('Start now', 'ghost small', async () => { await api('/api/scraper/start', {}).catch(() => {}); setTimeout(() => loadTodo(false), 3000) }))
+  }
   card.append(head, bar, lines, buttons)
   scraperEl.append(card)
 }

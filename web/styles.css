@@ -1709,11 +1709,15 @@ a.person.current {
 .dm-buttons .small:not(.ghost):disabled { opacity: 0.5; }
 
 /* Finding new creators */
+.scraper-alert { display: grid; gap: 3px; margin-top: 4px; padding: 10px 12px; border-radius: 10px; background: #fdf0d9; color: #6b4200; font-size: 13px; line-height: 1.45; }
+.scraper-alert strong { font-size: 14px; color: #5a3700; }
+
 .scraper-card { padding: 16px 22px; display: grid; gap: 10px; }
 .scraper-head { display: flex; align-items: baseline; gap: 10px; }
 .scraper-head strong { font-size: 17px; }
 .scraper-state { margin-left: auto; font-size: 13px; color: var(--muted); }
 .scraper-state.running { color: #2f5d0a; font-weight: 600; }
-.scraper-state.stopped-for-today, .scraper-state.stopped, .scraper-state.needs-login { color: var(--danger-ink); font-weight: 600; }
+.scraper-state.stopped-for-today, .scraper-state.stopped { color: var(--danger-ink); font-weight: 600; }
+.scraper-state.needs-check, .scraper-state.needs-login { color: #8a5300; font-weight: 600; }
 .scraper-lines { display: grid; gap: 3px; font-size: 13px; color: var(--muted); }
 .scraper-message { color: var(--ink-2); }
