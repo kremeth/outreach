@@ -12,7 +12,12 @@ function stop(message, kind) {
 }
 
 async function checkPage(wc) {
-  const page = await ig.pageProblem(wc)
+  let page = await ig.pageProblem(wc)
+  // A warning is looked at twice (a few seconds apart) before the day stops: a real one stays.
+  if (page.problem === 'blocked') {
+    await sleep(4000)
+    page = await ig.pageProblem(wc)
+  }
   if (page.problem === 'blocked') throw stop(`Instagram showed a warning: ${page.warning || 'action blocked'}`, 'blocked')
   if (page.problem === 'login') throw stop('The scraper account is logged out.', 'login')
   return page

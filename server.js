@@ -22,6 +22,7 @@ const dmInbox = require('./lib/dm-inbox')
 const partners = require('./lib/partners')
 const dmReply = require('./lib/dm-reply')
 const dmChats = require('./lib/dm-chats')
+const runners = require('./lib/runners')
 const followingScraper = require('./lib/following-scraper')
 const pickModel = require('./lib/pick-model')
 const apiUsage = require('./lib/api-usage')
@@ -1957,6 +1958,8 @@ async function boot() {
   // Keeps the model's list ahead of the person (it moves on as profiles get decided).
   setInterval(() => { if (rows.length) writeUpcoming() }, 5 * 60 * 1000).unref()
   apiUsage.startSync()
+  // The wearable model's photo downloader and model, kept running on this Mac.
+  runners.start((text) => console.log(text))
   // The HUSTLING list straight from the sheet (no Instagram), so Hustling is never empty after a restart.
   hustle.loadList().catch((error) => console.error('hustle list:', error.message))
   mediaServer.listen(MEDIA_PORT, '127.0.0.1')
