@@ -1254,6 +1254,38 @@ async function readChatsAhead() {
   predraftReplies().catch(() => {})
 }
 
+// A missed reply that is really a "no" (the same reply check Launch uses on relaunches): marked No in
+// the sheet and unfollowed on a later Launch step, not listed. Partners are never closed out. Anything
+// else stays on DMs to reply.
+let checkingMissed = false
+async function checkMissed() {
+  if (checkingMissed) return
+  checkingMissed = true
+  try {
+    const partnerNames = new Set((await partners.list().catch(() => [])).map((partner) => partner.username))
+    for (const item of dmMissed.unchecked()) {
+      if (!item.thread || !item.thread.some((message) => !message.ours)) {
+        dmMissed.setVerdict(item.username, item.text, 'ongoing')
+        continue
+      }
+      const verdict = await replyCheck.classify(item.thread).catch((error) => {
+        console.error('dm missed check', item.username, error.message)
+        return null
+      })
+      if (!verdict) break
+      const row = yesRows.find((entry) => data.usernameFrom(entry.link) === item.username)
+      if (verdict.verdict === 'no' && row && !partnerNames.has(item.username)) {
+        await relaunch.queueUnfollow(row.sheetRow, verdict.reason).catch((error) => console.error(error))
+        await relaunch.markClosed(row, 'No', verdict.reason).catch((error) => console.error(error))
+        dmMissed.setVerdict(item.username, item.text, 'no', verdict.reason)
+        console.log(`dm missed @${item.username}: said no (${verdict.reason}); marked No, Launch unfollows them`)
+      } else dmMissed.setVerdict(item.username, item.text, 'ongoing', verdict.reason)
+    }
+  } finally {
+    checkingMissed = false
+  }
+}
+
 async function backgroundReads() {
   predraftReplies().catch(() => {})
   if (panelReads.busy) return
@@ -1999,7 +2031,12 @@ async function boot() {
   apiUsage.startSync()
   // Missed replies: every chat read for any reason that ends with their message goes on DMs to reply;
   // the chats the reply checks read before this are added once.
-  instagram.onThread((username, messages, name) => dmMissed.note(username, messages, name))
+  instagram.onThread((username, messages, name) => {
+    dmMissed.note(username, messages, name)
+    checkMissed().catch((error) => console.error('dm missed check', error.message))
+  })
+  setInterval(() => checkMissed().catch((error) => console.error('dm missed check', error.message)), 5 * 60 * 1000).unref()
+  setTimeout(() => checkMissed().catch((error) => console.error('dm missed check', error.message)), 30 * 1000).unref()
   const backfilled = dmMissed.backfill()
   if (backfilled) console.log(`dm missed: ${backfilled} earlier chats where they wrote last`)
   // The wearable model's photo downloader and model, kept running on this Mac.
