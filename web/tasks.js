@@ -944,6 +944,7 @@ function renderScraper() {
   lines.append(el('div', '', `${number(t.contacts || 0)} added to 1. Influencer Contact List · ${number(t.reach || 0)} added to Customer Reach Out · ${number(t.discarded || 0)} not in Australia`))
   if (scraper.current) lines.append(el('div', '', `Now: @${scraper.current.username}'s following, ${number(scraper.current.done)} of ${number(scraper.current.following)}`))
   if (t.creators) lines.append(el('div', '', `${number(t.creators)} creators finished today (added to Scraped)`))
+  if (t.viaApi || t.visited) lines.append(el('div', '', `${number(t.viaApi || 0)} checked through Meta's API · ${number(t.visited || 0)} profiles visited by the scraper account`))
   const needsYou = scraper.status === 'needs check' || scraper.status === 'needs login'
   if (scraper.message && !needsYou) lines.append(el('div', 'scraper-message', scraper.message))
   const buttons = el('div', 'dm-buttons')
