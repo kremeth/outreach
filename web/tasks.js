@@ -266,34 +266,50 @@ setInterval(async () => {
   renderDms()
 }, 30000)
 
-// When the replies on their way go out: between Launch's actions, 8:00 to 21:00, within the safety
-// limits; one waiting on a limit says so.
+// When the replies on their way go out, live: each one's name and a countdown (its own delay after
+// Send, or a safety wait), "sending now" when it is going, the rest waiting for a gap between Launch's
+// actions. Redrawn every second.
 function outgoingLine(list, sendingNow) {
   if (!list.length) return ''
   const hour = new Date().getHours()
-  const time = (at) => new Date(at).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' })
-  const waiting = list.filter((entry) => entry.waitUntil)
-  const ready = list.length - waiting.length
-  const parts = []
-  if (ready) parts.push((hour < 8 || hour >= 21) && !sendingNow ? `${ready} go out from 8:00 tomorrow morning` : `${ready} go out in a few minutes, one by one between Launch's actions`)
-  const groups = {}
-  for (const entry of waiting) {
-    const key = `${entry.kind}|${entry.waitReason}|${time(entry.waitUntil)}`
-    groups[key] = (groups[key] || 0) + 1
+  if ((hour < 8 || hour >= 21) && !sendingNow) return `${list.length} ${list.length === 1 ? 'reply goes' : 'replies go'} out from 8:00 tomorrow morning`
+  const now = Date.now()
+  const clock = (ms) => {
+    const seconds = Math.max(0, Math.round(ms / 1000))
+    if (seconds >= 3600) return `${Math.floor(seconds / 3600)} h ${Math.round((seconds % 3600) / 60)} min`
+    return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
   }
-  for (const [key, count] of Object.entries(groups)) {
-    const [kind, reason, at] = key.split('|')
-    parts.push(`${count} ${kind === 'like' ? (count === 1 ? 'like waits' : 'likes wait') : `${kind === 'voice' ? 'voicenote' : 'text'} ${count === 1 ? 'reply waits' : 'replies wait'}`} until ${at}${reason ? ` (${reason.replace(/\.$/, '')})` : ''}`)
-  }
-  return parts.join(' · ')
+  const first = (name) => String(name || '').replace(/[^\p{L}\p{N}@ ._-]/gu, '').trim().split(/\s+/)[0] || name
+  const what = (entry) => (entry.kind === 'voice' ? '🎙 ' : entry.kind === 'like' ? '❤️ ' : '')
+  const items = list.map((entry) => {
+    const at = Math.max(entry.sendAfter || 0, entry.waitUntil || 0)
+    if (entry.status === 'sending') return { order: 0, text: `${what(entry)}${first(entry.name)} sending now…` }
+    if (at > now) {
+      const daily = /daily/i.test(entry.waitReason || '')
+      return { order: at, text: `${what(entry)}${first(entry.name)} in ${clock(at - now)}${daily ? ' (daily limit reached)' : ''}` }
+    }
+    return { order: now + 1, text: `${what(entry)}${first(entry.name)} at the next gap between Launch's actions` }
+  }).sort((x, y) => x.order - y.order)
+  const shown = items.slice(0, 4).map((item) => item.text)
+  if (items.length > 4) shown.push(`+${items.length - 4} more`)
+  return `Going out: ${shown.join(' · ')}`
 }
+// The countdown, live (only the line's text is changed, nothing else is redrawn).
+setInterval(() => {
+  const line = dmsEl.querySelector('.dm-out-line')
+  const dms = todoData?.dms
+  if (!line || !dms) return
+  const text = outgoingLine(dms.outgoing || [], dms.sendingNow)
+  const label = line.firstChild
+  if (label && label.nodeType === Node.TEXT_NODE && label.textContent !== text) label.textContent = text
+}, 1000)
 
 // Sent from here: the conversation leaves the list at once (the reply goes out in the background).
 function dmAnswered(item, kind) {
   const dms = todoData?.dms
   if (!dms) return
   dms.toReply = dms.toReply.filter((entry) => entry.name !== item.name)
-  dms.outgoing = [...(dms.outgoing || []).filter((entry) => entry.name !== item.name), { name: item.name, kind, status: 'queued' }]
+  dms.outgoing = [...(dms.outgoing || []).filter((entry) => entry.name !== item.name), { name: item.name, kind, status: 'queued', sendAfter: Date.now() + 180000 }]
   dmOpen = ''
   if (document.activeElement && dmsEl.contains(document.activeElement)) document.activeElement.blur()
   renderDms(true)
