@@ -580,6 +580,17 @@ if (!gotLock) {
       watchServer()
       await ui.webContents.loadURL(UI_URL)
       keepAwakeWhileLaunched()
+      // The page never stays blank: a load that failed (the server restarting at that moment) or a page
+      // that crashed is loaded again a few seconds later; and every minute, a page with nothing on it is
+      // reloaded.
+      ui.webContents.on('did-fail-load', (_event, code, _description, url, isMainFrame) => {
+        if (isMainFrame && code !== -3) setTimeout(() => ui.webContents.loadURL(UI_URL).catch(() => {}), 3000)
+      })
+      ui.webContents.on('render-process-gone', () => setTimeout(() => ui.webContents.loadURL(UI_URL).catch(() => {}), 2000))
+      setInterval(async () => {
+        const empty = await ui.webContents.executeJavaScript('!document.body || document.body.innerText.trim().length < 20', true).catch(() => true)
+        if (empty) ui.webContents.loadURL(UI_URL).catch(() => {})
+      }, 60 * 1000).unref?.()
     } catch (error) {
       ui.webContents.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`<body style="font:15px -apple-system,sans-serif;padding:40px;background:#f6f6f3;color:#111">${error.message}</body>`)}`)
     }
