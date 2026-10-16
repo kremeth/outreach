@@ -1006,23 +1006,18 @@ function renderScraper() {
   const t = scraper.today || {}
   const head = el('div', 'scraper-head')
   const label = { running: 'Running', 'needs login': 'Needs you: log in', 'needs check': 'Needs you', 'done for today': 'Done for today', stopped: 'Stopped for today', idle: 'Waiting' }[scraper.status] || scraper.status
-  head.append(el('strong', '', `${number(t.visited || 0)} / ${number(scraper.daily)} profiles today`), el('span', `scraper-state ${String(scraper.status).replace(/\s/g, '-')}`, label))
+  head.append(el('strong', '', `${number(t.lists || 0)} / ${number(scraper.listsPerDay || 8)} following lists today`), el('span', `scraper-state ${String(scraper.status).replace(/\s/g, '-')}`, label))
   const bar = el('div', 'meter')
   const fill = el('div', 'meter-fill')
-  fill.style.width = `${Math.max(1, Math.min(100, Math.round(((t.visited || 0) / scraper.daily) * 100)))}%`
+  fill.style.width = `${Math.max(1, Math.min(100, Math.round(((t.lists || 0) / (scraper.listsPerDay || 8)) * 100)))}%`
   bar.append(fill)
   const lines = el('div', 'scraper-lines')
-  lines.append(el('div', '', `${number(t.contacts || 0)} added to 1. Influencer Contact List · ${number(t.reach || 0)} added to Customer Reach Out · ${number(t.discarded || 0)} not in Australia`))
   if (scraper.current) {
     lines.append(el('div', '', scraper.reading
-      ? `Now: reading @${scraper.current.username}'s following list, ${number(scraper.reading.loaded)} of ${number(scraper.current.following)} loaded so far…`
+      ? `Now: reading @${scraper.current.username}'s following list, ${number(scraper.reading.loaded)} loaded so far…`
       : `Now: opening @${scraper.current.username} to read their following list`))
   }
-  if (t.creators) lines.append(el('div', '', `${number(t.creators)} following lists read today (creators added to Scraped)`))
-  if (scraper.waiting) lines.append(el('div', '', `${number(scraper.waiting)} usernames waiting in TEMP Scrape`))
-  if (scraper.fullDaily && scraper.daily < scraper.fullDaily) lines.append(el('div', '', scraper.slowed
-    ? `Slowed to ${number(scraper.daily)} a day after an Instagram check (back up by 200 a day once things stay quiet).`
-    : `Building up: ${number(scraper.daily)} a day for now, 200 more each day up to ${number(scraper.fullDaily)}.`))
+  lines.append(el('div', '', `${number(scraper.waiting || 0)} usernames in TEMP Scrape`))
   const needsYou = scraper.status === 'needs check' || scraper.status === 'needs login'
   if (scraper.message && !needsYou) lines.append(el('div', 'scraper-message', scraper.message))
   const buttons = el('div', 'dm-buttons')

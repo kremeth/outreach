@@ -96,11 +96,14 @@ async function following(wc, { username, max = 100000 }, onProgress = () => {}) 
       if (!el) return null
       const target = el.closest('a, [role="link"], [role="button"]') || el
       const r = target.getBoundingClientRect()
-      return r.width ? { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), tag: target.tagName } : null
+      return r.width ? { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), tag: target.tagName, text: (el.innerText || '').trim() } : null
     })()`).catch(() => null)
     if (!link) await sleep(500)
   }
   if (!link) throw stop(`@${username}'s following list could not be opened (private or not shown).`, 'unreadable')
+  // "1,823 following" / "8.2K following": how many they follow, as the header says.
+  const shown = String(link.text || '').match(/([\d.,]+)\s*([kKmM]?)/)
+  const followingCount = shown ? Math.round(parseFloat(shown[1].replace(/,/g, '')) * ({ k: 1e3, m: 1e6 }[shown[2].toLowerCase()] || 1)) : 0
   await ig.click(wc, link)
   // The list opens as a dialog.
   let opened = false
@@ -155,7 +158,7 @@ async function following(wc, { username, max = 100000 }, onProgress = () => {}) 
     })()`).catch(() => ({ names: [] }))
     if (batch.gone) {
       // Closed part way: what was loaded is kept (the list is never read twice).
-      if (order.length >= 50) return { usernames: order.slice(0, max), complete: false }
+      if (order.length >= 50) return { usernames: order.slice(0, max), complete: false, followingCount }
       throw stop(`@${username}'s following list closed.`, 'unreadable')
     }
     const before = order.length
@@ -171,7 +174,7 @@ async function following(wc, { username, max = 100000 }, onProgress = () => {}) 
     await sleep(between(1000, 2500))
   }
   await ig.key(wc, 'Escape').catch(() => {})
-  return { usernames: order.slice(0, max), complete: still >= 6 }
+  return { usernames: order.slice(0, max), complete: still >= 6, followingCount }
 }
 
 module.exports = { profile, following }
