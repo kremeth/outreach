@@ -1128,6 +1128,11 @@ function voiceSenderOf(username) {
   if (valid(yes?.voice)) return valid(yes.voice)
   const any = rows.find((row) => data.usernameFrom(row['DIRECT LINK'] || row.link || '') === key)
   if (any && valid(any['Voice'] || any.voice)) return valid(any['Voice'] || any.voice)
+  // Picked by hand once (for creators contacted before Outreach tracked voicenotes).
+  try {
+    const picked = JSON.parse(fs.readFileSync(path.join(__dirname, 'data', 'voice', 'picked-senders.json'), 'utf8'))
+    if (valid(picked[key])) return valid(picked[key])
+  } catch {}
   try {
     const file = path.join(__dirname, 'data', 'voice', 'sent-log.jsonl')
     const mtime = fs.statSync(file).mtimeMs
@@ -2071,6 +2076,14 @@ const server = http.createServer(async (req, res) => {
       }
       // Not straight away: it goes out a few minutes later, in a gap between Launch's actions, so the
       // Instagram panel does not switch the moment Send is pressed.
+      // Who sent the first voicenote, picked by hand: remembered for that person.
+      if (kind === 'voice' && body.username && !voiceSenderOf(String(body.username))) {
+        const file = path.join(__dirname, 'data', 'voice', 'picked-senders.json')
+        let picked = {}
+        try { picked = JSON.parse(fs.readFileSync(file, 'utf8')) } catch {}
+        picked[String(body.username).toLowerCase()] = voice
+        fs.writeFileSync(file, JSON.stringify(picked, null, 1))
+      }
       const item = dmReply.add({ name: String(body.name), username: String(body.username || ''), kind, text: kind === 'react' ? String(body.text || '').slice(0, 200) : text, voice, emoji, sendAfter: Date.now() + (120 + Math.random() * 120) * 1000 })
       sendQueuedReplies().catch(() => {})
       sendJson(res, 200, { ok: true, item })

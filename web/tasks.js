@@ -812,7 +812,7 @@ function dmBody(item) {
     const who = el('div', 'dm-who')
     if (voiceKnown) who.append(el('span', '', `From ${voiceKnown}, who sent them the first voicenote.`))
     else {
-      who.append(el('span', '', 'Who sent the first voicenote?'))
+      who.append(el('span', '', 'No record of their first voicenote (contacted before Outreach tracked it). Who sent it?'))
       for (const name of ['Mathieu', 'Romain']) {
         who.append(button(name, `dm-chip${voice === name ? ' on' : ''}`, () => { dmVoices.set(item.name, name); redraw() }))
       }
