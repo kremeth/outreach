@@ -113,7 +113,10 @@ async function following(wc, { username, max = 100000 }, onProgress = () => {}) 
   const seen = new Set()
   const order = []
   let still = 0
-  for (let round = 0; round < 3000 && still < 6 && order.length < max; round++) {
+  // Rounds in a row with no new name, spinner or not: Instagram stopped giving more (it sometimes keeps a
+  // loading spinner up forever). About 40 seconds of that ends the read with what was loaded.
+  let stalled = 0
+  for (let round = 0; round < 3000 && still < 6 && stalled < 20 && order.length < max; round++) {
     if (round % 10 === 0) await checkPage(wc)
     const batch = await ig.run(wc, String.raw`(() => {
       const owner = ${JSON.stringify(String(username).toLowerCase())}
@@ -150,7 +153,11 @@ async function following(wc, { username, max = 100000 }, onProgress = () => {}) 
       const loading = Boolean(dialog.querySelector('[role="progressbar"], svg[aria-label="Loading..."]'))
       return { names, atEnd, loading }
     })()`).catch(() => ({ names: [] }))
-    if (batch.gone) throw stop(`@${username}'s following list closed.`, 'unreadable')
+    if (batch.gone) {
+      // Closed part way: what was loaded is kept (the list is never read twice).
+      if (order.length >= 50) return { usernames: order.slice(0, max), complete: false }
+      throw stop(`@${username}'s following list closed.`, 'unreadable')
+    }
     const before = order.length
     for (const name of batch.names || []) {
       if (!seen.has(name)) {
@@ -159,6 +166,7 @@ async function following(wc, { username, max = 100000 }, onProgress = () => {}) 
       }
     }
     still = order.length === before && batch.atEnd && !batch.loading ? still + 1 : 0
+    stalled = order.length === before ? stalled + 1 : 0
     if (order.length !== before) onProgress(order.length)
     await sleep(between(1000, 2500))
   }
