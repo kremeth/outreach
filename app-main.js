@@ -485,6 +485,11 @@ function startControl() {
         const describe = (result, failure) => (result?.already ? null : { target: body.username || '', detail: 'like-message' })
         return reply(200, await inPanel('answer', 'liking a message', describe, (wc) => ig.likeLast(wc, body)))
       }
+      // Reacts to one of their messages (from the DMs to reply list): a reply action.
+      if (url.pathname === '/react') {
+        const describe = (result) => (result?.already ? null : { target: body.username || '', detail: `react:${body.emoji || ''}` })
+        return reply(200, await inPanel('answer', 'reacting to a message', describe, (wc) => ig.react(wc, body)))
+      }
       if (url.pathname === '/reply-relaunch') {
         const describe = () => ({ target: body.username || '', detail: `reply${Number(body.step) === 2 ? 2 : 1}:${body.sheetRow || ''}` })
         return reply(200, await inPanel('dm', 'sending a reply relaunch', describe, (wc) => ig.replyRelaunch(wc, body)))

@@ -778,43 +778,53 @@ function replyRelaunch(wc, options) {
   return untilSent((progress) => replyRelaunchSteps(wc, options, progress))
 }
 
-// Likes (❤️) their latest message in the chat: a double-click on it (as on the phone), or the react
-// menu if that does not take. Done only when the heart shows under it. dryRun: finds the message only.
-const THEIR_LAST = String.raw`(() => {
+// Reacts to one of their messages: ❤️ by a double-click (as on the phone, the react menu if that does
+// not take), another emoji through the react menu's quick reactions. The message: the latest of theirs
+// whose words start like `text` (their latest when no text). Done only when the reaction shows under it.
+// dryRun: finds the message only.
+const THEIR_MESSAGE = (text) => String.raw`(() => {
+  const want = String(${JSON.stringify(String(text || ''))}).replace(/\s+/g, ' ').trim().slice(0, 40).toLowerCase()
   const bubbles = [...document.querySelectorAll('[role="main"] [role="article"]')].filter((bubble) => bubble.getBoundingClientRect().height > 0)
   const theirs = bubbles.filter((bubble) => {
     const lane = bubble.closest('[role="group"]') || bubble.parentElement
     const area = lane.getBoundingClientRect()
     const box = bubble.getBoundingClientRect()
     return box.left + box.width / 2 <= area.left + area.width / 2
-  })
-  const last = theirs.sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top).pop()
-  if (!last) return null
-  last.scrollIntoView({ block: 'center' })
-  const r = last.getBoundingClientRect()
-  return { x: Math.round(r.left + Math.min(r.width / 2, 60)), y: Math.round(r.top + r.height / 2), text: (last.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 80) }
+  }).sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)
+  const pick = want ? theirs.filter((bubble) => (bubble.innerText || '').replace(/\s+/g, ' ').trim().toLowerCase().startsWith(want)).pop() : theirs.pop()
+  if (!pick) return null
+  pick.scrollIntoView({ block: 'center' })
+  const r = pick.getBoundingClientRect()
+  return { x: Math.round(r.left + Math.min(r.width / 2, 60)), y: Math.round(r.top + r.height / 2), text: (pick.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 80) }
 })()`
 
-function hearted(messages, text) {
+function reacted(messages, text, emoji) {
   const theirs = messages.filter((message) => !message.ours)
-  const last = theirs[theirs.length - 1]
-  return Boolean(last && (!text || last.text.slice(0, 40) === text.slice(0, 40)) && /❤|♥/.test(last.reaction || ''))
+  const want = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 40).toLowerCase()
+  const target = want ? theirs.filter((message) => message.text.toLowerCase().startsWith(want)).pop() : theirs[theirs.length - 1]
+  const base = emoji.replace(/️/g, '')
+  const isHeart = /❤|♥/.test(base)
+  return Boolean(target && (isHeart ? /❤|♥/.test(target.reaction || '') : String(target.reaction || '').replace(/️/g, '').includes(base)))
 }
 
-async function likeLastSteps(wc, { username, threadId = '', dryRun = false }, progress) {
+async function reactSteps(wc, { username, threadId = '', text = '', emoji = '❤️', dryRun = false }, progress) {
   const messages = await openThread(wc, username, threadId)
-  if (!messages.some((message) => !message.ours)) throw fail('They have no message in this chat to like.', 'notsent')
-  if (hearted(messages)) return { ok: true, already: true }
+  if (!messages.some((message) => !message.ours)) throw fail('They have no message in this chat to react to.', 'notsent')
+  if (reacted(messages, text, emoji)) return { ok: true, already: true }
   await sleep(600)
-  const target = await run(wc, THEIR_LAST)
-  if (!target) throw fail('Could not find their message, so nothing was liked.', 'notsent')
+  const target = await run(wc, THEIR_MESSAGE(text))
+  if (!target) throw fail('Could not find their message, so nothing was done.', 'notsent')
   if (dryRun) return { ok: true, dryRun: true, target }
   await sleep(500)
-  progress.pressed = true
-  await doubleClick(wc, target)
-  let done = await waitFor(async () => ({ done: hearted(await readThread(wc), target.text) }), 4000, 500)
+  const heart = /❤|♥/.test(emoji)
+  let done = null
+  if (heart) {
+    progress.pressed = true
+    await doubleClick(wc, target)
+    done = await waitFor(async () => ({ done: reacted(await readThread(wc), target.text, emoji) }), 4000, 500)
+  }
   if (!done?.done) {
-    // The react menu: hover the message, its React button, then the heart.
+    // The react menu: hover the message, its React button, then the emoji in the quick reactions.
     wc.sendInputEvent({ type: 'mouseMove', x: Math.round(target.x * (wc.getZoomFactor() || 1)), y: Math.round(target.y * (wc.getZoomFactor() || 1)) })
     await sleep(700)
     const react = await run(wc, String.raw`(() => {
@@ -823,26 +833,39 @@ async function likeLastSteps(wc, { username, threadId = '', dryRun = false }, pr
       const r = (el.closest('button, [role="button"]') || el).getBoundingClientRect()
       return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }
     })()`).catch(() => null)
-    if (react) {
-      await click(wc, react)
-      await sleep(700)
-      const heart = await run(wc, String.raw`(() => {
-        const el = [...document.querySelectorAll('[role="dialog"] *, [role="menu"] *, [role="listbox"] *, div[style*="position"] *')]
-          .find((node) => node.children.length <= 1 && /^(❤️|❤)$/.test((node.innerText || node.getAttribute('aria-label') || '').trim()) && node.getBoundingClientRect().width)
-        if (!el) return null
-        const r = (el.closest('button, [role="button"]') || el).getBoundingClientRect()
-        return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }
-      })()`).catch(() => null)
-      if (heart) await click(wc, heart)
-      else await key(wc, 'Escape').catch(() => {})
-      done = await waitFor(async () => ({ done: hearted(await readThread(wc), target.text) }), 4000, 500)
+    if (!react) throw fail('The react button did not show, so nothing was done.', 'notsent')
+    progress.pressed = true
+    await click(wc, react)
+    await sleep(700)
+    const pick = await run(wc, String.raw`(() => {
+      const want = ${JSON.stringify(emoji)}.replace(/️/g, '')
+      const el = [...document.querySelectorAll('[role="dialog"] *, [role="menu"] *, [role="listbox"] *, div[style*="position"] *')]
+        .find((node) => node.children.length <= 1 && ((node.innerText || node.getAttribute('aria-label') || '').trim().replace(/️/g, '') === want) && node.getBoundingClientRect().width)
+      if (!el) return null
+      const r = (el.closest('button, [role="button"]') || el).getBoundingClientRect()
+      return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }
+    })()`).catch(() => null)
+    if (!pick) {
+      await key(wc, 'Escape').catch(() => {})
+      throw fail(`${emoji} is not in Instagram's quick reactions.`)
     }
+    await click(wc, pick)
+    done = await waitFor(async () => ({ done: reacted(await readThread(wc), target.text, emoji) }), 4000, 500)
   }
-  if (!done?.done) throw fail('The heart did not show on their message. Check the chat in the Instagram panel.')
+  if (!done?.done) throw fail('The reaction did not show on their message. Check the chat in the Instagram panel.')
   await sleep(1000)
   const after = problemError(await pageProblem(wc))
   if (after?.kind === 'blocked') throw after
   return { ok: true }
+}
+
+function react(wc, options) {
+  return untilSent((progress) => reactSteps(wc, options, progress))
+}
+
+// Their latest message, ❤️ (the "Like message" button).
+async function likeLastSteps(wc, { username, threadId = '', dryRun = false }, progress) {
+  return reactSteps(wc, { username, threadId, text: '', emoji: '❤️', dryRun }, progress)
 }
 
 function likeLast(wc, options) {
@@ -1193,4 +1216,4 @@ async function probeChat(wc, { username, gifQuery }) {
   return result
 }
 
-module.exports = { openUrl, run, click, key, sleep, aborted, comment, dm, unfollow, pageProblem, readThread, threadAllows, lastVoiceWaveform, probeChat, chatState, voiceAudio, replyRelaunch, likeLast, inboxState, openInboxRow, ourStories }
+module.exports = { openUrl, run, click, key, sleep, aborted, comment, dm, unfollow, pageProblem, readThread, threadAllows, lastVoiceWaveform, probeChat, chatState, voiceAudio, replyRelaunch, likeLast, react, inboxState, openInboxRow, ourStories }

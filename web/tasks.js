@@ -204,6 +204,7 @@ const dmNotes = new Map()
 const dmCopilot = new Map()
 const dmFullChat = new Map()
 const dmReading = new Set()
+const dmReacted = new Map()
 let dmOpen = ''
 let dmShown = ''
 
@@ -280,7 +281,7 @@ function outgoingLine(list, sendingNow) {
     return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
   }
   const first = (name) => String(name || '').replace(/[^\p{L}\p{N}@ ._-]/gu, '').trim().split(/\s+/)[0] || name
-  const what = (entry) => (entry.kind === 'voice' ? '🎙 ' : entry.kind === 'like' ? '❤️ ' : '')
+  const what = (entry) => (entry.kind === 'voice' ? '🎙 ' : entry.kind === 'like' ? '❤️ ' : entry.kind === 'react' ? `${entry.emoji || '❤️'} ` : '')
   const items = list.map((entry) => {
     const at = Math.max(entry.sendAfter || 0, entry.waitUntil || 0)
     if (entry.status === 'sending') return { order: 0, text: `${what(entry)}${first(entry.name)} sending now…` }
@@ -485,6 +486,35 @@ function dmBody(item) {
     bubble.append(el('span', '', words || (message.voice ? (message.ours ? 'Our voicenote' : '(no words)') : '(photo, GIF or attachment)')))
     if (!message.ours) line.append(face())
     line.append(bubble)
+    // Their messages: double-click for ❤️, or a quick reaction from the bar on hover. Done a few minutes
+    // later between Launch's actions; shown on the bubble straight away.
+    if (!message.ours && message.text) {
+      const key = String(message.text || '').slice(0, 40).toLowerCase()
+      const done = (item.reactions || {})[key] || dmReacted.get(`${item.name}|${key}`)
+      if (done) bubble.append(el('span', `dm-reaction${done.status === 'sent' ? '' : ' pending'}`, done.emoji))
+      const reactWith = async (emoji) => {
+        if ((item.reactions || {})[key] || dmReacted.get(`${item.name}|${key}`)) return
+        dmReacted.set(`${item.name}|${key}`, { emoji, status: 'queued' })
+        bubble.querySelector('.dm-reaction')?.remove()
+        bubble.append(el('span', 'dm-reaction pending pop', emoji))
+        try {
+          await api('/api/dms/send', { name: item.name, username: item.username, kind: 'react', emoji, text: message.text })
+          if (todoData?.dms) todoData.dms.outgoing = [...(todoData.dms.outgoing || []), { name: item.name, kind: 'react', emoji, status: 'queued', sendAfter: Date.now() + 180000 }]
+        } catch (error) {
+          dmReacted.delete(`${item.name}|${key}`)
+          bubble.querySelector('.dm-reaction')?.remove()
+        }
+      }
+      bubble.addEventListener('dblclick', (event) => { event.preventDefault(); reactWith('❤️') })
+      const tray = el('div', 'dm-react-tray')
+      for (const emoji of ['❤️', '😂', '😮', '😢', '😡', '👍']) {
+        const option = button(emoji, 'dm-react-option', () => reactWith(emoji))
+        option.title = `React with ${emoji}`
+        tray.append(option)
+      }
+      line.append(tray)
+      bubble.title = 'Double-click for ❤️'
+    }
     return line
   }
   const full = dmFullChat.get(item.name)

@@ -1178,6 +1178,8 @@ function dmsForPage({ all = false } = {}) {
     const saved = dmChats.chatOf(item.name, item.username)
     return Boolean(saved && Date.now() - saved.readAt > 5 * 60 * 1000) // a draft that would not come
   }
+  const reactions = dmReply.reactions()
+  summary.toReply = summary.toReply.map((item) => (reactions[item.name] ? { ...item, reactions: reactions[item.name] } : item))
   summary.preparing = summary.toReply.filter((item) => !ready(item)).length
   if (!all) summary.toReply = summary.toReply.filter(ready)
   // Answered from here: off the list straight away (queued or sending), and once sent until the inbox
@@ -1242,13 +1244,15 @@ async function sendQueuedReplies() {
     } else if (item.kind === 'read') {
       // Only opens the chat (Instagram marks it read); nothing is sent.
       await instagram.chatState({ username, threadId })
+    } else if (item.kind === 'react') {
+      await instagram.react({ username, threadId, text: item.text, emoji: item.emoji })
     } else if (item.kind === 'like') {
       const result = await instagram.likeLast({ username, threadId })
       if (result?.already) console.log(`dm like @${username}: already liked`)
     } else await instagram.sendDm({ username, threadId, message: item.text, detail: 'reply' })
     dmReply.update(item.id, { status: 'sent', sentAt: Date.now() })
-    dmMissed.answered(username)
-    if (item.kind !== 'read') dmChats.addOurs(item.name, item.kind === 'voice' ? { voice: true, text: `(${item.voice}'s Message 2 voicenotes, part 1 and part 2)` } : item.kind === 'like' ? { text: '(liked their last message ❤️)' } : { text: item.text })
+    if (item.kind !== 'react') dmMissed.answered(username)
+    if (item.kind !== 'read' && item.kind !== 'react') dmChats.addOurs(item.name, item.kind === 'voice' ? { voice: true, text: `(${item.voice}'s Message 2 voicenotes, part 1 and part 2)` } : item.kind === 'like' ? { text: '(liked their last message ❤️)' } : { text: item.text })
     panelReads.inbox = 0 // the list refreshes on the next pass: this one is answered now
   } catch (error) {
     if (['wait', 'limit'].includes(error.kind)) {
@@ -2022,16 +2026,21 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && url.pathname === '/api/dms/send') {
       const body = await readBody(req)
-      const kind = body.kind === 'voice' ? 'voice' : body.kind === 'like' ? 'like' : 'text'
+      const kind = body.kind === 'voice' ? 'voice' : body.kind === 'like' ? 'like' : body.kind === 'react' ? 'react' : 'text'
       const text = String(body.text || '').trim()
       const voice = /^(romain|mathieu)$/i.test(body.voice || '') ? body.voice[0].toUpperCase() + body.voice.slice(1).toLowerCase() : ''
+      const emoji = kind === 'react' ? (['❤️', '😂', '😮', '😢', '😡', '👍'].find((item) => item.replace(/\uFE0F/g, '') === String(body.emoji || '').replace(/\uFE0F/g, '')) || '') : ''
+      if (kind === 'react' && !emoji) {
+        sendJson(res, 400, { error: 'Pick one of the quick reactions.' })
+        return
+      }
       if (!body.name || (kind === 'text' && !text) || (kind === 'voice' && !voice)) {
         sendJson(res, 400, { error: kind === 'voice' ? 'Who sent the first voicenote is unknown.' : 'The reply is empty.' })
         return
       }
       // Not straight away: it goes out a few minutes later, in a gap between Launch's actions, so the
       // Instagram panel does not switch the moment Send is pressed.
-      const item = dmReply.add({ name: String(body.name), username: String(body.username || ''), kind, text, voice, sendAfter: Date.now() + (120 + Math.random() * 120) * 1000 })
+      const item = dmReply.add({ name: String(body.name), username: String(body.username || ''), kind, text: kind === 'react' ? String(body.text || '').slice(0, 200) : text, voice, emoji, sendAfter: Date.now() + (120 + Math.random() * 120) * 1000 })
       sendQueuedReplies().catch(() => {})
       sendJson(res, 200, { ok: true, item })
       return
