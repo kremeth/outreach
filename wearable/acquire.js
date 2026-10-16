@@ -71,13 +71,24 @@ async function acquire(username) {
   try {
     // Meta's official API first (no logged-out page, no walls); a personal account, or the API not set
     // up / out of calls for the hour: the logged-out preview as before.
+    // Meta asked to slow down (or this hour's share is used): wait for the API rather than visiting the
+    // page. Only accounts the API cannot see (personal ones) are visited.
     let profile = null
     if (graph.available()) {
-      try {
-        profile = await graph.profile(username)
-      } catch (error) {
-        if (error.kind === 'token') console.log(`graph: ${error.message}`)
-        profile = null
+      for (let attempt = 0; attempt < 30 && !profile; attempt++) {
+        try {
+          profile = await graph.profile(username)
+        } catch (error) {
+          if (error.kind === 'rate') {
+            const until = graph.pausedUntil()
+            const wait = until ? until - Date.now() + 5000 : 5 * 60 * 1000
+            console.log(`graph: ${error.message} Waiting ${Math.round(wait / 60000)} min.`)
+            await sleep(Math.min(wait, 30 * 60 * 1000))
+            continue
+          }
+          if (error.kind === 'token') console.log(`graph: ${error.message}`)
+          break
+        }
       }
     }
     if (!profile) {
