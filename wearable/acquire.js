@@ -92,6 +92,9 @@ async function acquire(username) {
       }
     }
     if (!profile) {
+      // A personal account (the API can't see it): only when a logged-out load can start now; otherwise
+      // it is put aside for a later round so the accounts behind it are not held up.
+      if (graph.available() && !preview.backgroundRoom()) throw Object.assign(new Error('Logged-out viewing is limited right now; later.'), { kind: 'deferred' })
       preview.forget(username)
       profile = await preview.profile(username, false) // background: inside the shared hourly allowance
     }
@@ -137,13 +140,13 @@ async function acquire(username) {
       avatar,
     }
   } catch (error) {
-    record = { username, status: error.kind === 'missing' ? 'missing' : error.kind === 'restricted' ? 'restricted' : error.kind === 'login' ? 'login-wall' : 'error', error: error.message }
+    record = { username, status: error.kind === 'missing' ? 'missing' : error.kind === 'restricted' ? 'restricted' : error.kind === 'login' ? 'login-wall' : error.kind === 'deferred' ? 'deferred' : 'error', error: error.message }
   }
   record.acquiredAt = new Date().toISOString()
   record.seconds = Math.round((Date.now() - started) / 100) / 10
   // A login wall or a failure on our side (no browser...) says nothing about the profile: not saved,
   // so it is retried.
-  if (record.status !== 'login-wall' && record.status !== 'error') {
+  if (record.status !== 'login-wall' && record.status !== 'error' && record.status !== 'deferred') {
     fs.mkdirSync(path.dirname(file), { recursive: true })
     fs.writeFileSync(file, JSON.stringify(record, null, 1))
   }
@@ -202,7 +205,8 @@ async function round() {
     if (record.status === 'login-wall') todo.push(username)
     if ((index + 1) % 10 === 0 || index === todo.length - 1) console.log(`${index + 1}/${todo.length}`, JSON.stringify(counts))
     // Through the API: about 30 seconds apart (well inside Meta's hourly allowance); logged out: slow.
-    if (record.source === 'graph') await sleep(20000 + Math.random() * 15000)
+    if (record.status === 'deferred') await sleep(1000)
+    else if (record.source === 'graph') await sleep(20000 + Math.random() * 15000)
     else {
       if (graph.available()) while (loads.filter((at) => Date.now() - at < 3600 * 1000).length >= HOURLY) await sleep(60 * 1000)
       await sleep(pause[0] + Math.random() * (pause[1] - pause[0]))
