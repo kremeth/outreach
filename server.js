@@ -23,6 +23,7 @@ const partners = require('./lib/partners')
 const dmReply = require('./lib/dm-reply')
 const dmChats = require('./lib/dm-chats')
 const runners = require('./lib/runners')
+const unfollowCleanup = require('./lib/unfollow-cleanup')
 const dmMissed = require('./lib/dm-missed')
 const voiceText = require('./lib/voice-transcribe')
 const followingScraper = require('./lib/following-scraper')
@@ -938,6 +939,7 @@ async function sendRelaunch(stage, sheetRow, message) {
 // Closing a creator out: unfollow after no reply to the 2nd relaunch (checking the chat first), or
 // after they said no. Held with a claim and re-checked against the live sheet, like relaunches.
 async function closeOut(sheetRow, mode) {
+  if (mode === 'cleanup') return cleanupUnfollow(String(sheetRow).replace(/^cleanup:/, ''))
   const row = yesRows.find((item) => item.sheetRow === Number(sheetRow))
   if (!row) throw new Error('This creator is no longer in the sheet.')
   const username = data.usernameFrom(row.link)
@@ -1146,7 +1148,7 @@ function dmsForPage() {
   // with theirs), so all of them show at once, voicenotes with their transcript.
   summary.toReply = summary.toReply.map((item) => {
     const chat = dmChats.chatOf(item.name, item.username)
-    const messages = chat?.messages || []
+    const messages = (chat?.messages || []).filter((message) => message.ours || !dmMissed.SYSTEM.test(String(message.text || '').trim()))
     if (!messages.length || messages[messages.length - 1].ours) return item
     const lastOurs = messages.map((message) => message.ours).lastIndexOf(true)
     return { ...item, recent: messages.slice(lastOurs + 1).slice(-10), username: item.username || chat.username || '' }
@@ -1443,7 +1445,35 @@ async function replyStep(item) {
 async function closeQueue() {
   await refreshSheet(false).catch((error) => console.error(error))
   await log.refresh(0).catch((error) => console.error(error))
-  return relaunch.closeDue(yesRows).filter((item) => !log.claimedByOther(`close:${item.sheetRow}`))
+  const due = relaunch.closeDue(yesRows).filter((item) => !log.claimedByOther(`close:${item.sheetRow}`))
+  // Then the one-off clean-up of accounts followed that are not on Hustling (lib/unfollow-cleanup.js).
+  const cleanup = unfollowCleanup.pending().filter((username) => !log.claimedByOther(`cleanup:${username}`))
+    .map((username) => ({ username, sheetRow: `cleanup:${username}`, mode: 'cleanup', name: username }))
+  return [...due, ...cleanup]
+}
+
+// One account of the clean-up: checked again (still not on Hustling, not a partner, not in a
+// conversation waiting on us), then unfollowed. Nothing is written to the sheet.
+async function cleanupUnfollow(username) {
+  const claimed = await log.claim(`cleanup:${username}`, CREATOR_CLAIM_MS)
+  if (!claimed.ok) return { ok: false, taken: true, error: `${claimed.by} is working on @${username}.` }
+  const partnerNames = (await partners.list().catch(() => [])).map((partner) => partner.username)
+  const talking = dmsForPage().toReply.some((item) => item.username === username)
+  if (hustle.person(username) || partnerNames.includes(username) || talking) {
+    unfollowCleanup.mark(username, 'kept')
+    return { ok: false, error: `@${username} is on Hustling, a partner or in a conversation, so kept.` }
+  }
+  try {
+    const result = await instagram.unfollow({ username, sheetRow: 0, checkChat: false })
+    unfollowCleanup.mark(username, result.notFollowing ? 'not following' : 'unfollowed')
+    return result.notFollowing ? { ok: false, error: `@${username}: not followed any more.` } : { ok: true }
+  } catch (error) {
+    if (error.kind === 'missing' || error.kind === 'mismatch') {
+      unfollowCleanup.mark(username, error.kind)
+      return { ok: false, error: `@${username}: ${error.message}` }
+    }
+    throw error
+  }
 }
 
 // Relaunch and 2nd relaunch work for Launch: freshest leads first across both steps, undated ones last,
@@ -1476,6 +1506,7 @@ autopilot.init({
   relaunchQueue,
   closeOut,
   closeQueue,
+  cleanupGaveUp: (username, reason) => unfollowCleanup.mark(username, `gave up: ${reason}`),
   replyQueue,
   replyStep,
   replySummary: () => replyRelaunch.summary(yesRows, data),
@@ -1854,7 +1885,17 @@ const server = http.createServer(async (req, res) => {
       return
     }
     if (req.method === 'GET' && url.pathname === '/api/dms/avatar') {
-      const file = avatarFile(url.searchParams.get('u'))
+      let file = avatarFile(url.searchParams.get('u'))
+      // Not saved yet: the inbox list's own picture for that conversation (by its name).
+      const name = url.searchParams.get('n')
+      if (!file && name && url.searchParams.get('u')) {
+        const inbox = (() => { try { return JSON.parse(fs.readFileSync(path.join(__dirname, 'data', 'dm-inbox.json'), 'utf8')).rows || [] } catch { return [] } })()
+        const row = inbox.find((entry) => entry.name === name && entry.avatar)
+        if (row) {
+          await saveAvatar(url.searchParams.get('u'), row.avatar).catch(() => {})
+          file = avatarFile(url.searchParams.get('u'))
+        }
+      }
       if (!file) {
         res.writeHead(404)
         res.end()
@@ -2107,7 +2148,8 @@ async function boot() {
   apiUsage.startSync()
   // Missed replies: every chat read for any reason that ends with their message goes on DMs to reply;
   // the chats the reply checks read before this are added once.
-  instagram.onThread((username, messages, name) => {
+  instagram.onThread((username, messages, name, avatar) => {
+    if (avatar) saveAvatar(username, avatar).catch(() => {})
     dmMissed.note(username, messages, name)
     checkMissed().catch((error) => console.error('dm missed check', error.message))
   })

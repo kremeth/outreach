@@ -929,7 +929,7 @@ async function inboxState(wc, { folder = '', limit = 100 } = {}) {
     const page = await run(wc, String.raw`(() => {
       const rows = [...document.querySelectorAll('div[role="button"], a[href*="/direct/t/"], div[role="listitem"]')]
         .filter((el) => { const r = el.getBoundingClientRect(); return r.width > 150 && r.height > 40 && r.height < 120 && r.left < window.innerWidth * 0.5 })
-      const out = rows.map((el) => ({ lines: (el.innerText || '').split('\n').map((line) => line.trim()).filter(Boolean).slice(0, 6) }))
+      const out = rows.map((el) => ({ lines: (el.innerText || '').split('\n').map((line) => line.trim()).filter(Boolean).slice(0, 6), img: (() => { const img = el.querySelector('img'); return img ? (img.currentSrc || img.src || '') : '' })() }))
       // Scroll the list (the scrollable ancestor of the last row) further down.
       const last = rows[rows.length - 1]
       let box = last

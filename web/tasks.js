@@ -400,7 +400,7 @@ function dmRow(item) {
     const label = { queued: 'Queued', sending: 'Sending…', sent: 'Sent ✓' }[state.status] || state.status
     top.append(el('span', `dm-tag ${state.status === 'sent' ? 'sent' : 'queued'}`, state.kind === 'like' ? (state.status === 'sent' ? 'Liked ❤️' : 'Liking…') : `${state.kind === 'voice' ? '🎙 ' : ''}${label}`))
   } else if (state?.status === 'failed') top.append(el('span', 'dm-tag declined', 'Not sent'))
-  else if (DM_TAGS[item.tag]) top.append(el('span', `dm-tag ${DM_TAGS[item.tag][1]}`, DM_TAGS[item.tag][0]))
+
   top.append(el('span', 'dm-age', item.age || ''))
   if (item.unread) top.append(el('span', 'dm-dot'))
   // Their latest words when the chat is saved (a voicenote's transcript included).
@@ -413,7 +413,7 @@ function dmRow(item) {
   const pic = avatar(item.name)
   if (item.username) {
     const img = document.createElement('img')
-    img.src = `/api/dms/avatar?u=${encodeURIComponent(item.username)}`
+    img.src = `/api/dms/avatar?u=${encodeURIComponent(item.username)}&n=${encodeURIComponent(item.name)}`
     img.alt = ''
     img.addEventListener('load', () => { pic.textContent = ''; pic.style.background = 'none'; pic.append(img) })
   }
@@ -865,7 +865,12 @@ function renderPartners() {
     who.href = `https://www.instagram.com/${partner.username}/`
     who.target = '_blank'
     who.rel = 'noopener'
-    head.append(avatar(partner.username), who, el('span', `partner-pill ${state.tone}`, state.label))
+    const pic = avatar(partner.username)
+    const img = document.createElement('img')
+    img.src = `/api/dms/avatar?u=${encodeURIComponent(partner.username)}`
+    img.alt = ''
+    img.addEventListener('load', () => { pic.textContent = ''; pic.style.background = 'none'; pic.append(img) })
+    head.append(pic, who, el('span', `partner-pill ${state.tone}`, state.label))
     row.append(head)
 
     // The month: story -> today -> reel due.
