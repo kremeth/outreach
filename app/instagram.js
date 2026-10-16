@@ -525,9 +525,9 @@ const DM_SEND = String.raw`(() => {
 })()`
 
 // Sends a text DM. Only resolves once the composer is empty and the message shows in the thread.
-async function dmSteps(wc, { username, message, expect }, progress) {
+async function dmSteps(wc, { username, threadId, message, expect }, progress) {
   const text = String(message || '').trim()
-  await openUrl(wc, `https://ig.me/m/${encodeURIComponent(username)}`)
+  await openUrl(wc, chatUrl(username, threadId))
   const state = await waitFor(async () => {
     const value = await run(wc, DM_STATE).catch(() => ({ waiting: true }))
     return { ...value, done: Boolean(value.problem) || !value.waiting }
@@ -578,8 +578,12 @@ async function dmSteps(wc, { username, message, expect }, progress) {
 }
 
 // Opens the chat and reads it, without touching anything. The chat has to show at least one message.
-async function openThread(wc, username) {
-  await openUrl(wc, `https://ig.me/m/${encodeURIComponent(username)}`)
+// threadId: the conversation's own inbox address (direct/t/<id>), which opens even when the profile
+// link does not (someone we don't follow, message restrictions); else the profile link.
+const chatUrl = (username, threadId) => (threadId ? `https://www.instagram.com/direct/t/${encodeURIComponent(threadId)}/` : `https://ig.me/m/${encodeURIComponent(username)}`)
+
+async function openThread(wc, username, threadId = '') {
+  await openUrl(wc, chatUrl(username, threadId))
   const state = await waitFor(async () => {
     const value = await run(wc, DM_STATE).catch(() => ({ waiting: true }))
     return { ...value, done: Boolean(value.problem) || !value.waiting }
@@ -797,8 +801,8 @@ function hearted(messages, text) {
   return Boolean(last && (!text || last.text.slice(0, 40) === text.slice(0, 40)) && /❤|♥/.test(last.reaction || ''))
 }
 
-async function likeLastSteps(wc, { username, dryRun = false }, progress) {
-  const messages = await openThread(wc, username)
+async function likeLastSteps(wc, { username, threadId = '', dryRun = false }, progress) {
+  const messages = await openThread(wc, username, threadId)
   if (!messages.some((message) => !message.ours)) throw fail('They have no message in this chat to like.', 'notsent')
   if (hearted(messages)) return { ok: true, already: true }
   await sleep(600)
@@ -863,7 +867,7 @@ const VOICE_BUBBLES = String.raw`(() => {
     })
 })()`
 
-async function voiceAudio(wc, { username, max = 4, probe = false }) {
+async function voiceAudio(wc, { username, threadId = '', max = 4, probe = false }) {
   // Nothing is played (nothing can be heard): Instagram downloads every voicenote's file when the chat
   // opens (cdn.fbsbx.com/.../audioclip-<sent ms>-<length ms>.mp4|ogg). Those downloads are caught on the
   // panel's own network and matched to their bubbles by length ("0:21" = 21 s). The panel stays muted.
@@ -882,7 +886,7 @@ async function voiceAudio(wc, { username, max = 4, probe = false }) {
   wc.setAudioMuted(true)
   const out = { username, voices: [] }
   try {
-    await openThread(wc, username)
+    await openThread(wc, username, threadId)
     await sleep(2500)
     const bubbles = await run(wc, VOICE_BUBBLES)
     const lastOurs = bubbles.map((bubble) => bubble.ours).lastIndexOf(true)
@@ -907,15 +911,16 @@ async function voiceAudio(wc, { username, max = 4, probe = false }) {
 }
 
 // The chat as it is, read only (no action): who sent each message and when.
-async function chatState(wc, { username, transcribe = false }) {
-  const messages = await openThread(wc, username)
+async function chatState(wc, { username, threadId = '', transcribe = false }) {
+  const messages = await openThread(wc, username, threadId)
+  const openedThread = await run(wc, `(location.pathname.match(/\\/direct\\/t\\/(\\d+)/) || [])[1] || ''`).catch(() => '')
   // Their profile picture (the chat header's), shown next to their messages in Outreach.
   const avatar = await run(wc, String.raw`(() => {
     const imgs = [...document.querySelectorAll('[role="main"] img')].filter((el) => { const r = el.getBoundingClientRect(); return r.width >= 24 && r.width <= 120 && Math.abs(r.width - r.height) < 4 })
     const img = imgs.find((el) => /profile picture/i.test(el.alt || '')) || imgs.sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)[0]
     return img ? (img.currentSrc || img.src || '') : ''
   })()`).catch(() => '')
-  return { messages: transcribe ? await transcribeTheirs(wc, messages) : messages, avatar }
+  return { messages: transcribe ? await transcribeTheirs(wc, messages) : messages, avatar, threadId: openedThread || threadId }
 }
 
 // The DM inbox list, read only (no conversation is opened): scrolls the list until it has `limit`

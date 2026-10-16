@@ -1119,7 +1119,7 @@ async function checkPartnerPosts() {
 // DMs to reply: each conversation matched to the creator we contacted (by name, only when exactly one
 // matches), for their username and who sent the first voicenote (Romain or Mathieu); and the state of a
 // reply sent from the list.
-function dmsForPage() {
+function dmsForPage({ all = false } = {}) {
   const summary = dmInbox.summary()
   const norm = (text) => String(text || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
   const sent = dmReply.byName()
@@ -1167,6 +1167,19 @@ function dmsForPage() {
     const lastOurs = messages.map((message) => message.ours).lastIndexOf(true)
     return { ...item, recent: messages.slice(lastOurs + 1).slice(-10), username: item.username || chat.username || '' }
   })
+  // Only conversations that are ready are shown: read in full (voicenotes transcribed) and a reply
+  // drafted. The others are being prepared in the background (counted, not shown). One that could not be
+  // read after three tries is shown anyway, with what is known.
+  const ready = (item) => {
+    if (item.reply && item.reply.status !== 'failed') return true
+    if ((readTries.get(`${item.name}#count`) || 0) >= 3) return true
+    if (needsReading(item)) return false
+    if (dmChats.draftFor(item, dmReply.MODEL)) return true
+    const saved = dmChats.chatOf(item.name, item.username)
+    return Boolean(saved && Date.now() - saved.readAt > 5 * 60 * 1000) // a draft that would not come
+  }
+  summary.preparing = summary.toReply.filter((item) => !ready(item)).length
+  if (!all) summary.toReply = summary.toReply.filter(ready)
   // Answered from here: off the list straight away (queued or sending), and once sent until the inbox
   // is read again (then it is gone for good, unless they wrote again). A failed send stays, with why.
   const answered = (item) => item.reply && (['queued', 'sending'].includes(item.reply.status) || (item.reply.status === 'sent' && item.reply.sentAt >= summary.scannedAt))
@@ -1198,13 +1211,14 @@ async function sendQueuedReplies() {
       if (!username) throw Object.assign(new Error('Could not find their username.'), { kind: 'notsent' })
     }
     dmReply.update(item.id, { status: 'sending', username, startedAt: Date.now() })
+    const threadId = dmChats.chatOf(item.name, username)?.threadId || ''
     if (item.kind === 'voice') {
       // Message 2 is two voicenotes, part 1 then part 2 (each under Instagram's 1 minute), from whoever
       // sent the first one, sent back to back in one go (nothing in between). A part already sent is
       // never sent again.
       const parts = [1, 2].filter((part) => part > (item.sentParts || 0))
       try {
-        await instagram.voiceReply({ username, clipNames: parts.map((part) => `${item.voice} Message 2 part ${part}.m4a`) })
+        await instagram.voiceReply({ username, threadId, clipNames: parts.map((part) => `${item.voice} Message 2 part ${part}.m4a`) })
         dmReply.update(item.id, { sentParts: 2 })
       } catch (error) {
         if (error.sentParts) dmReply.update(item.id, { sentParts: (item.sentParts || 0) + error.sentParts })
@@ -1212,11 +1226,11 @@ async function sendQueuedReplies() {
       }
     } else if (item.kind === 'read') {
       // Only opens the chat (Instagram marks it read); nothing is sent.
-      await instagram.chatState({ username })
+      await instagram.chatState({ username, threadId })
     } else if (item.kind === 'like') {
-      const result = await instagram.likeLast({ username })
+      const result = await instagram.likeLast({ username, threadId })
       if (result?.already) console.log(`dm like @${username}: already liked`)
-    } else await instagram.sendDm({ username, message: item.text, detail: 'reply' })
+    } else await instagram.sendDm({ username, threadId, message: item.text, detail: 'reply' })
     dmReply.update(item.id, { status: 'sent', sentAt: Date.now() })
     dmMissed.answered(username)
     if (item.kind !== 'read') dmChats.addOurs(item.name, item.kind === 'voice' ? { voice: true, text: `(${item.voice}'s Message 2 voicenotes, part 1 and part 2)` } : item.kind === 'like' ? { text: '(liked their last message ❤️)' } : { text: item.text })
@@ -1239,14 +1253,24 @@ async function sendQueuedReplies() {
 // A conversation read in full, for drafts and View chat: their voicenotes transcribed by Gemini (from
 // the files the panel already loaded, nothing played), their profile picture kept, and the chat saved.
 async function readFullChat({ name, username }) {
-  const chat = username
-    ? { ...(await instagram.chatState({ username, transcribe: true })), username }
-    : await instagram.openInboxRow({ name, transcribe: true })
+  const saved = dmChats.chatOf(name, username)
+  let chat = null
+  // By the conversation's own address when known, else the profile link; when that fails (someone we
+  // don't follow, restrictions: "no longer exists"), found by its name in the inbox list.
+  if (username || saved?.threadId) {
+    try {
+      chat = { ...(await instagram.chatState({ username, threadId: saved?.threadId || '', transcribe: true })), username }
+    } catch (error) {
+      if (!['missing', 'mismatch', 'unreachable', 'error'].includes(error.kind) || !name) throw error
+    }
+  }
+  if (!chat) chat = await instagram.openInboxRow({ name, transcribe: true })
+  const threadId = chat.threadId || saved?.threadId || ''
   let messages = chat.messages || []
-  if (chat.username) messages = await voiceText.fill(instagram, chat.username, messages).catch((error) => { console.error('voicenotes', error.message); return messages })
+  if (chat.username) messages = await voiceText.fill(instagram, chat.username, messages, threadId).catch((error) => { console.error('voicenotes', error.message); return messages })
   if (chat.username && chat.avatar) saveAvatar(chat.username, chat.avatar).catch(() => {})
-  dmChats.remember({ name, username: chat.username || username, messages })
-  return { ...chat, messages }
+  dmChats.remember({ name, username: chat.username || username, messages, threadId })
+  return { ...chat, messages, threadId }
 }
 
 // Profile pictures for DMs to reply: the wearable model's copy when it has one, else the chat header's.
@@ -1274,7 +1298,7 @@ async function predraftReplies() {
   if (predrafting) return
   predrafting = true
   try {
-    for (const item of dmsForPage().toReply) {
+    for (const item of dmsForPage({ all: true }).toReply) {
       if (dmChats.draftFor(item, dmReply.MODEL) || (item.reply && item.reply.status !== 'failed')) continue
       const history = dmChats.history(item)
       if (!history) continue
@@ -1319,7 +1343,7 @@ async function readChatsAhead(limit = 6) {
   readingAhead = true
   let read = 0
   try {
-    for (const item of dmsForPage().toReply) {
+    for (const item of dmsForPage({ all: true }).toReply) {
       if (read >= limit || !chatGap()) break
       if (item.reply && item.reply.status !== 'failed') continue
       if (!needsReading(item)) continue
@@ -1330,6 +1354,7 @@ async function readChatsAhead(limit = 6) {
         read++
       } catch (error) {
         panelReads.errors.chats = `${item.name}: ${error.message}`
+        if (!['busy', 'wait', 'hidden'].includes(error.kind)) readTries.set(`${item.name}#count`, (readTries.get(`${item.name}#count`) || 0) + 1)
         if (['busy', 'wait', 'hidden', 'login', 'blocked'].includes(error.kind)) break
       }
     }
@@ -1499,7 +1524,7 @@ async function cleanupUnfollow(username) {
   const claimed = await log.claim(`cleanup:${username}`, CREATOR_CLAIM_MS)
   if (!claimed.ok) return { ok: false, taken: true, error: `${claimed.by} is working on @${username}.` }
   const partnerNames = (await partners.list().catch(() => [])).map((partner) => partner.username)
-  const talking = dmsForPage().toReply.some((item) => item.username === username)
+  const talking = dmsForPage({ all: true }).toReply.some((item) => item.username === username)
   if (hustle.person(username) || partnerNames.includes(username) || talking) {
     unfollowCleanup.mark(username, 'kept')
     return { ok: false, error: `@${username} is on Hustling, a partner or in a conversation, so kept.` }

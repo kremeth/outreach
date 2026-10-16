@@ -224,6 +224,8 @@ function renderDms(force) {
   const waiting = dms.toReply.length
   head.append(el('strong', '', !dms.scannedAt ? 'Inbox not read yet' : waiting ? `${waiting} waiting on you` : 'All answered'))
   if (dms.outgoing?.length) head.append(el('span', 'dm-outgoing', `${dms.outgoing.length} ${dms.outgoing.length === 1 ? 'reply' : 'replies'} going out`))
+  // Being read, transcribed and drafted in the background: they appear here once ready.
+  if (dms.preparing) head.append(el('span', 'dm-preparing', `${dms.preparing} getting ready`))
   if (dms.scannedAt) head.append(el('span', 'dm-head-note', `checked ${when}`))
   const refresh = button('Check now', 'dm-link', async () => {
     refresh.disabled = true
@@ -496,7 +498,9 @@ function dmBody(item) {
           setTimeout(attempt, 15000)
           return
         }
-        dmMessages.set(item.name, [{ text: `Could not read the chat: ${error.message}` }])
+        // Not shown as an error: what is known (their latest message) stays, the chat is read again
+        // in the background.
+        dmMessages.set(item.name, [{ text: item.preview }])
         dmReading.delete(item.name)
         redraw()
       })

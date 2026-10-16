@@ -256,7 +256,7 @@ async function sendTo(item, account) {
 // A voicenote into an ongoing conversation (a reply from the DMs to reply list): the named clip
 // (e.g. "Romain Message 2.m4a" from data/voice/clips), recorded the same way as the first voicenote.
 // No follow, and the chat does not need to be empty.
-async function replyTo({ username, clipName, clipNames }, account) {
+async function replyTo({ username, threadId, clipName, clipNames }, account) {
   const clips = path.join(__dirname, '..', 'data', 'voice', 'clips')
   // One clip, or several sent back to back in the same chat (Message 2: part 1 then part 2 straight
   // after, nothing else in between).
@@ -265,7 +265,8 @@ async function replyTo({ username, clipName, clipNames }, account) {
   for (const file of files) if (!fs.existsSync(file)) throw fail(`No clip called ${path.basename(file)}.`, 'notsent')
   await guard.lock(account, 10 * 60 * 1000)
   status = { phase: 'preparing', text: `Opening the DM with @${username}` }
-  await openUrl(`https://ig.me/m/${encodeURIComponent(username)}`)
+  // The conversation's own inbox address when known (opens even when the profile link does not).
+  await openUrl(threadId ? `https://www.instagram.com/direct/t/${encodeURIComponent(threadId)}/` : `https://ig.me/m/${encodeURIComponent(username)}`)
   const state = await ig.run(wc, 'window.__igPageState()')
   if (state.kind === 'login') throw fail('Log into Instagram in the panel.', 'login')
   if (state.kind === 'missing') throw fail('This Instagram account no longer exists.', 'missing')
