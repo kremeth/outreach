@@ -80,7 +80,7 @@ async function profile(wc, { username }) {
 
 // Everyone a creator follows: their profile, "following", then the list scrolled to its end at a
 // person's pace (about 1 to 2.5 seconds per scroll). skip: usernames already done (on a later day).
-async function following(wc, { username, max = 100000 }) {
+async function following(wc, { username, max = 100000 }, onProgress = () => {}) {
   await ig.openUrl(wc, `https://www.instagram.com/${encodeURIComponent(username)}/`)
   await sleep(between(1500, 2500))
   await checkPage(wc)
@@ -159,6 +159,7 @@ async function following(wc, { username, max = 100000 }) {
       }
     }
     still = order.length === before && batch.atEnd && !batch.loading ? still + 1 : 0
+    if (order.length !== before) onProgress(order.length)
     await sleep(between(1000, 2500))
   }
   await ig.key(wc, 'Escape').catch(() => {})

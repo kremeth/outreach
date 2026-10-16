@@ -1291,23 +1291,50 @@ async function predraftReplies() {
   }
 }
 
-// In a quiet moment, the full chat of conversations already read on Instagram (opening them changes
-// nothing there), so drafts see the whole conversation. Unread ones are never opened. At most 3 a pass.
-async function readChatsAhead() {
+// Every conversation waiting on us is read ahead (unread ones too: the person wants them ready), so
+// when they open it the messages are there, voicenotes transcribed, and a reply drafted. In any gap of a
+// minute or more between Launch's actions; a few at a time; one that failed is tried again 10 minutes
+// later. Read again when they wrote something new since.
+const readTries = new Map()
+let readingAhead = false
+function chatGap() {
+  const pilot = autopilot.status()
+  if (pilot.current || replySending) return false
+  return !(pilot.running && pilot.nextAt && pilot.nextAt - Date.now() < 75 * 1000)
+}
+function needsReading(item) {
+  const saved = dmChats.chatOf(item.name, item.username)
+  if (!saved || !saved.messages?.length) return true
+  const scannedAt = dmInbox.summary().scannedAt || 0
+  // A voicenote of theirs without words yet.
+  const theirs = saved.messages.filter((message) => !message.ours)
+  if (theirs.some((message) => message.voice && !String(message.text || '').replace(/\d+:\d{2}/, '').replace(/(view|hide) transcription|unable to transcribe,?\s*(try again)?/gi, '').trim())) return true
+  if (saved.readAt > scannedAt) return false
+  const latest = String(item.rawPreview || item.preview || '').trim()
+  if (dmChats.HIDDEN_PREVIEW.test(latest) || !latest || /^·?$/.test(latest)) return saved.messages[saved.messages.length - 1]?.ours === true
+  return !theirs.some((message) => String(message.text || '').trim() === latest)
+}
+async function readChatsAhead(limit = 6) {
+  if (readingAhead) return
+  readingAhead = true
   let read = 0
-  for (const item of dmsForPage().toReply) {
-    if (read >= 3 || !panelFree()) break
-    if (item.unread || !item.username) continue
-    const saved = dmChats.chatOf(item.name, item.username)
-    const latest = String(item.preview || '').trim()
-    if (saved && (dmChats.HIDDEN_PREVIEW.test(latest) || saved.readAt > (dmInbox.summary().scannedAt || 0) || saved.messages.some((message) => !message.ours && message.text.trim() === latest))) continue
-    try {
-      await readFullChat({ name: item.name, username: item.username })
-      read++
-    } catch (error) {
-      panelReads.errors.chats = error.message
-      break
+  try {
+    for (const item of dmsForPage().toReply) {
+      if (read >= limit || !chatGap()) break
+      if (item.reply && item.reply.status !== 'failed') continue
+      if (!needsReading(item)) continue
+      if (Date.now() - (readTries.get(item.name) || 0) < 10 * 60 * 1000) continue
+      readTries.set(item.name, Date.now())
+      try {
+        await readFullChat({ name: item.name, username: item.username })
+        read++
+      } catch (error) {
+        panelReads.errors.chats = `${item.name}: ${error.message}`
+        if (['busy', 'wait', 'hidden', 'login', 'blocked'].includes(error.kind)) break
+      }
     }
+  } finally {
+    readingAhead = false
   }
   predraftReplies().catch(() => {})
 }
@@ -1968,7 +1995,13 @@ const server = http.createServer(async (req, res) => {
       return
     }
     if (req.method === 'GET' && url.pathname === '/api/scraper') {
-      sendJson(res, 200, followingScraper.summary())
+      const summary = followingScraper.summary()
+      // While a following list is being read: how many accounts are loaded so far.
+      if (summary.current && summary.status === 'running') {
+        const progress = await instagram.scraperProgress().catch(() => null)
+        if (progress && progress.reading && progress.username === summary.current.username) summary.reading = { loaded: progress.loaded, since: progress.at }
+      }
+      sendJson(res, 200, summary)
       return
     }
     if (req.method === 'POST' && url.pathname === '/api/scraper/login') {
@@ -2171,6 +2204,8 @@ async function boot() {
   setTimeout(() => checkMissed().catch((error) => console.error('dm missed check', error.message)), 30 * 1000).unref()
   const backfilled = dmMissed.backfill()
   if (backfilled) console.log(`dm missed: ${backfilled} earlier chats where they wrote last`)
+  // DMs read ahead (messages, voicenote transcripts, a drafted reply) between Launch's actions.
+  setInterval(() => readChatsAhead().catch((error) => console.error('read ahead', error.message)), 2 * 60 * 1000).unref()
   // Meta's token kept alive (renewed daily when the app secret is saved).
   const renewMeta = () => igGraph.renew().then((result) => { if (result.renewed) console.log(`meta token renewed, valid until ${new Date(result.expiresAt).toLocaleDateString('en-AU')}`) }).catch((error) => console.error('meta renew', error.message))
   setTimeout(renewMeta, 20 * 1000).unref()

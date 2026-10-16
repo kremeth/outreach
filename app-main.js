@@ -231,6 +231,7 @@ let scraperWin = null
 let appQuitting = false
 app.on('before-quit', () => { appQuitting = true })
 let scraperView = null
+let scraperProgress = { username: '', loaded: 0, at: 0, reading: false }
 
 function openScraper(show = true) {
   if (scraperWin && !scraperWin.isDestroyed()) {
@@ -498,6 +499,8 @@ function startControl() {
         if (scraperWin && !scraperWin.isDestroyed() && scraperWin.isVisible()) scraperWin.hide()
         return reply(200, { ok: true })
       }
+      // How far the following list being read has got (for the card, live).
+      if (url.pathname === '/scraper/progress') return reply(200, scraperProgress)
       if (url.pathname === '/scraper/status') {
         const id = await scraperAccount()
         const outreach = await accountId()
@@ -513,7 +516,10 @@ function startControl() {
         scraperBusy = true
         try {
           const wc = openScraper(false)
-          return reply(200, url.pathname === '/scraper/profile' ? await scraperUi.profile(wc, body) : await scraperUi.following(wc, body))
+          if (url.pathname === '/scraper/following') scraperProgress = { username: body.username, loaded: 0, at: Date.now(), reading: true }
+          const result = url.pathname === '/scraper/profile' ? await scraperUi.profile(wc, body) : await scraperUi.following(wc, body, (loaded) => { scraperProgress = { username: body.username, loaded, at: Date.now(), reading: true } })
+          if (url.pathname === '/scraper/following') scraperProgress = { username: body.username, loaded: (result.usernames || []).length, at: Date.now(), reading: false }
+          return reply(200, result)
         } finally {
           scraperBusy = false
         }

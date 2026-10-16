@@ -990,15 +990,41 @@ async function transcribeTheirs(wc, messages) {
 async function openInboxRow(wc, { name, folder = '', transcribe = true }) {
   await openUrl(wc, `https://www.instagram.com/direct/${folder === 'general' ? 'general/' : 'inbox/'}`)
   await sleep(2000)
-  const target = await run(wc, String.raw`(() => {
-    const want = ${JSON.stringify(String(name || ''))}
-    const rows = [...document.querySelectorAll('div[role="button"], a[href*="/direct/t/"], div[role="listitem"]')]
-      .filter((el) => { const r = el.getBoundingClientRect(); return r.width > 150 && r.height > 40 && r.height < 120 && r.left < window.innerWidth * 0.5 })
-    const row = rows.find((el) => ((el.innerText || '').split('\n')[0] || '').trim() === want)
-    if (!row) return null
-    const r = row.getBoundingClientRect()
-    return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }
-  })()`)
+  // Looked for down the list (scrolling, up to about 200 conversations), names compared without odd
+  // spaces or symbols.
+  let target = null
+  for (let round = 0; round < 25 && !target; round++) {
+    target = await run(wc, String.raw`(() => {
+      const norm = (text) => String(text || '').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
+      const want = norm(${JSON.stringify(String(name || ''))})
+      const rows = [...document.querySelectorAll('div[role="button"], a[href*="/direct/t/"], div[role="listitem"]')]
+        .filter((el) => { const r = el.getBoundingClientRect(); return r.width > 150 && r.height > 40 && r.height < 120 && r.left < window.innerWidth * 0.5 })
+      const row = rows.find((el) => norm((el.innerText || '').split('\n')[0]) === want)
+      if (row) {
+        row.scrollIntoView({ block: 'center' })
+        const r = row.getBoundingClientRect()
+        return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }
+      }
+      const last = rows[rows.length - 1]
+      let box = last
+      while (box && box.parentElement && !(box.scrollHeight > box.clientHeight + 20 && /auto|scroll/.test(getComputedStyle(box).overflowY))) box = box.parentElement
+      if (box) box.scrollTop = box.scrollTop + box.clientHeight * 0.9
+      return null
+    })()`).catch(() => null)
+    if (!target) await sleep(900)
+  }
+  if (target) {
+    await sleep(500)
+    // Its position after scrolling it into view.
+    target = await run(wc, String.raw`(() => {
+      const norm = (text) => String(text || '').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
+      const want = norm(${JSON.stringify(String(name || ''))})
+      const row = [...document.querySelectorAll('div[role="button"], a[href*="/direct/t/"], div[role="listitem"]')].find((el) => norm((el.innerText || '').split('\n')[0]) === want)
+      if (!row) return null
+      const r = row.getBoundingClientRect()
+      return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }
+    })()`).catch(() => null)
+  }
   if (!target) throw fail(`${name} is not in the inbox list.`, 'mismatch')
   await click(wc, target)
   const opened = await waitFor(async () => {

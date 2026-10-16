@@ -483,12 +483,24 @@ function dmBody(item) {
     thread.append(bubble)
     if (!dmReading.has(item.name)) {
       dmReading.add(item.name)
-      api('/api/dms/messages', { name: item.name, username: item.username }, 180000).then((result) => {
+      // Instagram busy with Launch: not an error, it simply tries again (every 15 seconds) while open.
+      const attempt = () => api('/api/dms/messages', { name: item.name, username: item.username }, 180000).then((result) => {
         if (result.username && !item.username) item.username = result.username
         dmMessages.set(item.name, result.messages.length ? result.messages : [{ text: '(nothing new from them)' }])
+        dmReading.delete(item.name)
+        redraw()
       }).catch((error) => {
+        if (/busy/i.test(error.message || '') && dmOpen === item.name) {
+          const waiting = [...dmsEl.querySelectorAll('.dm-row')].find((node) => node.dataset.name === item.name)?.querySelector('.dm-reading')
+          if (waiting) waiting.textContent = 'Waiting for Instagram (Launch is using it), reading in a moment…'
+          setTimeout(attempt, 15000)
+          return
+        }
         dmMessages.set(item.name, [{ text: `Could not read the chat: ${error.message}` }])
-      }).finally(() => { dmReading.delete(item.name); redraw() })
+        dmReading.delete(item.name)
+        redraw()
+      })
+      attempt()
     }
   } else if (false) {
     const line = el('div', 'dm-line theirs')
@@ -675,6 +687,12 @@ function dmBody(item) {
         const area = [...list.querySelectorAll('.dm-draft-text')].pop()
         if (area && body.isConnected) await typeInto(area, result.reply, result.instant ? 450 : 800)
       } catch (error) {
+        if (/busy/i.test(error.message || '') && body.isConnected) {
+          thinking.textContent = 'Waiting for Instagram (Launch is using it)…'
+          clearInterval(ticker)
+          setTimeout(() => { if (body.isConnected) generate({ fresh }) }, 15000)
+          return
+        }
         note.textContent = error.message || 'Could not write a reply.'
       }
       clearInterval(ticker)
@@ -945,7 +963,11 @@ function renderScraper() {
   bar.append(fill)
   const lines = el('div', 'scraper-lines')
   lines.append(el('div', '', `${number(t.contacts || 0)} added to 1. Influencer Contact List · ${number(t.reach || 0)} added to Customer Reach Out · ${number(t.discarded || 0)} not in Australia`))
-  if (scraper.current) lines.append(el('div', '', `Now: @${scraper.current.username}'s following, ${number(scraper.current.done)} of ${number(scraper.current.following)}`))
+  if (scraper.current) {
+    lines.append(el('div', '', scraper.reading
+      ? `Now: reading @${scraper.current.username}'s following list, ${number(scraper.reading.loaded)} of ${number(scraper.current.following)} loaded so far…`
+      : `Now: @${scraper.current.username}'s following, ${number(scraper.current.done)} of ${number(scraper.current.following)} checked`))
+  }
   if (t.creators) lines.append(el('div', '', `${number(t.creators)} creators finished today (added to Scraped)`))
   if (t.viaApi || t.visited) lines.append(el('div', '', `${number(t.viaApi || 0)} checked through Meta's API · ${number(t.visited || 0)} profiles visited by the scraper account`))
   const needsYou = scraper.status === 'needs check' || scraper.status === 'needs login'
