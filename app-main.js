@@ -312,6 +312,8 @@ let lastPanelReload = 0
 async function inPanel(kind, label, describe, task) {
   if (panelTask) throw Object.assign(new Error(`Instagram is busy (${panelTask}). Try again in a moment.`), { kind: 'busy' })
   panelTask = label
+  // The person typing in Outreach keeps (gets back) the keyboard once the panel is done.
+  const uiHadFocus = Boolean(ui && !ui.webContents.isDestroyed() && ui.webContents.isFocused())
   try {
     await ensurePanelLive()
     const account = await accountId()
@@ -335,6 +337,7 @@ async function inPanel(kind, label, describe, task) {
     return result
   } finally {
     panelTask = ''
+    if (uiHadFocus && ui && !ui.webContents.isDestroyed()) ui.webContents.focus()
   }
 }
 

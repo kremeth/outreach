@@ -347,12 +347,29 @@ async function commentSteps(wc, { permalink, message, dryRun = false, allowLiked
   const boxPoint = await aim(wc, 'box')
   if (!boxPoint) throw fail('Could not find the comment box on this post.')
   await sleep(250)
-  await click(wc, boxPoint)
-  await sleep(300)
-  await wc.insertText(text)
-  await sleep(500)
-  state = await run(wc, POST_STATE)
+  // Typed, then checked against the comment before posting (a key from elsewhere, a dropped emoji):
+  // cleared and typed again once; still not right, nothing is posted.
+  const sameText = (a, b) => String(a || '').replace(/[\u200b-\u200d\ufe0f]/g, '').replace(/\s+/g, ' ').trim() === String(b || '').replace(/[\u200b-\u200d\ufe0f]/g, '').replace(/\s+/g, ' ').trim()
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await click(wc, boxPoint)
+    await sleep(300)
+    if (attempt) {
+      await key(wc, 'a', [process.platform === 'darwin' ? 'meta' : 'control'])
+      await key(wc, 'Backspace')
+      await sleep(250)
+    }
+    await wc.insertText(text)
+    await sleep(500)
+    state = await run(wc, POST_STATE)
+    if (sameText(state.boxText, text)) break
+  }
   if (!String(state.boxText || '').trim()) throw fail('Could not type into the comment box.')
+  if (!sameText(state.boxText, text)) {
+    await click(wc, boxPoint).catch(() => {})
+    await key(wc, 'a', [process.platform === 'darwin' ? 'meta' : 'control']).catch(() => {})
+    await key(wc, 'Backspace').catch(() => {})
+    throw fail('The comment box did not hold exactly the comment (a key from elsewhere got in), so nothing was posted.', 'notsent')
+  }
 
   const snippet = text.slice(0, 40)
   const posted = async () => {
@@ -548,16 +565,38 @@ async function dmSteps(wc, { username, threadId, message, expect }, progress) {
     }
   }
 
-  await click(wc, state)
-  await sleep(200)
+  // Typed, then checked against the reply character by character (emojis included) before Send: a key
+  // that landed in the box from elsewhere (the person typing in Outreach at that moment) or a dropped
+  // character means it is cleared and typed again; still not right, nothing is sent.
   const lines = text.split('\n')
-  for (let index = 0; index < lines.length; index++) {
-    if (index > 0) await key(wc, 'Return', ['shift'])
-    if (lines[index]) await wc.insertText(lines[index])
+  const same = (a, b) => String(a || '').replace(/[\u200b-\u200d\ufe0f]/g, '').replace(/\s+/g, ' ').trim() === String(b || '').replace(/[\u200b-\u200d\ufe0f]/g, '').replace(/\s+/g, ' ').trim()
+  let typed = null
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (attempt) {
+      // Clear the box: select all, delete.
+      await click(wc, state)
+      await key(wc, 'a', [process.platform === 'darwin' ? 'meta' : 'control'])
+      await key(wc, 'Backspace')
+      await sleep(300)
+    } else {
+      await click(wc, state)
+      await sleep(200)
+    }
+    for (let index = 0; index < lines.length; index++) {
+      if (index > 0) await key(wc, 'Return', ['shift'])
+      if (lines[index]) await wc.insertText(lines[index])
+    }
+    await sleep(500)
+    typed = await run(wc, DM_STATE)
+    if (same(typed.text, text)) break
   }
-  await sleep(500)
-  const typed = await run(wc, DM_STATE)
-  if (!typed.text) throw fail('Could not type into the message box.')
+  if (!typed?.text) throw fail('Could not type into the message box.')
+  if (!same(typed.text, text)) {
+    await click(wc, state).catch(() => {})
+    await key(wc, 'a', [process.platform === 'darwin' ? 'meta' : 'control']).catch(() => {})
+    await key(wc, 'Backspace').catch(() => {})
+    throw fail('The message box did not hold exactly the reply (a key from elsewhere got in), so nothing was sent.', 'notsent')
+  }
 
   const send = await run(wc, DM_SEND)
   progress.pressed = true
@@ -566,9 +605,9 @@ async function dmSteps(wc, { username, threadId, message, expect }, progress) {
   const snippet = lines.find((line) => line.trim())?.slice(0, 40) || text.slice(0, 40)
   const sent = await waitFor(async () => {
     const value = await run(wc, DM_STATE)
-    const visible = !value.text && await run(wc, shown(snippet))
+    const visible = await run(wc, shown(snippet))
     return { ...value, visible, done: visible || value.problem === 'blocked' }
-  }, 8000, 400)
+  }, 15000, 400)
   if (sent?.problem === 'blocked') throw problemError(sent)
   if (!sent?.visible) throw fail('Instagram took the message but it never showed in the chat. Check the Instagram panel before sending again.')
   await sleep(1500)
