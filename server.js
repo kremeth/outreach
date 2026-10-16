@@ -2171,6 +2171,10 @@ async function boot() {
   setTimeout(() => checkMissed().catch((error) => console.error('dm missed check', error.message)), 30 * 1000).unref()
   const backfilled = dmMissed.backfill()
   if (backfilled) console.log(`dm missed: ${backfilled} earlier chats where they wrote last`)
+  // Meta's token kept alive (renewed daily when the app secret is saved).
+  const renewMeta = () => igGraph.renew().then((result) => { if (result.renewed) console.log(`meta token renewed, valid until ${new Date(result.expiresAt).toLocaleDateString('en-AU')}`) }).catch((error) => console.error('meta renew', error.message))
+  setTimeout(renewMeta, 20 * 1000).unref()
+  setInterval(renewMeta, 6 * 3600 * 1000).unref()
   // The wearable model's photo downloader and model, kept running on this Mac.
   runners.start((text) => console.log(text))
   // The HUSTLING list straight from the sheet (no Instagram), so Hustling is never empty after a restart.
