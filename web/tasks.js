@@ -275,7 +275,7 @@ function outgoingLine(list, sendingNow) {
   const waiting = list.filter((entry) => entry.waitUntil)
   const ready = list.length - waiting.length
   const parts = []
-  if (ready) parts.push((hour < 8 || hour >= 21) && !sendingNow ? `${ready} go out from 8:00 tomorrow morning` : `${ready} go out one by one between Launch's actions`)
+  if (ready) parts.push((hour < 8 || hour >= 21) && !sendingNow ? `${ready} go out from 8:00 tomorrow morning` : `${ready} go out in a few minutes, one by one between Launch's actions`)
   const groups = {}
   for (const entry of waiting) {
     const key = `${entry.kind}|${entry.waitReason}|${time(entry.waitUntil)}`

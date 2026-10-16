@@ -1197,6 +1197,8 @@ async function sendQueuedReplies() {
   if (replySending) return
   const pilot = autopilot.status()
   if (pilot.current) return
+  // In a gap between Launch's actions (its next one at least a minute away).
+  if (pilot.running && pilot.nextAt && pilot.nextAt - Date.now() < 60 * 1000) return
   // Same hours as Launch, unless "Send now" was pressed.
   const hour = new Date().getHours()
   if ((hour < 8 || hour >= 21) && Date.now() > replyNowUntil) return
@@ -2027,7 +2029,9 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 400, { error: kind === 'voice' ? 'Who sent the first voicenote is unknown.' : 'The reply is empty.' })
         return
       }
-      const item = dmReply.add({ name: String(body.name), username: String(body.username || ''), kind, text, voice })
+      // Not straight away: it goes out a few minutes later, in a gap between Launch's actions, so the
+      // Instagram panel does not switch the moment Send is pressed.
+      const item = dmReply.add({ name: String(body.name), username: String(body.username || ''), kind, text, voice, sendAfter: Date.now() + (120 + Math.random() * 120) * 1000 })
       sendQueuedReplies().catch(() => {})
       sendJson(res, 200, { ok: true, item })
       return
