@@ -1142,6 +1142,15 @@ function dmsForPage() {
     })
   }
   summary.toReply = summary.toReply.map((item) => (item.missed ? { ...item, draftReady: Boolean(dmChats.draftFor(item, dmReply.MODEL)) } : item))
+  // Their messages since our last one, from the chat saved on this Mac (when it is up to date: it ends
+  // with theirs), so all of them show at once, voicenotes with their transcript.
+  summary.toReply = summary.toReply.map((item) => {
+    const chat = dmChats.chatOf(item.name, item.username)
+    const messages = chat?.messages || []
+    if (!messages.length || messages[messages.length - 1].ours) return item
+    const lastOurs = messages.map((message) => message.ours).lastIndexOf(true)
+    return { ...item, recent: messages.slice(lastOurs + 1).slice(-10), username: item.username || chat.username || '' }
+  })
   // Answered from here: off the list straight away (queued or sending), and once sent until the inbox
   // is read again (then it is gone for good, unless they wrote again). A failed send stays, with why.
   const answered = (item) => item.reply && (['queued', 'sending'].includes(item.reply.status) || (item.reply.status === 'sent' && item.reply.sentAt >= summary.scannedAt))

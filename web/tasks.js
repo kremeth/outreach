@@ -199,6 +199,7 @@ const dmVoices = new Map()
 const dmNotes = new Map()
 const dmCopilot = new Map()
 const dmFullChat = new Map()
+const dmReading = new Set()
 let dmOpen = ''
 let dmShown = ''
 
@@ -402,8 +403,17 @@ function dmRow(item) {
   top.append(el('span', 'dm-age', item.age || ''))
   if (item.unread) top.append(el('span', 'dm-dot'))
   const preview = /^\d+ new messages?$|^new message$/i.test(item.preview) ? `💬 ${item.preview}` : item.voice && /voice/i.test(item.preview) ? '🎙 Voicenote' : item.preview
-  text.append(top, el('span', 'dm-preview', preview))
-  summary.append(avatar(item.name), text, el('span', 'dm-chevron', '›'))
+  text.append(top)
+  if (item.username) text.append(el('span', 'dm-handle-line', `@${item.username}`))
+  text.append(el('span', 'dm-preview', preview))
+  const pic = avatar(item.name)
+  if (item.username) {
+    const img = document.createElement('img')
+    img.src = `/api/dms/avatar?u=${encodeURIComponent(item.username)}`
+    img.alt = ''
+    img.addEventListener('load', () => { pic.textContent = ''; pic.style.background = 'none'; pic.append(img) })
+  }
+  summary.append(pic, text, el('span', 'dm-chevron', '›'))
   summary.addEventListener('click', () => {
     const previous = dmOpen
     dmOpen = open ? '' : item.name
@@ -443,6 +453,7 @@ function dmBody(item) {
   }
   const bubbleLine = (message) => {
     const line = el('div', `dm-line ${message.ours ? 'ours' : 'theirs'}`)
+    const face = () => document.createDocumentFragment() // the picture is in the row above, not repeated
     const bubble = el('div', `dm-bubble${message.ours ? ' ours' : ''}${message.voice ? ' voice' : ''}`)
     if (message.voice) bubble.append(el('span', 'dm-voice-tag', message.transcribed ? '🎙 Voicenote · transcribed' : '🎙 Voicenote'))
     const words = String(message.text || '').replace(/\d+:\d{2}/, '').replace(/(view|hide) transcription|unable to transcribe,?\s*(try again)?/gi, '').trim()
@@ -454,9 +465,25 @@ function dmBody(item) {
   const full = dmFullChat.get(item.name)
   const shown = dmMessages.get(item.name)
   const hidden = /^\d+ new messages?$|^new message$/i.test(item.preview) || /voice message/i.test(item.preview)
+  const needsWords = (messages) => messages.some((message) => message.voice && !String(message.text || '').replace(/\d+:\d{2}/, '').replace(/(view|hide) transcription|unable to transcribe,?\s*(try again)?/gi, '').trim())
   if (full) for (const message of full) thread.append(bubbleLine(message))
   else if (shown) for (const message of shown) thread.append(bubbleLine({ ...message, ours: false }))
-  else if (hidden) {
+  else if (item.recent?.length && !needsWords(item.recent)) for (const message of item.recent) thread.append(bubbleLine(message))
+  else if (hidden || item.recent?.length) {
+    // Read straight away when opened: every message since our last, voicenotes transcribed.
+    const bubble = el('div', 'dm-bubble placeholder')
+    bubble.append(el('span', 'dm-reading', /voice/i.test(item.preview) || item.recent?.length ? 'Reading the chat and transcribing the voicenote…' : 'Reading the chat…'))
+    thread.append(bubble)
+    if (!dmReading.has(item.name)) {
+      dmReading.add(item.name)
+      api('/api/dms/messages', { name: item.name, username: item.username }, 180000).then((result) => {
+        if (result.username && !item.username) item.username = result.username
+        dmMessages.set(item.name, result.messages.length ? result.messages : [{ text: '(nothing new from them)' }])
+      }).catch((error) => {
+        dmMessages.set(item.name, [{ text: `Could not read the chat: ${error.message}` }])
+      }).finally(() => { dmReading.delete(item.name); redraw() })
+    }
+  } else if (false) {
     const line = el('div', 'dm-line theirs')
     const bubble = el('div', 'dm-bubble placeholder')
     const count = item.preview.match(/^\d+/)?.[0]
