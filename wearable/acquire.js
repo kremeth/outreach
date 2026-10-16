@@ -33,6 +33,7 @@ process.env.IG_PREVIEW_TABS = '1'
   } catch {}
 })()
 const preview = require('../lib/ig-preview')
+const graph = require('../lib/ig-graph')
 const sharp = require('sharp')
 
 const MAX_SIDE = 768
@@ -68,8 +69,21 @@ async function acquire(username) {
   const started = Date.now()
   let record
   try {
-    preview.forget(username)
-    const profile = await preview.profile(username, false) // background: inside the shared hourly allowance
+    // Meta's official API first (no logged-out page, no walls); a personal account, or the API not set
+    // up / out of calls for the hour: the logged-out preview as before.
+    let profile = null
+    if (graph.available()) {
+      try {
+        profile = await graph.profile(username)
+      } catch (error) {
+        if (error.kind === 'token') console.log(`graph: ${error.message}`)
+        profile = null
+      }
+    }
+    if (!profile) {
+      preview.forget(username)
+      profile = await preview.profile(username, false) // background: inside the shared hourly allowance
+    }
     const images = (profile.images || []).filter((image) => image.src)
     const folder = path.join(DIR, 'images', username)
     fs.mkdirSync(folder, { recursive: true })
@@ -106,6 +120,7 @@ async function acquire(username) {
       name: profile.name || '',
       bio: profile.bio || '',
       followers: profile.followers || '',
+      source: profile.source || 'preview',
       posts: saved,
       postCount: (profile.posts || []).length,
       avatar,
@@ -161,18 +176,26 @@ async function round() {
   const counts = {}
   for (const [index, username] of todo.entries()) {
     // A login wall anywhere on this computer (shared file): wait it out, plus a quiet 10 minutes.
-    for (let wall = preview.loginWall(); wall; wall = preview.loginWall()) {
+    for (let wall = graph.available() ? 0 : preview.loginWall(); wall; wall = preview.loginWall()) {
       console.log(`login wall: waiting until ${new Date(wall + QUIET_AFTER_WALL_MS).toLocaleTimeString('en-AU')}`)
       await sleep(wall - Date.now() + QUIET_AFTER_WALL_MS)
     }
     // At most HOURLY profile loads in any hour.
-    while (loads.filter((at) => Date.now() - at < 3600 * 1000).length >= HOURLY) await sleep(60 * 1000)
-    loads.push(Date.now())
+    // Logged-out loads only: at most HOURLY in any hour (lookups through Meta's API have their own limit).
+    if (!graph.available()) {
+      while (loads.filter((at) => Date.now() - at < 3600 * 1000).length >= HOURLY) await sleep(60 * 1000)
+    }
     const record = await acquire(username)
+    if (record.source !== 'graph') loads.push(Date.now())
     counts[record.status] = (counts[record.status] || 0) + 1
     if (record.status === 'login-wall') todo.push(username)
     if ((index + 1) % 10 === 0 || index === todo.length - 1) console.log(`${index + 1}/${todo.length}`, JSON.stringify(counts))
-    await sleep(pause[0] + Math.random() * (pause[1] - pause[0]))
+    // Through the API: about 30 seconds apart (well inside Meta's hourly allowance); logged out: slow.
+    if (record.source === 'graph') await sleep(20000 + Math.random() * 15000)
+    else {
+      if (graph.available()) while (loads.filter((at) => Date.now() - at < 3600 * 1000).length >= HOURLY) await sleep(60 * 1000)
+      await sleep(pause[0] + Math.random() * (pause[1] - pause[0]))
+    }
   }
   if (todo.length) console.log('done', JSON.stringify(counts))
   return todo.length

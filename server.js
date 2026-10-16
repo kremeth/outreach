@@ -24,6 +24,7 @@ const dmReply = require('./lib/dm-reply')
 const dmChats = require('./lib/dm-chats')
 const runners = require('./lib/runners')
 const unfollowCleanup = require('./lib/unfollow-cleanup')
+const igGraph = require('./lib/ig-graph')
 const dmMissed = require('./lib/dm-missed')
 const voiceText = require('./lib/voice-transcribe')
 const followingScraper = require('./lib/following-scraper')
@@ -626,10 +627,23 @@ function serveStatic(res, urlPath) {
   })
 }
 
+// A creator's profile: Meta's official API first (no logged-out page, so no walls), the logged-out
+// preview for personal accounts or when the API is not set up or out of calls for the hour.
+async function profileOf(username, urgent) {
+  if (igGraph.available()) {
+    try {
+      return await igGraph.profile(username)
+    } catch (error) {
+      if (error.kind === 'token') console.error('graph', error.message)
+    }
+  }
+  return preview.profile(username, urgent)
+}
+
 // The newest post by date, not the first grid tile, which is often a pinned post.
 // urgent: false for background work (auto-commenting), inside the shared hourly allowance.
 async function latestPost(username, urgent = true) {
-  let profile = await preview.profile(username, urgent)
+  let profile = await profileOf(username, urgent)
   let post = posts.latestPost(profile)
   if (!post?.image) {
     preview.forget(username)
@@ -2063,7 +2077,7 @@ const server = http.createServer(async (req, res) => {
       try {
         // The Prospecting screen: the profile on screen now, or one it preloads next ('screen'): never held
         // back by the background allowance.
-        const profile = await preview.profile(url.searchParams.get('u'), url.searchParams.get('now') === '1' ? true : 'screen')
+        const profile = await profileOf(url.searchParams.get('u'), url.searchParams.get('now') === '1' ? true : 'screen')
         sendJson(res, 200, profile)
       } catch (error) {
         sendJson(res, 502, { error: error.message || 'Could not load this profile.', kind: error.kind || 'error' })
