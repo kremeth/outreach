@@ -1119,6 +1119,34 @@ async function checkPartnerPosts() {
 // DMs to reply: each conversation matched to the creator we contacted (by name, only when exactly one
 // matches), for their username and who sent the first voicenote (Romain or Mathieu); and the state of a
 // reply sent from the list.
+let sentLogCache = { mtime: 0, map: new Map() }
+function voiceSenderOf(username) {
+  const key = String(username || '').toLowerCase()
+  if (!key) return ''
+  const valid = (value) => (/^(romain|mathieu)$/i.test(String(value || '').trim()) ? String(value).trim()[0].toUpperCase() + String(value).trim().slice(1).toLowerCase() : '')
+  const yes = yesRows.find((row) => data.usernameFrom(row.link) === key)
+  if (valid(yes?.voice)) return valid(yes.voice)
+  const any = rows.find((row) => data.usernameFrom(row['DIRECT LINK'] || row.link || '') === key)
+  if (any && valid(any['Voice'] || any.voice)) return valid(any['Voice'] || any.voice)
+  try {
+    const file = path.join(__dirname, 'data', 'voice', 'sent-log.jsonl')
+    const mtime = fs.statSync(file).mtimeMs
+    if (mtime !== sentLogCache.mtime) {
+      const map = new Map()
+      for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+        try {
+          const entry = JSON.parse(line)
+          if (entry.username && entry.voice && entry.result === 'sent') map.set(String(entry.username).toLowerCase(), entry.voice)
+        } catch {}
+      }
+      sentLogCache = { mtime, map }
+    }
+    return valid(sentLogCache.map.get(key))
+  } catch {
+    return ''
+  }
+}
+
 function dmsForPage({ all = false } = {}) {
   const summary = dmInbox.summary()
   const norm = (text) => String(text || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
@@ -1180,6 +1208,9 @@ function dmsForPage({ all = false } = {}) {
   }
   const reactions = dmReply.reactions()
   summary.toReply = summary.toReply.map((item) => (reactions[item.name] ? { ...item, reactions: reactions[item.name] } : item))
+  // Who sent them the first voicenote (Message 2 comes from the same person): by username, from the
+  // sheet (the creators we contacted, then the whole contact list), then this Mac's send log.
+  summary.toReply = summary.toReply.map((item) => (item.voice || !item.username ? item : { ...item, voice: voiceSenderOf(item.username) }))
   summary.preparing = summary.toReply.filter((item) => !ready(item)).length
   if (!all) summary.toReply = summary.toReply.filter(ready)
   // Answered from here: off the list straight away (queued or sending), and once sent until the inbox
