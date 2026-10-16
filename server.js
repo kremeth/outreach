@@ -868,7 +868,7 @@ async function todo() {
     voice: { toSend: voice.length, sentToday: Math.max(sendQueue.sentToday(), guard.app ? guard.kinds.voice.today : 0), limit: sendQueue.DAILY_LIMIT },
     hustle: { ...hustle.status(), auto: autoCommentStatus() },
     relaunch: { 1: relaunch.summary(yesRows, 1), 2: relaunch.summary(yesRows, 2) },
-    warnings: [loadError, refreshError, writeNote()].filter(Boolean),
+    warnings: [loadError, refreshError, writeNote(), igGraph.warning()].filter(Boolean),
     sheetRefreshedAt: sheetRefreshedAt ? new Date(sheetRefreshedAt).toISOString() : '',
   }
 }
@@ -2175,6 +2175,8 @@ async function boot() {
   const renewMeta = () => igGraph.renew().then((result) => { if (result.renewed) console.log(`meta token renewed, valid until ${new Date(result.expiresAt).toLocaleDateString('en-AU')}`) }).catch((error) => console.error('meta renew', error.message))
   setTimeout(renewMeta, 20 * 1000).unref()
   setInterval(renewMeta, 6 * 3600 * 1000).unref()
+  setTimeout(() => igGraph.checkAccess().catch(() => {}), 40 * 1000).unref()
+  setInterval(() => igGraph.checkAccess().catch(() => {}), 12 * 3600 * 1000).unref()
   // The wearable model's photo downloader and model, kept running on this Mac.
   runners.start((text) => console.log(text))
   // The HUSTLING list straight from the sheet (no Instagram), so Hustling is never empty after a restart.
