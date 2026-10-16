@@ -284,6 +284,8 @@ async function scraperAccount() {
 }
 
 let scraperBusy = false
+// The last following list read (or being read), by creator.
+let followingRead = null
 const scraperUi = require('./app/scraper')
 
 // The logged-in Instagram account (its numeric id), so limits are counted per account across computers.
@@ -539,13 +541,29 @@ function startControl() {
         const id = await scraperAccount()
         if (!id) return reply(409, { error: 'The scraper account is not logged in.', kind: 'login' })
         if (id === (await accountId())) return reply(409, { error: 'The scraper window is logged into the outreach account. Log into the scraper account there instead.', kind: 'login' })
+        // The same creator's list asked again (the server restarted meanwhile): the read in progress, or the
+        // one just finished, is handed over, so a list is never read twice.
+        if (url.pathname === '/scraper/following' && followingRead?.username === body.username) {
+          if (followingRead.promise) return reply(200, await followingRead.promise)
+          if (followingRead.result && Date.now() - followingRead.at < 12 * 3600 * 1000) return reply(200, followingRead.result)
+        }
         if (scraperBusy) return reply(409, { error: 'The scraper is busy.', kind: 'busy' })
         scraperBusy = true
         try {
           const wc = openScraper(false)
-          if (url.pathname === '/scraper/following') scraperProgress = { username: body.username, loaded: 0, at: Date.now(), reading: true }
-          const result = url.pathname === '/scraper/profile' ? await scraperUi.profile(wc, body) : await scraperUi.following(wc, body, (loaded) => { scraperProgress = { username: body.username, loaded, at: Date.now(), reading: true } })
-          if (url.pathname === '/scraper/following') scraperProgress = { username: body.username, loaded: (result.usernames || []).length, at: Date.now(), reading: false }
+          if (url.pathname === '/scraper/profile') return reply(200, await scraperUi.profile(wc, body))
+          scraperProgress = { username: body.username, loaded: 0, at: Date.now(), reading: true }
+          const promise = scraperUi.following(wc, body, (loaded) => { scraperProgress = { username: body.username, loaded, at: Date.now(), reading: true } })
+          followingRead = { username: body.username, promise }
+          let result
+          try {
+            result = await promise
+          } catch (error) {
+            followingRead = null
+            throw error
+          }
+          followingRead = { username: body.username, result, at: Date.now() }
+          scraperProgress = { username: body.username, loaded: (result.usernames || []).length, at: Date.now(), reading: false }
           return reply(200, result)
         } finally {
           scraperBusy = false
