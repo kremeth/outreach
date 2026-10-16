@@ -402,7 +402,10 @@ function dmRow(item) {
   else if (DM_TAGS[item.tag]) top.append(el('span', `dm-tag ${DM_TAGS[item.tag][1]}`, DM_TAGS[item.tag][0]))
   top.append(el('span', 'dm-age', item.age || ''))
   if (item.unread) top.append(el('span', 'dm-dot'))
-  const preview = /^\d+ new messages?$|^new message$/i.test(item.preview) ? `💬 ${item.preview}` : item.voice && /voice/i.test(item.preview) ? '🎙 Voicenote' : item.preview
+  // Their latest words when the chat is saved (a voicenote's transcript included).
+  const latest = item.recent?.length ? item.recent[item.recent.length - 1] : null
+  const latestWords = latest ? String(latest.text || '').replace(/\d+:\d{2}/, '').replace(/(view|hide) transcription|unable to transcribe,?\s*(try again)?/gi, '').trim() : ''
+  const preview = latestWords ? `${latest.voice ? '🎙 ' : ''}${latestWords}` : /^\d+ new messages?$|^new message$/i.test(item.preview) ? `💬 ${item.preview}` : /voice/i.test(item.preview) ? '🎙 Voicenote' : item.preview
   text.append(top)
   if (item.username) text.append(el('span', 'dm-handle-line', `@${item.username}`))
   text.append(el('span', 'dm-preview', preview))
