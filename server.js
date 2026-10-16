@@ -1152,7 +1152,34 @@ function voiceSenderOf(username) {
   }
 }
 
+// A conversation's username from its display name: the saved chat, then the sheet (one exact match).
+function usernameForName(name) {
+  const chat = dmChats.chatOf(name, '')
+  if (chat?.username) return chat.username
+  const norm = (text) => String(text || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
+  const matches = yesRows.filter((row) => norm(row.name) === norm(name))
+  return matches.length === 1 ? data.usernameFrom(matches[0].link) : ''
+}
+
+// The "No reply needed" saved by name only (before they were kept by username): moved over once the
+// sheet is loaded.
+let dismissMigrated = false
+function migrateDismissed() {
+  if (dismissMigrated || !yesRows.length) return
+  dismissMigrated = true
+  let moved = 0
+  for (const [name, preview] of Object.entries(dmInbox.dismissedNames())) {
+    const username = usernameForName(name)
+    if (username && !dmMissed.isHandled(username, preview, -1)) {
+      dmMissed.dismiss(username, preview)
+      moved++
+    }
+  }
+  if (moved) console.log(`dm dismissed: ${moved} kept by username now`)
+}
+
 function dmsForPage({ all = false } = {}) {
+  migrateDismissed()
   const summary = dmInbox.summary()
   const norm = (text) => String(text || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
   const sent = dmReply.byName()
@@ -1175,7 +1202,9 @@ function dmsForPage({ all = false } = {}) {
     const row = yesRows.find((entry) => data.usernameFrom(entry.link) === missed.username)
     const name = missed.name || row?.name || `@${missed.username}`
     const inbox = inboxRows.find((entry) => norm(entry.name) === norm(name))
-    if (inbox && inbox.ours) {
+    // Answered since (the inbox shows ours last, or a reply went out from here after their message).
+    const sentAt = dmReply.lastSentTo(missed.username)
+    if ((inbox && inbox.ours) || (sentAt && sentAt > (missed.at || missed.notedAt || 0))) {
       dmMissed.answered(missed.username)
       continue
     }
@@ -1216,6 +1245,11 @@ function dmsForPage({ all = false } = {}) {
   // Who sent them the first voicenote (Message 2 comes from the same person): by username, from the
   // sheet (the creators we contacted, then the whole contact list), then this Mac's send log.
   summary.toReply = summary.toReply.map((item) => (item.voice || !item.username ? item : { ...item, voice: voiceSenderOf(item.username) }))
+  // Dealt with before (answered or "No reply needed"), by username: that same message never comes back.
+  summary.toReply = summary.toReply.filter((item) => {
+    const username = item.username || dmChats.chatOf(item.name, '')?.username || ''
+    return !username || !dmMissed.isHandled(username, item.rawPreview || item.preview, item.missed ? 0 : -1)
+  })
   summary.preparing = summary.toReply.filter((item) => !ready(item)).length
   if (!all) summary.toReply = summary.toReply.filter(ready)
   // Answered from here: off the list straight away (queued or sending), and once sent until the inbox
@@ -2030,7 +2064,10 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/api/dms/dismiss') {
       const body = await readBody(req)
       dmInbox.dismiss(String(body.name || ''), String(body.preview || ''))
-      if (body.username) dmMissed.dismiss(String(body.username))
+      // Kept by username (names change and are spelled differently): from the list, the saved chat, or the sheet.
+      const dismissedUser = String(body.username || '') || usernameForName(String(body.name || ''))
+      if (dismissedUser) dmMissed.dismiss(dismissedUser, String(body.preview || ''))
+      else console.error(`dm dismiss: no username for ${body.name}; kept by name only`)
       // Still unread on Instagram: opened once (read) when Instagram is free, so it is done there too.
       if (body.unread) {
         dmReply.add({ name: String(body.name || ''), username: String(body.username || ''), kind: 'read' })
