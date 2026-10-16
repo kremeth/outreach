@@ -1766,3 +1766,5 @@ a.person.current {
 .scraper-state.needs-check, .scraper-state.needs-login { color: #8a5300; font-weight: 600; }
 .scraper-lines { display: grid; gap: 3px; font-size: 13px; color: var(--muted); }
 .scraper-message { color: var(--ink-2); }
+
+.model-health { color: var(--warn); font-weight: 600; }

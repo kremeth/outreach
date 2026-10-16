@@ -176,6 +176,7 @@ function modelProgressBar(data) {
   const now = [`${number(forYou)} waiting for you`]
   if (judging) now.push(`${number(judging)} still to check`)
   box.append(bar, el('div', 'model-progress-text', `Today: ${today.join(' · ')}`), el('div', 'model-progress-text', `Now: ${now.join(' · ')}`))
+  if (data.prospecting?.health) box.append(el('div', 'model-progress-text model-health', data.prospecting.health))
   return box
 }
 

@@ -849,7 +849,7 @@ async function todo() {
     dms: dmsForPage(),
     scraper: followingScraper.summary(),
     partners: await partners.list().catch(() => []),
-    prospecting: { remaining: counts().remaining, ...modelProgress(), total: rows.length, yesToday: counts().yesToday, yesTarget: sendQueue.DAILY_LIMIT },
+    prospecting: { remaining: counts().remaining, ...modelProgress(), total: rows.length, yesToday: counts().yesToday, yesTarget: sendQueue.DAILY_LIMIT, health: runners.health.message },
     voice: { toSend: voice.length, sentToday: Math.max(sendQueue.sentToday(), guard.app ? guard.kinds.voice.today : 0), limit: sendQueue.DAILY_LIMIT },
     hustle: { ...hustle.status(), auto: autoCommentStatus() },
     relaunch: { 1: relaunch.summary(yesRows, 1), 2: relaunch.summary(yesRows, 2) },
@@ -1960,7 +1960,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && url.pathname === '/api/counts') {
       await log.refresh(4000).catch((error) => console.error(error))
       // With the model's numbers, so the Prospecting card follows the day (today's counts reset at midnight).
-      sendJson(res, 200, { ...counts(), model: modelProgress() })
+      sendJson(res, 200, { ...counts(), model: { ...modelProgress(), health: runners.health.message } })
       return
     }
     if (req.method === 'GET' && url.pathname === '/api/autopilot/running') {
