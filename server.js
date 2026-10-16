@@ -1211,7 +1211,20 @@ async function sendQueuedReplies() {
       if (!username) throw Object.assign(new Error('Could not find their username.'), { kind: 'notsent' })
     }
     dmReply.update(item.id, { status: 'sending', username, startedAt: Date.now() })
-    const threadId = dmChats.chatOf(item.name, username)?.threadId || ''
+    let threadId = dmChats.chatOf(item.name, username)?.threadId || ''
+    // No inbox address yet and the profile link says "no longer exists" (someone we don't follow,
+    // restrictions): the conversation is found in the inbox list first, then used.
+    if (!threadId && item.name) {
+      try {
+        const probe = await instagram.chatState({ username, transcribe: false })
+        threadId = probe.threadId || ''
+      } catch (error) {
+        if (error.kind !== 'missing' && error.kind !== 'mismatch' && error.kind !== 'unreachable') throw error
+        const chat = await instagram.openInboxRow({ name: item.name, transcribe: false })
+        threadId = chat.threadId || ''
+        if (threadId) dmChats.remember({ name: item.name, username: chat.username || username, messages: chat.messages || [], threadId })
+      }
+    }
     if (item.kind === 'voice') {
       // Message 2 is two voicenotes, part 1 then part 2 (each under Instagram's 1 minute), from whoever
       // sent the first one, sent back to back in one go (nothing in between). A part already sent is
