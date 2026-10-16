@@ -173,9 +173,12 @@ function modelProgressBar(data) {
   bar.append(fill)
   // Of the profiles the model checked today: its own Yes and No (the rest are for you).
   const today = [`${number(modelToday.checked || 0)} checked`, `${number(modelToday.yes || 0)} Yes`, `${number(modelToday.no || 0)} No`, `${number(modelToday.forYou || 0)} for you`]
+  // How today's profiles were fetched: Meta's API, or loading the page (logged out).
+  const split = modelToday.viaApi || modelToday.viaPage ? `Fetched: ${number(modelToday.viaApi || 0)} via Meta's API · ${number(modelToday.viaPage || 0)} by visiting the page` : ''
   const now = [`${number(forYou)} waiting for you`]
   if (judging) now.push(`${number(judging)} still to check`)
   box.append(bar, el('div', 'model-progress-text', `Today: ${today.join(' · ')}`), el('div', 'model-progress-text', `Now: ${now.join(' · ')}`))
+  if (split) box.append(el('div', 'model-progress-text', split))
   if (data.prospecting?.health) box.append(el('div', 'model-progress-text model-health', data.prospecting.health))
   return box
 }
