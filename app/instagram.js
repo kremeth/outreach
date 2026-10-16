@@ -50,10 +50,19 @@ async function click(wc, point) {
   wc.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 })
 }
 
+// Outreach's own key presses are marked, so the panel can turn away every other key while it works
+// (app-main.js: the person typing in Outreach never types into Instagram).
+let ownKeysUntil = 0
+function ownKeys() {
+  return Date.now() < ownKeysUntil
+}
+
 async function key(wc, keyCode, modifiers = []) {
+  ownKeysUntil = Date.now() + 250
   wc.sendInputEvent({ type: 'keyDown', keyCode, modifiers })
   if (keyCode === 'Return' && !modifiers.length) wc.sendInputEvent({ type: 'char', keyCode: '\r' })
   await sleep(30)
+  ownKeysUntil = Date.now() + 250
   wc.sendInputEvent({ type: 'keyUp', keyCode, modifiers })
 }
 
@@ -1255,4 +1264,4 @@ async function probeChat(wc, { username, gifQuery }) {
   return result
 }
 
-module.exports = { openUrl, run, click, key, sleep, aborted, comment, dm, unfollow, pageProblem, readThread, threadAllows, lastVoiceWaveform, probeChat, chatState, voiceAudio, replyRelaunch, likeLast, react, inboxState, openInboxRow, ourStories }
+module.exports = { ownKeys, openUrl, run, click, key, sleep, aborted, comment, dm, unfollow, pageProblem, readThread, threadAllows, lastVoiceWaveform, probeChat, chatState, voiceAudio, replyRelaunch, likeLast, react, inboxState, openInboxRow, ourStories }

@@ -210,6 +210,25 @@ function createWindow() {
   panel.webContents.on('did-navigate', watch)
   panel.webContents.on('did-navigate-in-page', watch)
 
+  // The keyboard: while Outreach is working in the Instagram panel (sending, commenting, reading...), a
+  // real key press never reaches Instagram, only Outreach's own; the keyboard goes back to the Outreach
+  // page the person was typing in. When the panel is idle, typing in it by hand works as usual.
+  panel.webContents.on('before-input-event', (event, input) => {
+    if (!panelTask && !voice.active?.()) return
+    if (ig.ownKeys()) return
+    if (input.type !== 'keyDown' && input.type !== 'keyUp' && input.type !== 'char' && input.type !== 'rawKeyDown') return
+    event.preventDefault()
+    if (!ui || ui.webContents.isDestroyed()) return
+    if (!ui.webContents.isFocused()) ui.webContents.focus()
+    // The key itself is passed on to the Outreach page, so nothing the person typed is lost.
+    const modifiers = [input.shift && 'shift', input.control && 'control', input.alt && 'alt', input.meta && 'meta'].filter(Boolean)
+    if (input.type === 'keyUp') ui.webContents.sendInputEvent({ type: 'keyUp', keyCode: input.key, modifiers })
+    else if (input.type === 'keyDown' || input.type === 'rawKeyDown') {
+      ui.webContents.sendInputEvent({ type: 'keyDown', keyCode: input.key, modifiers })
+      if (input.key.length === 1 && !input.control && !input.meta) ui.webContents.sendInputEvent({ type: 'char', keyCode: input.key, modifiers })
+    }
+  })
+
   ipcMain.on('voice-state', (event, state) => {
     if (event.sender === panel.webContents) voice.onVoiceState(state)
   })
