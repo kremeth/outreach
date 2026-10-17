@@ -1530,6 +1530,22 @@ async function readChatsAhead(limit = 6) {
         if (['busy', 'wait', 'hidden', 'login', 'blocked'].includes(error.kind)) break
       }
     }
+    // Replies sent from the list in the last 2 days whose chat was not read since: read once, to see the
+    // reply really is there (a logged send that never arrived puts the conversation back on the list).
+    const checkSince = Date.now() - 2 * 24 * 3600 * 1000
+    for (const sent of dmReply.recentSent(checkSince)) {
+      if (read >= limit + 2 || !chatGap()) break
+      const saved = dmChats.chatOf(sent.name, sent.username)
+      if (saved && saved.readAt > sent.sentAt + 20 * 1000) continue
+      if (Date.now() - (readTries.get(`verify:${sent.name}`) || 0) < 30 * 60 * 1000) continue
+      readTries.set(`verify:${sent.name}`, Date.now())
+      try {
+        await readFullChat({ name: sent.name, username: sent.username })
+        read++
+      } catch (error) {
+        if (['busy', 'wait', 'hidden', 'login', 'blocked'].includes(error.kind)) break
+      }
+    }
   } finally {
     readingAhead = false
   }
