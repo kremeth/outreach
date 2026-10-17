@@ -20,6 +20,12 @@ let syncStatus = null
 let syncTimer = null
 let screen = null
 
+// 12,345 -> "12.3k followers", 1,200,000 -> "1.2M followers".
+function followerCount(count) {
+  const short = count >= 1e6 ? `${(count / 1e6).toFixed(count >= 1e7 ? 0 : 1)}M` : count >= 1e4 ? `${Math.round(count / 1e3)}k` : count >= 1e3 ? `${(count / 1e3).toFixed(1)}k` : String(count)
+  return `${short.replace('.0', '')} followers`
+}
+
 function number(value) {
   return Number(value || 0).toLocaleString('en-AU')
 }
@@ -430,7 +436,7 @@ function dmRow(item) {
   const latestWords = latest ? String(latest.text || '').replace(/\d+:\d{2}/, '').replace(/(view|hide) transcription|unable to transcribe,?\s*(try again)?/gi, '').trim() : ''
   const preview = latestWords ? `${latest.voice ? '🎙 ' : ''}${latestWords}` : /^\d+ new messages?$|^new message$/i.test(item.preview) ? `💬 ${item.preview}` : /voice/i.test(item.preview) ? '🎙 Voicenote' : item.preview
   text.append(top)
-  if (item.username) text.append(el('span', 'dm-handle-line', `@${item.username}`))
+  if (item.username) text.append(el('span', 'dm-handle-line', `@${item.username}${item.followers ? ` · ${followerCount(item.followers)}` : ''}`))
   text.append(el('span', 'dm-preview', preview))
   const pic = avatar(item.name)
   if (item.username) {
@@ -941,7 +947,10 @@ function renderPartners() {
     img.src = `/api/dms/avatar?u=${encodeURIComponent(partner.username)}`
     img.alt = ''
     img.addEventListener('load', () => { pic.textContent = ''; pic.style.background = 'none'; pic.append(img) })
-    head.append(pic, who, el('span', `partner-pill ${state.tone}`, state.label))
+    const names = el('div', 'partner-names')
+    names.append(who)
+    if (partner.followers) names.append(el('span', 'partner-followers', followerCount(partner.followers)))
+    head.append(pic, names, el('span', `partner-pill ${state.tone}`, state.label))
     row.append(head)
 
     // The month: story -> today -> reel due.

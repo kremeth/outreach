@@ -863,7 +863,7 @@ async function todo() {
     guard,
     dms: dmsForPage(),
     scraper: followingScraper.summary(),
-    partners: await partners.list().catch(() => []),
+    partners: await partnersForPage(),
     prospecting: { remaining: counts().remaining, ...modelProgress(), total: rows.length, yesToday: counts().yesToday, yesTarget: sendQueue.DAILY_LIMIT, health: runners.health.message },
     voice: { toSend: voice.length, sentToday: Math.max(sendQueue.sentToday(), guard.app ? guard.kinds.voice.today : 0), limit: sendQueue.DAILY_LIMIT },
     hustle: { ...hustle.status(), auto: autoCommentStatus() },
@@ -1178,6 +1178,30 @@ function migrateDismissed() {
   if (moved) console.log(`dm dismissed: ${moved} kept by username now`)
 }
 
+// How many followers someone has, as a number (0 unknown): the sheet first, then the profile the
+// wearable model downloaded.
+function followersOf(username) {
+  const key = String(username || '').replace(/^@/, '').toLowerCase()
+  if (!key) return 0
+  const parse = (text) => {
+    const match = String(text || '').replace(/,/g, '').match(/([\d.]+)\s*([kKmM]?)/)
+    return match ? Math.round(parseFloat(match[1]) * ({ k: 1e3, m: 1e6 }[match[2].toLowerCase()] || 1)) : 0
+  }
+  const yes = yesRows.find((row) => data.usernameFrom(row.link) === key)
+  if (parse(yes?.followers)) return parse(yes.followers)
+  const any = rows.find((row) => data.usernameFrom(row['DIRECT LINK'] || '') === key)
+  if (parse(any?.FOLLOWERS)) return parse(any.FOLLOWERS)
+  try {
+    return parse(JSON.parse(fs.readFileSync(path.join(__dirname, 'data', 'wearable', 'profiles', `${key}.json`), 'utf8')).followers)
+  } catch {
+    return 0
+  }
+}
+
+async function partnersForPage() {
+  return (await partners.list().catch(() => [])).map((partner) => ({ ...partner, followers: followersOf(partner.username) }))
+}
+
 function dmsForPage({ all = false } = {}) {
   migrateDismissed()
   const summary = dmInbox.summary()
@@ -1257,7 +1281,7 @@ function dmsForPage({ all = false } = {}) {
   const answered = (item) => item.reply && (['queued', 'sending'].includes(item.reply.status) || (item.reply.status === 'sent' && item.reply.sentAt >= summary.scannedAt))
   summary.outgoing = dmReply.outgoing().filter((entry) => entry.kind !== 'read')
   summary.sendingNow = Date.now() < replyNowUntil
-  summary.toReply = summary.toReply.filter((item) => !answered(item))
+  summary.toReply = summary.toReply.filter((item) => !answered(item)).map((item) => ({ ...item, followers: followersOf(item.username) }))
   return summary
 }
 
@@ -1948,14 +1972,14 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/api/partners/mark') {
       const body = await readBody(req)
       const ok = await partners.mark(String(body.username || ''), body.kind === 'post' ? 'post' : 'story', Boolean(body.value), body.value ? `${new Date().toLocaleDateString('en-AU')} · ticked by hand` : '')
-      sendJson(res, ok ? 200 : 404, { ok, partners: await partners.list() })
+      sendJson(res, ok ? 200 : 404, { ok, partners: await partnersForPage() })
       return
     }
     // A story or reel date set by hand (the countdown follows).
     if (req.method === 'POST' && url.pathname === '/api/partners/date') {
       const body = await readBody(req)
       const ok = await partners.setDate(String(body.username || ''), body.kind === 'post' ? 'post' : 'story', String(body.date || ''))
-      sendJson(res, ok ? 200 : 400, { ok, partners: await partners.list() })
+      sendJson(res, ok ? 200 : 400, { ok, partners: await partnersForPage() })
       return
     }
     // A proposed reply: the one drafted ahead when there is one (instant), otherwise drafted now from the
