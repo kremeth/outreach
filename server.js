@@ -1192,10 +1192,30 @@ function followersOf(username) {
   const any = rows.find((row) => data.usernameFrom(row['DIRECT LINK'] || '') === key)
   if (parse(any?.FOLLOWERS)) return parse(any.FOLLOWERS)
   try {
-    return parse(JSON.parse(fs.readFileSync(path.join(__dirname, 'data', 'wearable', 'profiles', `${key}.json`), 'utf8')).followers)
-  } catch {
-    return 0
-  }
+    const saved = parse(JSON.parse(fs.readFileSync(path.join(__dirname, 'data', 'wearable', 'profiles', `${key}.json`), 'utf8')).followers)
+    if (saved) return saved
+  } catch {}
+  // Nowhere on this Mac: looked up once through Meta's API in the background (kept in
+  // data/followers-cache.json; a failed lookup is tried again after a day).
+  const cached = followersCache()[key]
+  if (cached?.followers) return cached.followers
+  if (!cached || Date.now() - cached.at > 86400000) lookupFollowers(key)
+  return 0
+}
+
+const FOLLOWERS_CACHE = path.join(__dirname, 'data', 'followers-cache.json')
+function followersCache() {
+  try { return JSON.parse(fs.readFileSync(FOLLOWERS_CACHE, 'utf8')) } catch { return {} }
+}
+const followerLookups = new Set()
+function lookupFollowers(username) {
+  if (followerLookups.has(username) || !igGraph.available()) return
+  followerLookups.add(username)
+  igGraph.lookup(username).then((found) => found.followers || 0).catch(() => 0).then((followers) => {
+    const cache = followersCache()
+    cache[username] = { followers, at: Date.now() }
+    fs.writeFileSync(FOLLOWERS_CACHE, JSON.stringify(cache, null, 1))
+  }).finally(() => followerLookups.delete(username))
 }
 
 async function partnersForPage() {
