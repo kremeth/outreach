@@ -1782,5 +1782,9 @@ a.person.current {
 .scraper-state.needs-check, .scraper-state.needs-login { color: #8a5300; font-weight: 600; }
 .scraper-lines { display: grid; gap: 3px; font-size: 13px; color: var(--muted); }
 .scraper-message { color: var(--ink-2); }
+.scraper-account { display: grid; gap: 4px; padding: 10px 0; border-top: 1px solid var(--line); }
+.scraper-account-head { display: flex; align-items: baseline; gap: 10px; color: var(--ink-2); }
+.scraper-account-head strong { font-size: 14px; color: var(--ink); }
+.scraper-account .dm-buttons { margin-top: 2px; }
 
 .model-health { color: var(--warn); font-weight: 600; }

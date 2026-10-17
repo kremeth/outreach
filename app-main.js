@@ -245,47 +245,50 @@ function createWindow() {
 // The scraper account (a second Instagram account, logged in by the person in its own window, its own
 // session: never the outreach account). Its window opens on request; the scraper reads Instagram's own
 // web API from inside that logged-in page (same requests the site makes), one at a time.
-const SCRAPER_PARTITION = 'persist:scraper'
-let scraperWin = null
+// Several scraper accounts (1, 2...), each in its own window and session ('persist:scraper' for the
+// first, 'persist:scraper2' for the second...), each reading one thing at a time.
+const scraperPartition = (account) => (account > 1 ? `persist:scraper${account}` : 'persist:scraper')
 let appQuitting = false
 app.on('before-quit', () => { appQuitting = true })
-let scraperView = null
-let scraperProgress = { username: '', loaded: 0, at: 0, reading: false }
+const scrapers = {}
+function scraperOf(account) {
+  account = Math.max(1, Math.min(9, Number(account) || 1))
+  if (!scrapers[account]) scrapers[account] = { account, win: null, view: null, busy: false, followingRead: null, progress: { username: '', loaded: 0, at: 0, reading: false } }
+  return scrapers[account]
+}
 
-function openScraper(show = true) {
-  if (scraperWin && !scraperWin.isDestroyed()) {
-    if (show) scraperWin.show()
-    return scraperView.webContents
+function openScraper(account = 1, show = true) {
+  const scraper = scraperOf(account)
+  if (scraper.win && !scraper.win.isDestroyed()) {
+    if (show) scraper.win.show()
+    return scraper.view.webContents
   }
-  const scraperSession = session.fromPartition(SCRAPER_PARTITION)
-  scraperSession.setUserAgent(CHROME_UA)
-  scraperWin = new BaseWindow({ width: 900, height: 900, title: 'Outreach · scraper account', show })
-  scraperView = new WebContentsView({ webPreferences: { partition: SCRAPER_PARTITION, contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false } })
-  scraperWin.contentView.addChildView(scraperView)
+  const partition = scraperPartition(scraper.account)
+  session.fromPartition(partition).setUserAgent(CHROME_UA)
+  scraper.win = new BaseWindow({ width: 900, height: 900, title: `Outreach · scraper account ${scraper.account}`, show })
+  scraper.view = new WebContentsView({ webPreferences: { partition, contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false } })
+  scraper.win.contentView.addChildView(scraper.view)
   const fit = () => {
-    const [width, height] = scraperWin.getContentSize()
-    scraperView.setBounds({ x: 0, y: 0, width, height })
+    const [width, height] = scraper.win.getContentSize()
+    scraper.view.setBounds({ x: 0, y: 0, width, height })
   }
-  scraperWin.on('resize', fit)
+  scraper.win.on('resize', fit)
   fit()
-  scraperWin.on('close', (event) => {
+  scraper.win.on('close', (event) => {
     // Closing only hides it (the scraper keeps its page), except when Outreach itself is quitting.
     if (appQuitting) return
     event.preventDefault()
-    scraperWin.hide()
+    scraper.win.hide()
   })
-  scraperView.webContents.loadURL('https://www.instagram.com/').catch(() => {})
-  return scraperView.webContents
+  scraper.view.webContents.loadURL('https://www.instagram.com/').catch(() => {})
+  return scraper.view.webContents
 }
 
-async function scraperAccount() {
-  const cookies = await session.fromPartition(SCRAPER_PARTITION).cookies.get({ url: 'https://www.instagram.com', name: 'ds_user_id' })
+async function scraperAccount(account = 1) {
+  const cookies = await session.fromPartition(scraperPartition(Math.max(1, Number(account) || 1))).cookies.get({ url: 'https://www.instagram.com', name: 'ds_user_id' })
   return cookies[0]?.value || ''
 }
 
-let scraperBusy = false
-// The last following list read (or being read), by creator.
-let followingRead = null
 const scraperUi = require('./app/scraper')
 
 // The logged-in Instagram account (its numeric id), so limits are counted per account across computers.
@@ -518,55 +521,58 @@ function startControl() {
         const describe = () => ({ target: body.username || '', detail: `reply${Number(body.step) === 2 ? 2 : 1}:${body.sheetRow || ''}` })
         return reply(200, await inPanel('dm', 'sending a reply relaunch', describe, (wc) => ig.replyRelaunch(wc, body)))
       }
-      // The scraper account: open its window (to log in), whether it is logged in, and one API read.
+      // A scraper account (body.account, 1 by default): open its window (to log in), hide it, how far
+      // its list read has got, whether it is logged in.
       if (url.pathname === '/scraper/open') {
-        openScraper(true)
+        openScraper(body.account, true)
         return reply(200, { ok: true })
       }
       // Out of sight while it scrapes (it runs the same hidden; it is only shown to log in or verify).
       if (url.pathname === '/scraper/hide') {
-        if (scraperWin && !scraperWin.isDestroyed() && scraperWin.isVisible()) scraperWin.hide()
+        const scraper = scraperOf(body.account)
+        if (scraper.win && !scraper.win.isDestroyed() && scraper.win.isVisible()) scraper.win.hide()
         return reply(200, { ok: true })
       }
-      // How far the following list being read has got (for the card, live).
-      if (url.pathname === '/scraper/progress') return reply(200, scraperProgress)
+      if (url.pathname === '/scraper/progress') return reply(200, scraperOf(body.account).progress)
       if (url.pathname === '/scraper/status') {
-        const id = await scraperAccount()
+        const id = await scraperAccount(body.account)
         const outreach = await accountId()
         return reply(200, { loggedIn: Boolean(id), id, sameAsOutreach: Boolean(id && id === outreach) })
       }
-      // The scraper account, driven like a person (app/scraper.js): one profile, or one creator's whole
-      // following list. Never the outreach account; one thing at a time.
+      // A scraper account, driven like a person (app/scraper.js): one profile, or one creator's whole
+      // following list. Never the outreach account; one thing at a time per account.
       if (url.pathname === '/scraper/profile' || url.pathname === '/scraper/following') {
-        const id = await scraperAccount()
+        const scraper = scraperOf(body.account)
+        const id = await scraperAccount(scraper.account)
         if (!id) return reply(409, { error: 'The scraper account is not logged in.', kind: 'login' })
         if (id === (await accountId())) return reply(409, { error: 'The scraper window is logged into the outreach account. Log into the scraper account there instead.', kind: 'login' })
         // The same creator's list asked again (the server restarted meanwhile): the read in progress, or the
         // one just finished, is handed over, so a list is never read twice.
-        if (url.pathname === '/scraper/following' && followingRead?.username === body.username) {
-          if (followingRead.promise) return reply(200, await followingRead.promise)
-          if (followingRead.result && Date.now() - followingRead.at < 12 * 3600 * 1000) return reply(200, followingRead.result)
+        if (url.pathname === '/scraper/following' && scraper.followingRead?.username === body.username) {
+          if (scraper.followingRead.promise) return reply(200, await scraper.followingRead.promise)
+          if (scraper.followingRead.result && Date.now() - scraper.followingRead.at < 12 * 3600 * 1000) return reply(200, scraper.followingRead.result)
         }
-        if (scraperBusy) return reply(409, { error: 'The scraper is busy.', kind: 'busy' })
-        scraperBusy = true
+        if (scraper.busy) return reply(409, { error: 'The scraper is busy.', kind: 'busy' })
+        scraper.busy = true
         try {
-          const wc = openScraper(false)
+          const wc = openScraper(scraper.account, false)
           if (url.pathname === '/scraper/profile') return reply(200, await scraperUi.profile(wc, body))
-          scraperProgress = { username: body.username, loaded: 0, at: Date.now(), reading: true }
-          const promise = scraperUi.following(wc, body, (loaded) => { scraperProgress = { username: body.username, loaded, at: Date.now(), reading: true } })
-          followingRead = { username: body.username, promise }
+          scraper.progress = { username: body.username, loaded: 0, at: Date.now(), reading: true }
+          const promise = scraperUi.following(wc, body, (loaded) => { scraper.progress = { username: body.username, loaded, at: Date.now(), reading: true } })
+          scraper.followingRead = { username: body.username, promise }
           let result
           try {
             result = await promise
           } catch (error) {
-            followingRead = null
+            scraper.followingRead = null
+            scraper.progress = { ...scraper.progress, reading: false }
             throw error
           }
-          followingRead = { username: body.username, result, at: Date.now() }
-          scraperProgress = { username: body.username, loaded: (result.usernames || []).length, at: Date.now(), reading: false }
+          scraper.followingRead = { username: body.username, result, at: Date.now() }
+          scraper.progress = { username: body.username, loaded: (result.usernames || []).length, at: Date.now(), reading: false }
           return reply(200, result)
         } finally {
-          scraperBusy = false
+          scraper.busy = false
         }
       }
       // Read-only look at a chat (no action, nothing sent), to build on.

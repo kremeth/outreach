@@ -2179,27 +2179,32 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'GET' && url.pathname === '/api/scraper') {
       const summary = followingScraper.summary()
-      // While a following list is being read: how many accounts are loaded so far.
-      if (summary.current && summary.status === 'running') {
-        const progress = await instagram.scraperProgress().catch(() => null)
-        if (progress && progress.reading && progress.username === summary.current.username) summary.reading = { loaded: progress.loaded, since: progress.at }
+      // While a following list is being read: how many accounts are loaded so far (each scraper account).
+      for (const account of summary.accounts) {
+        if (!account.current || account.status !== 'running') continue
+        const progress = await instagram.scraperProgress(account.account).catch(() => null)
+        if (progress && progress.reading && progress.username === account.current.username) account.reading = { loaded: progress.loaded, since: progress.at }
       }
       sendJson(res, 200, summary)
       return
     }
+    // A scraper account's window (body.account: 1, 2...), to log in or verify it.
     if (req.method === 'POST' && url.pathname === '/api/scraper/login') {
-      await instagram.scraperOpen().catch(() => {})
+      const body = await readBody(req).catch(() => ({}))
+      await instagram.scraperOpen(Number(body.account) || 1).catch(() => {})
       sendJson(res, 200, { ok: true })
       return
     }
-    // After the person verified the scraper account (or logged it back in) in its window.
+    // After the person verified the scraper account (or logged it in) in its window.
     if (req.method === 'POST' && url.pathname === '/api/scraper/resume') {
-      followingScraper.resume(instagram, (text) => console.log(text)).catch((error) => console.error('scraper', error.message))
+      const body = await readBody(req).catch(() => ({}))
+      followingScraper.resume(instagram, (text) => console.log(text), Number(body.account) || 1).catch((error) => console.error('scraper', error.message))
       sendJson(res, 200, { ok: true })
       return
     }
     if (req.method === 'POST' && url.pathname === '/api/scraper/start') {
-      followingScraper.run(instagram, (text) => console.log(text)).catch((error) => console.error('scraper', error.message))
+      const body = await readBody(req).catch(() => ({}))
+      followingScraper.run(instagram, (text) => console.log(text), Number(body.account) || 0).catch((error) => console.error('scraper', error.message))
       sendJson(res, 200, { ok: true })
       return
     }
