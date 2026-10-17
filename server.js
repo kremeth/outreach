@@ -1486,13 +1486,21 @@ function needsReading(item) {
   // A like/attachment row: read once after it showed, to see who wrote last.
   if (item.check) return (saved.readAt || 0) < (item.firstSeen || 0)
   const scannedAt = dmInbox.summary().scannedAt || 0
-  // A voicenote of theirs without words yet.
   const theirs = saved.messages.filter((message) => !message.ours)
-  if (theirs.some((message) => message.voice && !String(message.text || '').replace(/\d+:\d{2}/, '').replace(/(view|hide) transcription|unable to transcribe,?\s*(try again)?/gi, '').trim())) return true
+  // Their messages since our last one (the ones to answer): a voicenote among them without words yet is
+  // read again (transcribed), at most 3 times; older voicenotes further up do not hold the chat back.
+  const lastOurs = saved.messages.map((message) => message.ours).lastIndexOf(true)
+  const recent = saved.messages.slice(lastOurs + 1).filter((message) => !message.ours)
+  const wordless = (message) => message.voice && !String(message.text || '').replace(/\d+:\d{2}/, '').replace(/(view|hide) transcription|unable to transcribe,?\s*(try again)?/gi, '').trim()
+  if (recent.some(wordless) && (readTries.get(`${item.name}#count`) || 0) < 3) return true
   if (saved.readAt > scannedAt) return false
   const latest = String(item.rawPreview || item.preview || '').trim()
   if (dmChats.HIDDEN_PREVIEW.test(latest) || !latest || /^·?$/.test(latest)) return saved.messages[saved.messages.length - 1]?.ours === true
-  return !theirs.some((message) => String(message.text || '').trim() === latest)
+  // Their latest message is in the saved chat (letters and digits compared: emojis and the inbox
+  // cutting long previews short do not matter).
+  const norm = (text) => String(text || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '')
+  const want = norm(latest).slice(0, 40)
+  return !want || !theirs.some((message) => norm(message.text).startsWith(want) || want.startsWith(norm(message.text).slice(0, 40)))
 }
 async function readChatsAhead(limit = 6) {
   if (readingAhead) return
@@ -1508,6 +1516,9 @@ async function readChatsAhead(limit = 6) {
       try {
         await readFullChat({ name: item.name, username: item.username })
         read++
+        // Read, but still not complete (a voicenote Instagram would not hand over): counted, so after 3
+        // reads it is shown anyway, with what is known.
+        if (needsReading(item)) readTries.set(`${item.name}#count`, (readTries.get(`${item.name}#count`) || 0) + 1)
       } catch (error) {
         panelReads.errors.chats = `${item.name}: ${error.message}`
         if (!['busy', 'wait', 'hidden'].includes(error.kind)) readTries.set(`${item.name}#count`, (readTries.get(`${item.name}#count`) || 0) + 1)
