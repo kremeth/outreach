@@ -1062,7 +1062,7 @@ const panelReads = { inbox: 0, stories: 0, posts: 0, busy: false, errors: {} }
 function panelFree() {
   const pilot = autopilot.status()
   if (pilot.current) return false
-  if (pilot.running && pilot.nextAt && pilot.nextAt - Date.now() < 3 * 60 * 1000) return false
+  if (pilot.running && pilot.nextAt && pilot.nextAt - Date.now() < 100 * 1000) return false
   const hour = new Date().getHours()
   return hour >= 8 && hour < 21
 }
@@ -1256,7 +1256,8 @@ function dmsForPage({ all = false } = {}) {
     const inbox = inboxRows.find((entry) => norm(entry.name) === norm(name))
     // Answered since (the inbox shows ours last, or a reply went out from here after their message).
     const sentAt = dmReply.lastSentTo(missed.username)
-    if ((inbox && inbox.ours) || (sentAt && sentAt > (missed.at || missed.notedAt || 0))) {
+    // (Only with their message's own time: a remembered line from an older check has none to compare.)
+    if ((inbox && inbox.ours) || (sentAt && !missed.partial && missed.at && sentAt > missed.at + 60 * 1000)) {
       dmMissed.answered(missed.username)
       continue
     }
@@ -1281,6 +1282,16 @@ function dmsForPage({ all = false } = {}) {
     const lastOurs = messages.map((message) => message.ours).lastIndexOf(true)
     return { ...item, recent: messages.slice(lastOurs + 1).slice(-10), username: item.username || chat.username || '' }
   })
+  // A like, reaction or attachment last in the inbox: the saved chat (read after it showed) says who wrote
+  // the last real message. Theirs: listed with that message. Ours: nothing to answer, left out.
+  summary.toReply = summary.toReply.flatMap((item) => {
+    if (!item.check) return [item]
+    const saved = dmChats.chatOf(item.name, item.username)
+    if (!saved || (saved.readAt || 0) < (item.firstSeen || 0)) return [item]
+    const last = dmMissed.theirLast(saved.messages)
+    if (!last || last.unreachable) return []
+    return [{ ...item, check: false, preview: last.text, rawPreview: last.text, username: item.username || saved.username || '' }]
+  })
   // Only conversations that are ready are shown: read in full (voicenotes transcribed) and a reply
   // drafted. The others are being prepared in the background (counted, not shown). One that could not be
   // read after three tries is shown anyway, with what is known.
@@ -1300,9 +1311,11 @@ function dmsForPage({ all = false } = {}) {
   // Dealt with before (answered or "No reply needed"), by username: that same message never comes back.
   summary.toReply = summary.toReply.filter((item) => {
     const username = item.username || dmChats.chatOf(item.name, '')?.username || ''
-    return !username || !dmMissed.isHandled(username, item.rawPreview || item.preview, item.missed ? 0 : -1)
+    // The inbox shows their message last: listed unless "No reply needed" was pressed on that message.
+    return !username || !dmMissed.isHandled(username, item.rawPreview || item.preview, item.missed ? 0 : -1, !item.missed)
   })
-  summary.preparing = summary.toReply.filter((item) => !ready(item)).length
+  // (Likes not checked yet are not counted: most turn out to be a like of our message.)
+  summary.preparing = summary.toReply.filter((item) => !ready(item) && !item.check).length
   if (!all) summary.toReply = summary.toReply.filter(ready)
   // Answered from here: off the list straight away (queued or sending), and once sent until the inbox
   // is read again (then it is gone for good, unless they wrote again). A failed send stays, with why.
@@ -1470,6 +1483,8 @@ function chatGap() {
 function needsReading(item) {
   const saved = dmChats.chatOf(item.name, item.username)
   if (!saved || !saved.messages?.length) return true
+  // A like/attachment row: read once after it showed, to see who wrote last.
+  if (item.check) return (saved.readAt || 0) < (item.firstSeen || 0)
   const scannedAt = dmInbox.summary().scannedAt || 0
   // A voicenote of theirs without words yet.
   const theirs = saved.messages.filter((message) => !message.ours)
@@ -1548,7 +1563,7 @@ async function backgroundReads() {
     // Partners' reels are ticked by hand only (Mathieu, 15 Oct): a caption naming nutricode is not a
     // reel posted for the deal, so checkPartnerPosts no longer runs on its own.
     if (!panelFree()) return
-    if (now - panelReads.inbox > 20 * 60 * 1000) {
+    if (now - panelReads.inbox > 10 * 60 * 1000) {
       panelReads.inbox = now
       try {
         await dmInbox.scan(instagram, markUnreachableByUsername)

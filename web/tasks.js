@@ -1029,7 +1029,7 @@ function renderScraper() {
   const enrich = scraper.enrich
   if (enrich && (enrich.today || enrich.left)) {
     lines.append(el('div', '', `Followers & bio: ${number(enrich.today || 0)} done today · ${number(enrich.left || 0)} left (about ${number(enrich.perHour || 60)} an hour${enrich.mode ? `, via ${enrich.mode}` : ''})`))
-    if (enrich.status === 'paused' && enrich.message) lines.append(el('div', 'scraper-message', enrich.message))
+    if ((enrich.status === 'paused' || enrich.problem) && enrich.message) lines.append(el('div', enrich.problem ? 'scraper-alert' : 'scraper-message', enrich.message))
   }
   // One block per scraper account: what it is doing, and its own window / log in / resume.
   for (const account of accounts) {
