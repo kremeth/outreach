@@ -1253,11 +1253,16 @@ function dmsForPage({ all = false } = {}) {
     if (listed.has(missed.username)) continue
     const row = yesRows.find((entry) => data.usernameFrom(entry.link) === missed.username)
     const name = missed.name || row?.name || `@${missed.username}`
-    const inbox = inboxRows.find((entry) => norm(entry.name) === norm(name))
-    // Answered since (the inbox shows ours last, or a reply went out from here after their message).
+    // The inbox row of this conversation (by name, or by the username of the chat saved under its name).
+    const inbox = inboxRows.find((entry) => norm(entry.name) === norm(name) || dmChats.chatOf(entry.name, '')?.username === missed.username)
+    // Answered since? The inbox decides when it shows the conversation (ours last = answered; theirs
+    // last = waiting, even if a send was logged: it may not have gone through). Otherwise a reply sent
+    // after their message counts, unless the chat was read again after that send and still ends with
+    // theirs.
     const sentAt = dmReply.lastSentTo(missed.username)
-    // (Only with their message's own time: a remembered line from an older check has none to compare.)
-    if ((inbox && inbox.ours) || (sentAt && !missed.partial && missed.at && sentAt > missed.at + 60 * 1000)) {
+    const savedChat = dmChats.chatOf(name, missed.username)
+    const answeredHere = sentAt && !missed.partial && missed.at && sentAt > missed.at + 60 * 1000 && !(savedChat && savedChat.readAt > sentAt)
+    if (inbox ? inbox.ours : answeredHere) {
       dmMissed.answered(missed.username)
       continue
     }
