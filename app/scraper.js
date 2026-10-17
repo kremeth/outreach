@@ -80,7 +80,10 @@ async function profile(wc, { username }) {
 
 // Everyone a creator follows: their profile, "following", then the list scrolled to its end at a
 // person's pace (about 1 to 2.5 seconds per scroll). skip: usernames already done (on a later day).
-async function following(wc, { username, max = 100000 }, onProgress = () => {}) {
+// budget: how many usernames this account may still load today; cap: its whole day's amount. A list
+// longer than what is left today is not opened (overBudget), unless it is longer than a whole day and
+// the day has not started (then its first `max` are read).
+async function following(wc, { username, max = 100000, budget = 0, cap = 0 }, onProgress = () => {}) {
   await ig.openUrl(wc, `https://www.instagram.com/${encodeURIComponent(username)}/`)
   await sleep(between(1500, 2500))
   await checkPage(wc)
@@ -104,6 +107,7 @@ async function following(wc, { username, max = 100000 }, onProgress = () => {}) 
   // "1,823 following" / "8.2K following": how many they follow, as the header says.
   const shown = String(link.text || '').match(/([\d.,]+)\s*([kKmM]?)/)
   const followingCount = shown ? Math.round(parseFloat(shown[1].replace(/,/g, '')) * ({ k: 1e3, m: 1e6 }[shown[2].toLowerCase()] || 1)) : 0
+  if (budget && followingCount > budget && !(cap && followingCount > cap && budget >= cap)) return { usernames: [], followingCount, overBudget: true }
   await ig.click(wc, link)
   // The list opens as a dialog.
   let opened = false

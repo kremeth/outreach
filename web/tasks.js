@@ -1014,13 +1014,14 @@ function renderScraper() {
   const card = el('div', 'side-card scraper-card')
   const accounts = scraper.accounts || [{ account: 1, ...scraper }]
   const label = (status) => ({ running: 'Running', 'needs login': 'Needs you: log in', 'needs check': 'Needs you', 'done for today': 'Done for today', stopped: 'Stopped for today', idle: 'Waiting' }[status] || status)
-  const lists = accounts.reduce((sum, account) => sum + ((account.today || {}).lists || 0), 0)
-  const most = (scraper.listsPerDay || 8) * accounts.length
+  const perDay = scraper.usernamesPerDay || 3000
+  const loaded = accounts.reduce((sum, account) => sum + ((account.today || {}).loaded || 0), 0)
+  const most = perDay * accounts.length
   const head = el('div', 'scraper-head')
-  head.append(el('strong', '', `${number(lists)} / ${number(most)} following lists today`), el('span', 'scraper-state', `${number(scraper.waiting || 0)} usernames in TEMP Scrape`))
+  head.append(el('strong', '', `${number(loaded)} / ${number(most)} usernames read today`), el('span', 'scraper-state', `${number(scraper.waiting || 0)} usernames in TEMP Scrape`))
   const bar = el('div', 'meter')
   const fill = el('div', 'meter-fill')
-  fill.style.width = `${Math.max(1, Math.min(100, Math.round((lists / most) * 100)))}%`
+  fill.style.width = `${Math.max(1, Math.min(100, Math.round((loaded / most) * 100)))}%`
   bar.append(fill)
   const lines = el('div', 'scraper-lines')
   const buttons = el('div', 'dm-buttons')
@@ -1029,7 +1030,7 @@ function renderScraper() {
     const t = account.today || {}
     const block = el('div', 'scraper-account')
     const top = el('div', 'scraper-account-head')
-    top.append(el('strong', '', `Scraper account ${account.account}`), el('span', '', `${number(t.lists || 0)} / ${number(scraper.listsPerDay || 8)} lists`), el('span', `scraper-state ${String(account.status).replace(/\s/g, '-')}`, label(account.status)))
+    top.append(el('strong', '', `Scraper account ${account.account}`), el('span', '', `${number(t.loaded || 0)} / ${number(perDay)} usernames · ${number(t.lists || 0)} lists`), el('span', `scraper-state ${String(account.status).replace(/\s/g, '-')}`, label(account.status)))
     block.append(top)
     if (account.current) {
       block.append(el('div', '', account.reading
@@ -1061,7 +1062,8 @@ function renderScraper() {
       own.append(done)
     } else {
       own.append(button('Window', 'ghost small', open))
-      if (account.status !== 'running') own.append(button('Start now', 'ghost small', async () => { await api('/api/scraper/start', { account: account.account }).catch(() => {}); setTimeout(() => loadTodo(false), 3000) }))
+      // Not when Instagram is limiting it or its safe amount for today is used.
+      if (!['running', 'stopped', 'done for today'].includes(account.status)) own.append(button('Start now', 'ghost small', async () => { await api('/api/scraper/start', { account: account.account }).catch(() => {}); setTimeout(() => loadTodo(false), 3000) }))
     }
     block.append(own)
     lines.append(block)
