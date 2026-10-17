@@ -1212,7 +1212,12 @@ function lookupFollowers(username) {
   if (followerLookups.has(username) || !igGraph.available()) return
   followerLookups.add(username)
   // Meta busy (paused, hour used up): nothing is kept, so it is tried again on a later refresh.
-  igGraph.lookup(username).then((found) => found.followers || 0).catch((error) => (error.kind === 'rate' ? null : 0)).then((followers) => {
+  // A personal account (Meta's API only sees creator and business ones): its public profile page instead.
+  const fromPage = () => preview.profile(username, false).then((profile) => {
+    const match = String(profile.followers || '').replace(/,/g, '').match(/([\d.]+)\s*([kKmM]?)/)
+    return match ? Math.round(parseFloat(match[1]) * ({ k: 1e3, m: 1e6 }[match[2].toLowerCase()] || 1)) : 0
+  }).catch(() => null)
+  igGraph.lookup(username).then((found) => found.followers || 0).catch((error) => (error.kind === 'rate' ? null : error.kind === 'not-business' ? fromPage() : 0)).then((followers) => {
     if (followers === null) return
     const cache = followersCache()
     cache[username] = { followers, at: Date.now() }
