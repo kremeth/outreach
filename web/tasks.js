@@ -1025,6 +1025,12 @@ function renderScraper() {
   bar.append(fill)
   const lines = el('div', 'scraper-lines')
   const buttons = el('div', 'dm-buttons')
+  // TEMP Scrape's usernames getting their followers and bio (logged out, slowly).
+  const enrich = scraper.enrich
+  if (enrich && (enrich.today || enrich.left)) {
+    lines.append(el('div', '', `Followers & bio: ${number(enrich.today || 0)} done today · ${number(enrich.left || 0)} left (about ${number(enrich.perHour || 60)} an hour)`))
+    if (enrich.status === 'paused' && enrich.message) lines.append(el('div', 'scraper-message', enrich.message))
+  }
   // One block per scraper account: what it is doing, and its own window / log in / resume.
   for (const account of accounts) {
     const t = account.today || {}
