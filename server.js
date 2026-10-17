@@ -1211,7 +1211,9 @@ const followerLookups = new Set()
 function lookupFollowers(username) {
   if (followerLookups.has(username) || !igGraph.available()) return
   followerLookups.add(username)
-  igGraph.lookup(username).then((found) => found.followers || 0).catch(() => 0).then((followers) => {
+  // Meta busy (paused, hour used up): nothing is kept, so it is tried again on a later refresh.
+  igGraph.lookup(username).then((found) => found.followers || 0).catch((error) => (error.kind === 'rate' ? null : 0)).then((followers) => {
+    if (followers === null) return
     const cache = followersCache()
     cache[username] = { followers, at: Date.now() }
     fs.writeFileSync(FOLLOWERS_CACHE, JSON.stringify(cache, null, 1))
