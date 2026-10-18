@@ -840,6 +840,15 @@ function refreshSheet(force) {
       for (const row of rows) {
         if (!pending.has(row.sheetRow) && !sheet.savedDecision(decisions, row)) elsewhere.set(row.sheetRow, 'done')
       }
+      // New pending rows (added since the server started: the scraper, TEMP Scrape, by hand) join
+      // Prospecting at the end of the list, and the model's list is updated straight away.
+      const known = new Set(rows.map((row) => row.sheetRow))
+      const added = (loaded.rows || []).filter((row) => !known.has(row.sheetRow))
+      if (added.length) {
+        rows.push(...added)
+        writeUpcoming()
+        console.log(`prospecting: ${added.length} new pending rows from the sheet`)
+      }
       sheetRefreshedAt = Date.now()
       refreshError = ''
     })
@@ -2465,7 +2474,9 @@ async function boot() {
   setInterval(enrich, 10 * 60 * 1000).unref()
   // Enriched TEMP Scrape usernames in Australia moved to the sheet (10k+ to 1. Influencer Contact List,
   // fewer to Customer Reach Out), every 5 minutes.
-  const promote = () => tempPromote.run((text) => console.log(text)).catch((error) => console.error('temp promote', error.message))
+  const promote = () => tempPromote.run((text) => console.log(text))
+    .then((result) => (result && result.contacts ? refreshSheet(true) : null))
+    .catch((error) => console.error('temp promote', error.message))
   setTimeout(promote, 2 * 60 * 1000).unref()
   setInterval(promote, 5 * 60 * 1000).unref()
   // The first profiles of the Prospecting list, loaded ahead for the screen: at most once every 30
