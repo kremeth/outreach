@@ -1031,6 +1031,8 @@ function renderScraper() {
     lines.append(el('div', '', `Followers & bio: ${number(enrich.today || 0)} done today · ${number(enrich.left || 0)} left (about ${number(enrich.perHour || 60)} an hour${enrich.mode ? `, via ${enrich.mode}` : ''})`))
     if ((enrich.status === 'paused' || enrich.problem) && enrich.message) lines.append(el('div', enrich.problem ? 'scraper-alert' : 'scraper-message', enrich.message))
   }
+  const promote = scraper.promote?.today
+  if (promote && (promote.contacts || promote.reach)) lines.append(el('div', '', `Moved today: ${number(promote.contacts)} to 1. Influencer Contact List · ${number(promote.reach)} to Customer Reach Out (in Australia, no duplicates)`))
   // One block per scraper account: what it is doing, and its own window / log in / resume.
   for (const account of accounts) {
     const t = account.today || {}

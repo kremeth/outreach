@@ -29,6 +29,7 @@ const dmMissed = require('./lib/dm-missed')
 const voiceText = require('./lib/voice-transcribe')
 const followingScraper = require('./lib/following-scraper')
 const tempEnrich = require('./lib/temp-enrich')
+const tempPromote = require('./lib/temp-promote')
 const pickModel = require('./lib/pick-model')
 const apiUsage = require('./lib/api-usage')
 const modelProspect = require('./lib/model-prospect')
@@ -863,7 +864,7 @@ async function todo() {
   return {
     guard,
     dms: dmsForPage(),
-    scraper: { ...followingScraper.summary(), enrich: tempEnrich.summary() },
+    scraper: { ...followingScraper.summary(), enrich: tempEnrich.summary(), promote: tempPromote.summary() },
     partners: await partnersForPage(),
     prospecting: { remaining: counts().remaining, ...modelProgress(), total: rows.length, yesToday: counts().yesToday, yesTarget: sendQueue.DAILY_LIMIT, health: runners.health.message },
     voice: { toSend: voice.length, sentToday: Math.max(sendQueue.sentToday(), guard.app ? guard.kinds.voice.today : 0), limit: sendQueue.DAILY_LIMIT },
@@ -2226,7 +2227,7 @@ const server = http.createServer(async (req, res) => {
       return
     }
     if (req.method === 'GET' && url.pathname === '/api/scraper') {
-      const summary = { ...followingScraper.summary(), enrich: tempEnrich.summary() }
+      const summary = { ...followingScraper.summary(), enrich: tempEnrich.summary(), promote: tempPromote.summary() }
       // While a following list is being read: how many accounts are loaded so far (each scraper account).
       for (const account of summary.accounts) {
         if (!account.current || account.status !== 'running') continue
@@ -2462,6 +2463,11 @@ async function boot() {
   const enrich = () => tempEnrich.run((text) => console.log(text)).catch((error) => console.error('temp enrich', error.message))
   setTimeout(enrich, 90 * 1000).unref()
   setInterval(enrich, 10 * 60 * 1000).unref()
+  // Enriched TEMP Scrape usernames in Australia moved to the sheet (10k+ to 1. Influencer Contact List,
+  // fewer to Customer Reach Out), every 5 minutes.
+  const promote = () => tempPromote.run((text) => console.log(text)).catch((error) => console.error('temp promote', error.message))
+  setTimeout(promote, 2 * 60 * 1000).unref()
+  setInterval(promote, 5 * 60 * 1000).unref()
   // The first profiles of the Prospecting list, loaded ahead for the screen: at most once every 30
   // minutes (a restart is not a reason to load them again; they count against the hourly allowance).
   const BOOT_PATH = path.join(__dirname, 'data', 'boot-preload.json')
