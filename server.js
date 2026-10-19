@@ -1241,11 +1241,13 @@ async function partnersForPage() {
   return (await partners.list().catch(() => [])).map((partner) => ({ ...partner, followers: followersOf(partner.username) }))
 }
 
-function dmsForPage({ all = false } = {}) {
+function dmsForPage({ all = false, trace = null } = {}) {
+  const step = (label) => { if (trace) trace.push(`${label.replace(/^\/\/\s*/, '')}: ${summary.toReply.length}`) }
   migrateDismissed()
   const summary = dmInbox.summary()
   const norm = (text) => String(text || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
   const sent = dmReply.byName()
+  step('inbox')
   summary.toReply = summary.toReply.map((item) => {
     const matches = yesRows.filter((row) => norm(row.name) === norm(item.name))
     const row = matches.length === 1 ? matches[0] : null
@@ -1256,6 +1258,7 @@ function dmsForPage({ all = false } = {}) {
     reply: item.reply && item.reply.status === 'sent' && item.reply.sentAt < summary.scannedAt ? null : item.reply,
     draftReady: Boolean(dmChats.draftFor(item, dmReply.MODEL)),
   }))
+  step('// Missed replies found in cha')
   // Missed replies found in chats read for other reasons (however old): added as unread, unless the
   // inbox already lists them, or the inbox shows our message last (answered since).
   const inboxRows = (() => { try { return JSON.parse(fs.readFileSync(path.join(__dirname, 'data', 'dm-inbox.json'), 'utf8')).rows || [] } catch { return [] } })()
@@ -1298,8 +1301,10 @@ function dmsForPage({ all = false } = {}) {
     const lastOurs = messages.map((message) => message.ours).lastIndexOf(true)
     return { ...item, recent: messages.slice(lastOurs + 1).slice(-10), username: item.username || chat.username || '' }
   })
+  step('// "No reply needed" on this s')
   // "No reply needed" on this same message, as registered on the Replies tab (both Macs): never again.
   summary.toReply = summary.toReply.filter((item) => !repliesSheet.isDismissed(item))
+  step('// A like, reaction or attachm')
   // A like, reaction or attachment last in the inbox: the saved chat (read after it showed) says who wrote
   // the last real message. Theirs: listed with that message. Ours: nothing to answer, left out.
   summary.toReply = summary.toReply.flatMap((item) => {
@@ -1310,6 +1315,7 @@ function dmsForPage({ all = false } = {}) {
     if (!last || last.unreachable) return []
     return [{ ...item, check: false, preview: last.text, rawPreview: last.text, username: item.username || saved.username || '' }]
   })
+  step('// Only conversations that are')
   // Only conversations that are ready are shown: read in full (voicenotes transcribed) and a reply
   // drafted. The others are being prepared in the background (counted, not shown). One that could not be
   // read after three tries is shown anyway, with what is known.
@@ -1333,6 +1339,7 @@ function dmsForPage({ all = false } = {}) {
     return !username || !dmMissed.isHandled(username, item.rawPreview || item.preview, item.missed ? 0 : -1, !item.missed)
   })
   // (Likes not checked yet are not counted: most turn out to be a like of our message.)
+  step('summary.preparing =')
   summary.preparing = summary.toReply.filter((item) => !ready(item) && !item.check).length
   if (!all) summary.toReply = summary.toReply.filter(ready)
   // Answered from here: off the list straight away (queued or sending), and once sent until the inbox
@@ -1340,7 +1347,9 @@ function dmsForPage({ all = false } = {}) {
   const answered = (item) => item.reply && (['queued', 'sending'].includes(item.reply.status) || (item.reply.status === 'sent' && item.reply.sentAt >= summary.scannedAt))
   summary.outgoing = dmReply.outgoing().filter((entry) => entry.kind !== 'read')
   summary.sendingNow = Date.now() < replyNowUntil
+  step('before answered')
   summary.toReply = summary.toReply.filter((item) => !answered(item)).map((item) => ({ ...item, followers: followersOf(item.username) }))
+  step('end')
   return summary
 }
 
@@ -2127,6 +2136,13 @@ const server = http.createServer(async (req, res) => {
       return
     }
     if (req.method === 'GET' && url.pathname === '/api/dms') {
+      // ?trace=1: how many conversations are left after each step (to find what hides one).
+      if (url.searchParams.get('trace')) {
+        const trace = []
+        dmsForPage({ all: true, trace })
+        sendJson(res, 200, { trace })
+        return
+      }
       sendJson(res, 200, dmsForPage())
       return
     }
