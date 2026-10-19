@@ -253,6 +253,7 @@ app.on('before-quit', () => { appQuitting = true })
 const scrapers = {}
 // Each scraper account's @username, by its Instagram id (looked up once).
 const scraperNames = {}
+let scraperNameError = ''
 function scraperOf(account) {
   account = Math.max(1, Math.min(9, Number(account) || 1))
   if (!scrapers[account]) scrapers[account] = { account, win: null, view: null, busy: false, followingRead: null, progress: { username: '', loaded: 0, at: 0, reading: false } }
@@ -544,14 +545,45 @@ function startControl() {
         if (id && !username && body.withName) {
           try {
             const wc = openScraper(body.account, false)
+            // The page loaded first (a window just opened is still loading).
+            if (wc.isLoading()) await Promise.race([new Promise((resolve) => wc.once('did-stop-loading', resolve)), new Promise((resolve) => setTimeout(resolve, 15000))])
+            // Its own profile link in Instagram's side menu ("Profile"), else Instagram's account info.
             username = await Promise.race([
-              wc.executeJavaScript(`fetch('/api/v1/users/${id}/info/', { headers: { 'X-IG-App-ID': '936619743392459' }, credentials: 'include' }).then((r) => r.json()).then((j) => (j.user && j.user.username) || '').catch(() => '')`),
-              new Promise((resolve) => setTimeout(() => resolve(''), 8000)),
+              wc.executeJavaScript(`(async () => {
+                const id = '${id}'
+                const notes = []
+                // 1. In the page's own data: the logged-in account's username next to its id.
+                const html = document.documentElement.innerHTML
+                const near = html.match(new RegExp('"username":"([A-Za-z0-9._]+)"[^{}]{0,400}?"(?:pk|id|pk_id)":"' + id + '"')) || html.match(new RegExp('"(?:pk|id|pk_id)":"' + id + '"[^{}]{0,400}?"username":"([A-Za-z0-9._]+)"'))
+                if (near) return near[1]
+                notes.push('no page data')
+                // 2. Its profile link in the side menu (by text, label or its picture).
+                const link = [...document.querySelectorAll('a[href]')].find((a) => /^profile$/i.test((a.innerText || a.getAttribute('aria-label') || '').trim()) || /profile picture/i.test(a.querySelector('img')?.alt || ''))
+                const fromLink = link && (link.getAttribute('href') || '').match(/^\\/([A-Za-z0-9._]+)\\/?$/)
+                if (fromLink) return fromLink[1]
+                notes.push('no menu link')
+                // 3. Instagram's own account endpoint, with the headers the site sends.
+                try {
+                  const csrf = (document.cookie.match(/csrftoken=([^;]+)/) || [])[1] || ''
+                  const response = await fetch('/api/v1/accounts/current_user/?edit=true', { headers: { 'X-IG-App-ID': '936619743392459', 'X-CSRFToken': csrf, 'X-Requested-With': 'XMLHttpRequest', 'X-ASBD-ID': '129477' }, credentials: 'include' })
+                  const text = await response.text()
+                  const found = text.match(/"username":"([A-Za-z0-9._]+)"/)
+                  if (found) return found[1]
+                  notes.push('current_user ' + response.status + ' ' + text.slice(0, 120))
+                } catch (error) { notes.push('current_user ' + error.message) }
+                return '!' + location.href + ' ' + notes.join(' | ')
+              })()`),
+              new Promise((resolve) => setTimeout(() => resolve(''), 10000)),
             ])
+            if (String(username).startsWith('!')) {
+              console.error('scraper username lookup:', username)
+              scraperNameError = username
+              username = ''
+            }
             if (username) scraperNames[id] = username
           } catch {}
         }
-        return reply(200, { loggedIn: Boolean(id), id, username, sameAsOutreach: Boolean(id && id === outreach) })
+        return reply(200, { loggedIn: Boolean(id), id, username, sameAsOutreach: Boolean(id && id === outreach), nameError: username ? '' : scraperNameError })
       }
       // A scraper account, driven like a person (app/scraper.js): one profile, or one creator's whole
       // following list. Never the outreach account; one thing at a time per account.
