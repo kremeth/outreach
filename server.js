@@ -2080,7 +2080,7 @@ const server = http.createServer(async (req, res) => {
         const turns = Array.isArray(body.turns) ? body.turns.slice(-8) : []
         const ready = !body.fresh && !note && !turns.length && dmChats.draftFor(item, dmReply.MODEL)
         if (ready) {
-          sendJson(res, 200, { reply: ready.reply, username: item.username, instant: true })
+          sendJson(res, 200, { reply: dmReply.oneParagraph(ready.reply), username: item.username, instant: true })
           return
         }
         let history = dmChats.history(item)
@@ -2209,7 +2209,8 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/api/dms/send') {
       const body = await readBody(req)
       const kind = body.kind === 'voice' ? 'voice' : body.kind === 'like' ? 'like' : body.kind === 'react' ? 'react' : 'text'
-      const text = String(body.text || '').trim()
+      // A reply goes out as one paragraph (no line breaks), however it was typed.
+      const text = dmReply.oneParagraph(body.text)
       const voice = /^(romain|mathieu)$/i.test(body.voice || '') ? body.voice[0].toUpperCase() + body.voice.slice(1).toLowerCase() : ''
       const emoji = kind === 'react' ? (['❤️', '😂', '😮', '😢', '😡', '👍'].find((item) => item.replace(/\uFE0F/g, '') === String(body.emoji || '').replace(/\uFE0F/g, '')) || '') : ''
       if (kind === 'react' && !emoji) {
