@@ -2468,6 +2468,10 @@ async function boot() {
   })
   // The scraper picks up where it was straight away (not 10 minutes later).
   setTimeout(() => followingScraper.run(instagram, (text) => console.log(text)).catch((error) => console.error('scraper', error.message)), 60 * 1000).unref()
+  // The scraper accounts' @usernames for the card (each window asked once; checked again every 30 min).
+  const names = () => followingScraper.refreshNames(instagram).catch(() => {})
+  setTimeout(names, 45 * 1000).unref()
+  setInterval(names, 30 * 60 * 1000).unref()
   // TEMP Scrape's usernames get their link, followers and bio (slowly, logged out, this Mac only).
   const enrich = () => tempEnrich.run((text) => console.log(text)).catch((error) => console.error('temp enrich', error.message))
   setTimeout(enrich, 90 * 1000).unref()

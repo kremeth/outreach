@@ -1038,7 +1038,7 @@ function renderScraper() {
     const t = account.today || {}
     const block = el('div', 'scraper-account')
     const top = el('div', 'scraper-account-head')
-    top.append(el('strong', '', `Scraper account ${account.account}`), el('span', '', `${number(t.loaded || 0)} / ${number(perDay)} usernames · ${number(t.lists || 0)} lists`), el('span', `scraper-state ${String(account.status).replace(/\s/g, '-')}`, label(account.status)))
+    top.append(el('strong', '', `Scraper account ${account.account}${account.username ? ` · @${account.username}` : ''}`), el('span', '', `${number(t.loaded || 0)} / ${number(perDay)} usernames · ${number(t.lists || 0)} lists`), el('span', `scraper-state ${String(account.status).replace(/\s/g, '-')}`, label(account.status)))
     block.append(top)
     if (account.current) {
       block.append(el('div', '', account.reading

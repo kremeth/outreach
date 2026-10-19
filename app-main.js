@@ -251,6 +251,8 @@ const scraperPartition = (account) => (account > 1 ? `persist:scraper${account}`
 let appQuitting = false
 app.on('before-quit', () => { appQuitting = true })
 const scrapers = {}
+// Each scraper account's @username, by its Instagram id (looked up once).
+const scraperNames = {}
 function scraperOf(account) {
   account = Math.max(1, Math.min(9, Number(account) || 1))
   if (!scrapers[account]) scrapers[account] = { account, win: null, view: null, busy: false, followingRead: null, progress: { username: '', loaded: 0, at: 0, reading: false } }
@@ -537,7 +539,19 @@ function startControl() {
       if (url.pathname === '/scraper/status') {
         const id = await scraperAccount(body.account)
         const outreach = await accountId()
-        return reply(200, { loggedIn: Boolean(id), id, sameAsOutreach: Boolean(id && id === outreach) })
+        // Its @username (for the card): asked once from inside its own window, then remembered.
+        let username = scraperNames[id] || ''
+        if (id && !username && body.withName) {
+          try {
+            const wc = openScraper(body.account, false)
+            username = await Promise.race([
+              wc.executeJavaScript(`fetch('/api/v1/users/${id}/info/', { headers: { 'X-IG-App-ID': '936619743392459' }, credentials: 'include' }).then((r) => r.json()).then((j) => (j.user && j.user.username) || '').catch(() => '')`),
+              new Promise((resolve) => setTimeout(() => resolve(''), 8000)),
+            ])
+            if (username) scraperNames[id] = username
+          } catch {}
+        }
+        return reply(200, { loggedIn: Boolean(id), id, username, sameAsOutreach: Boolean(id && id === outreach) })
       }
       // A scraper account, driven like a person (app/scraper.js): one profile, or one creator's whole
       // following list. Never the outreach account; one thing at a time per account.
