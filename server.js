@@ -30,6 +30,7 @@ const voiceText = require('./lib/voice-transcribe')
 const followingScraper = require('./lib/following-scraper')
 const tempEnrich = require('./lib/temp-enrich')
 const tempPromote = require('./lib/temp-promote')
+const repliesSheet = require('./lib/replies-sheet')
 const pickModel = require('./lib/pick-model')
 const apiUsage = require('./lib/api-usage')
 const modelProspect = require('./lib/model-prospect')
@@ -1297,6 +1298,8 @@ function dmsForPage({ all = false } = {}) {
     const lastOurs = messages.map((message) => message.ours).lastIndexOf(true)
     return { ...item, recent: messages.slice(lastOurs + 1).slice(-10), username: item.username || chat.username || '' }
   })
+  // "No reply needed" on this same message, as registered on the Replies tab (both Macs): never again.
+  summary.toReply = summary.toReply.filter((item) => !repliesSheet.isDismissed(item))
   // A like, reaction or attachment last in the inbox: the saved chat (read after it showed) says who wrote
   // the last real message. Theirs: listed with that message. Ours: nothing to answer, left out.
   summary.toReply = summary.toReply.flatMap((item) => {
@@ -2172,6 +2175,9 @@ const server = http.createServer(async (req, res) => {
     // "No reply needed": off the list until they write something new.
     if (req.method === 'POST' && url.pathname === '/api/dms/dismiss') {
       const body = await readBody(req)
+      // Registered on the Replies tab first (the record both Macs go by), with their messages as listed.
+      const listed = dmsForPage({ all: true }).toReply.find((entry) => entry.name === String(body.name || '')) || { name: String(body.name || ''), username: String(body.username || ''), preview: String(body.preview || ''), rawPreview: String(body.preview || '') }
+      await repliesSheet.mark({ ...listed, username: listed.username || String(body.username || '') }, 'No reply needed').catch((error) => console.error('replies sheet', error.message))
       dmInbox.dismiss(String(body.name || ''), String(body.preview || ''))
       // Kept by username (names change and are spelled differently): from the list, the saved chat, or the sheet.
       const dismissedUser = String(body.username || '') || usernameForName(String(body.name || ''))
@@ -2233,6 +2239,11 @@ const server = http.createServer(async (req, res) => {
       }
       // Several text messages (lined up with "+ Add another message"): queued one after the other, in
       // that order, 20 to 40 seconds apart.
+      // The Replies tab: answered (not for a reaction, which is not a reply).
+      if (kind !== 'react') {
+        const listed = dmsForPage({ all: true }).toReply.find((entry) => entry.name === String(body.name || ''))
+        if (listed) repliesSheet.mark(listed, 'Answered').catch((error) => console.error('replies sheet', error.message))
+      }
       const texts = kind === 'text' && Array.isArray(body.texts) ? body.texts.map((one) => dmReply.oneParagraph(one)).filter(Boolean).slice(0, 6) : []
       const start = Date.now() + (120 + Math.random() * 120) * 1000
       if (texts.length > 1) {
@@ -2484,6 +2495,16 @@ async function boot() {
   })
   // The scraper picks up where it was straight away (not 10 minutes later).
   setTimeout(() => followingScraper.run(instagram, (text) => console.log(text)).catch((error) => console.error('scraper', error.message)), 60 * 1000).unref()
+  // The Replies tab kept up to date with the conversations waiting (this Mac only, so rows are not added
+  // twice); read on both Macs every minute for the "No reply needed" decisions.
+  const repliesSync = () => {
+    if (!fs.existsSync(path.join(__dirname, 'data', 'wearable', 'RUN_HERE'))) return repliesSheet.rows().catch(() => {})
+    return repliesSheet.sync(dmsForPage({ all: true }).toReply).catch((error) => console.error('replies sheet', error.message))
+  }
+  repliesSheet.rows().catch(() => {}) // the decisions, before the first list is shown
+  setTimeout(repliesSync, 20 * 1000).unref()
+  setInterval(repliesSync, 2 * 60 * 1000).unref()
+  setInterval(() => repliesSheet.rows().catch(() => {}), 60 * 1000).unref()
   // The scraper accounts' @usernames for the card (each window asked once; checked again every 30 min).
   const names = () => followingScraper.refreshNames(instagram).catch(() => {})
   setTimeout(names, 45 * 1000).unref()
