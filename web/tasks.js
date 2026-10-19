@@ -208,6 +208,8 @@ const dmModes = new Map()
 const dmVoices = new Map()
 const dmNotes = new Map()
 const dmCopilot = new Map()
+// Messages lined up for one conversation before Done (sent one after the other, in that order).
+const dmOutbox = new Map()
 const dmFullChat = new Map()
 const dmReading = new Set()
 const dmReacted = new Map()
@@ -647,8 +649,32 @@ function dmBody(item) {
     }
     const pane = el('div', 'dm-copilot')
     const list = el('div', 'dm-copilot-list')
+    const outbox = dmOutbox.get(item.name) || []
+    dmOutbox.set(item.name, outbox)
+    const lined = el('div', 'dm-outbox')
     const send = button('Send reply', 'dm-primary', () => pickAndSend())
+    // Lines up the picked version as the next message, then a new empty one to write.
+    const addMessage = button('+ Add another message', 'dm-ghost', () => {
+      const entry = entries[selectedIndex()]
+      if (!entry || !entry.text.trim() || busy) return
+      outbox.push(entry.text.trim())
+      entries.splice(0)
+      entries.push({ role: 'draft', text: '', own: true, picked: true })
+      render()
+      requestAnimationFrame(() => [...list.querySelectorAll('.dm-draft-text')].pop()?.focus())
+    })
+    addMessage.title = 'Keep this as a message and write the next one; all go out together when you press Done'
     const render = () => {
+      // The messages lined up so far (removable), above the one being written.
+      lined.replaceChildren()
+      outbox.forEach((text, index) => {
+        const row = el('div', 'dm-outbox-item')
+        row.append(el('span', 'dm-outbox-label', `Message ${index + 1}`), el('span', 'dm-outbox-text', text))
+        const remove = button('×', 'dm-outbox-remove', () => { outbox.splice(index, 1); render() })
+        remove.title = 'Take this message out'
+        row.append(remove)
+        lined.append(row)
+      })
       list.replaceChildren()
       const chosen = selectedIndex()
       entries.forEach((entry, index) => {
@@ -694,7 +720,14 @@ function dmBody(item) {
         text.className = 'dm-draft-text'
         text.value = entry.text
         text.rows = 3
-        text.addEventListener('input', () => { entry.text = text.value; fitArea(text); send.disabled = busy || !entries[selectedIndex()]?.text.trim() })
+        text.addEventListener('input', () => {
+          entry.text = text.value
+          fitArea(text)
+          const current = entries[selectedIndex()]?.text.trim()
+          send.disabled = busy || !(outbox.length || current)
+          addMessage.disabled = busy || !current
+          if (outbox.length) send.textContent = `Done, send ${outbox.length + (current ? 1 : 0)} messages`
+        })
         text.addEventListener('focus', () => { if (selectedIndex() !== index) { entries.forEach((other) => { other.picked = false }); entry.picked = true; card.classList.add('chosen') } lastFocus = text })
         text.addEventListener('keydown', (event) => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) send.click() })
         card.append(head, text)
@@ -713,7 +746,11 @@ function dmBody(item) {
         card.append(skeleton)
         list.append(card)
       } else if (!entries.length) list.append(el('p', 'dm-copilot-empty', 'No reply yet. Ask for one, or write your own.'))
-      send.disabled = busy || !entries[selectedIndex()]?.text.trim()
+      const current = entries[selectedIndex()]?.text.trim()
+      const count = outbox.length + (current ? 1 : 0)
+      send.textContent = outbox.length ? `Done, send ${count} message${count === 1 ? '' : 's'}` : 'Send reply'
+      send.disabled = busy || !count
+      addMessage.disabled = busy || !current
       list.scrollTop = list.scrollHeight
     }
     const fitArea = (area) => {
@@ -787,7 +824,8 @@ function dmBody(item) {
     const pickAndSend = async () => {
       const index = selectedIndex()
       const entry = entries[index]
-      if (!entry || !entry.text.trim() || busy) return
+      const texts = [...outbox, ...(entry && entry.text.trim() ? [entry.text.trim()] : [])]
+      if (!texts.length || busy) return
       send.disabled = true
       const cards = [...list.querySelectorAll('.dm-draft')]
       const card = cards[entries.slice(0, index + 1).filter((e) => e.role === 'draft').length - 1]
@@ -796,8 +834,10 @@ function dmBody(item) {
       card?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
       await new Promise((resolve) => setTimeout(resolve, 900))
       try {
-        await api('/api/dms/send', { name: item.name, username: item.username, kind: 'text', text: entry.text })
+        // Several: one after the other, in this order.
+        await api('/api/dms/send', { name: item.name, username: item.username, kind: 'text', text: texts[0], texts })
         dmCopilot.delete(item.name)
+        dmOutbox.delete(item.name)
         dmAnswered(item, 'text')
       } catch (error) {
         pane.classList.remove('sending')
@@ -807,8 +847,8 @@ function dmBody(item) {
       }
     }
     const bar = el('div', 'dm-bar')
-    bar.append(again, own, emoji, el('span', 'dm-keys', '⌘↩ to send'), send)
-    pane.append(list, askRow, bar)
+    bar.append(again, own, emoji, el('span', 'dm-keys', '⌘↩ to send'), addMessage, send)
+    pane.append(lined, list, askRow, bar)
     composer.append(pane)
     render()
     // The first version straight away (instant when it was written ahead).

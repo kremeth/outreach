@@ -2231,7 +2231,22 @@ const server = http.createServer(async (req, res) => {
         picked[String(body.username).toLowerCase()] = voice
         fs.writeFileSync(file, JSON.stringify(picked, null, 1))
       }
-      const item = dmReply.add({ name: String(body.name), username: String(body.username || ''), kind, text: kind === 'react' ? String(body.text || '').slice(0, 200) : text, voice, emoji, sendAfter: Date.now() + (120 + Math.random() * 120) * 1000 })
+      // Several text messages (lined up with "+ Add another message"): queued one after the other, in
+      // that order, 20 to 40 seconds apart.
+      const texts = kind === 'text' && Array.isArray(body.texts) ? body.texts.map((one) => dmReply.oneParagraph(one)).filter(Boolean).slice(0, 6) : []
+      const start = Date.now() + (120 + Math.random() * 120) * 1000
+      if (texts.length > 1) {
+        const items = []
+        let at = start
+        for (const one of texts) {
+          items.push(dmReply.add({ name: String(body.name), username: String(body.username || ''), kind: 'text', text: one, voice: '', emoji: '', sendAfter: at }))
+          at += (20 + Math.random() * 20) * 1000
+        }
+        sendQueuedReplies().catch(() => {})
+        sendJson(res, 200, { ok: true, item: items[0], items })
+        return
+      }
+      const item = dmReply.add({ name: String(body.name), username: String(body.username || ''), kind, text: kind === 'react' ? String(body.text || '').slice(0, 200) : text, voice, emoji, sendAfter: start })
       sendQueuedReplies().catch(() => {})
       sendJson(res, 200, { ok: true, item })
       return
