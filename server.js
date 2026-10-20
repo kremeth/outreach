@@ -1456,9 +1456,11 @@ async function readFullChat({ name, username }) {
 
 // Profile pictures for DMs to reply: the wearable model's copy when it has one, else the chat header's.
 const AVATAR_DIR = path.join(__dirname, 'data', 'dm-avatars')
-async function saveAvatar(username, url) {
+// verified: a picture known to be theirs (labelled as their profile picture in the chat): replaces the
+// saved one; otherwise (the inbox row's picture) only fills a gap or refreshes one older than 14 days.
+async function saveAvatar(username, url, verified = false) {
   const file = path.join(AVATAR_DIR, `${String(username).replace(/[^\w.]/g, '')}.jpg`)
-  if (fs.existsSync(file) && Date.now() - fs.statSync(file).mtimeMs < 14 * 86400000) return
+  if (!verified && fs.existsSync(file) && Date.now() - fs.statSync(file).mtimeMs < 14 * 86400000) return
   const response = await fetch(url, { signal: AbortSignal.timeout(15000) })
   if (!response.ok) return
   fs.mkdirSync(AVATAR_DIR, { recursive: true })
@@ -2485,7 +2487,7 @@ async function boot() {
   // Missed replies: every chat read for any reason that ends with their message goes on DMs to reply;
   // the chats the reply checks read before this are added once.
   instagram.onThread((username, messages, name, avatar) => {
-    if (avatar) saveAvatar(username, avatar).catch(() => {})
+    if (avatar) saveAvatar(username, avatar, true).catch(() => {})
     dmMissed.note(username, messages, name)
     checkMissed().catch((error) => console.error('dm missed check', error.message))
   })

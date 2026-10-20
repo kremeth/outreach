@@ -985,12 +985,19 @@ async function voiceAudio(wc, { username, threadId = '', max = 4, probe = false 
 async function chatState(wc, { username, threadId = '', transcribe = false }) {
   const messages = await openThread(wc, username, threadId)
   const openedThread = await run(wc, `(location.pathname.match(/\\/direct\\/t\\/(\\d+)/) || [])[1] || ''`).catch(() => '')
-  // Their profile picture (the chat header's), shown next to their messages in Outreach.
-  const avatar = await run(wc, String.raw`(() => {
-    const imgs = [...document.querySelectorAll('[role="main"] img')].filter((el) => { const r = el.getBoundingClientRect(); return r.width >= 24 && r.width <= 120 && Math.abs(r.width - r.height) < 4 })
-    const img = imgs.find((el) => /profile picture/i.test(el.alt || '')) || imgs.sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)[0]
+  // Their profile picture, shown next to their messages in Outreach: only a picture labelled as THEIR
+  // profile picture ("username's profile picture") or inside a link to their profile; never just the
+  // first round picture on the page (that can be someone else's, e.g. from the inbox list).
+  const avatar = await run(wc, String.raw`((username) => {
+    const own = (el) => {
+      const alt = (el.alt || '').toLowerCase()
+      if (username && alt.includes(username) && /profile picture/.test(alt)) return true
+      const link = el.closest('a[href]')
+      return Boolean(username && link && new RegExp('^/' + username.replace(/[.]/g, '\.') + '/?$', 'i').test(link.getAttribute('href') || ''))
+    }
+    const img = [...document.querySelectorAll('[role="main"] img, header img')].find((el) => { const r = el.getBoundingClientRect(); return r.width >= 24 && own(el) })
     return img ? (img.currentSrc || img.src || '') : ''
-  })()`).catch(() => '')
+  })(${JSON.stringify(String(username || '').toLowerCase())})`).catch(() => '')
   return { messages: transcribe ? await transcribeTheirs(wc, messages) : messages, avatar, threadId: openedThread || threadId }
 }
 
