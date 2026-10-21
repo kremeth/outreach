@@ -1371,12 +1371,19 @@ function renderLaunch() {
 // Keeps the To do page live for both computers: Launch, the "Instagram today" line, and the
 // Prospecting card's yes today / profiles left.
 let lastLivePoll = Date.now()
+let lastFullLoad = Date.now()
 const pageDay = new Date().toDateString()
 async function pollLaunch() {
   clearTimeout(launchTimer)
   try {
     const [autopilot, latest, scraper] = await Promise.all([api('/api/autopilot', null, 30000), api('/api/counts', null, 15000), api('/api/scraper', null, 10000).catch(() => null)])
     lastLivePoll = Date.now()
+    // The rest of the page (partnerships, DMs, scraper...) reloaded once a minute too, so a change
+    // made elsewhere (the sheet, the other Mac) shows without clicking around.
+    if (Date.now() - lastFullLoad > 60 * 1000) {
+      lastFullLoad = Date.now()
+      loadTodo(true)
+    }
     launchData = autopilot
     // The scraper card follows the scraper live.
     if (todoData && scraper && JSON.stringify(scraper) !== JSON.stringify(todoData.scraper)) {
