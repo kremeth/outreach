@@ -31,6 +31,8 @@ const followingScraper = require('./lib/following-scraper')
 const tempEnrich = require('./lib/temp-enrich')
 const tempPromote = require('./lib/temp-promote')
 const repliesSheet = require('./lib/replies-sheet')
+const liveStatus = require('./lib/live-status')
+const selfUpdate = require('./lib/self-update')
 const pickModel = require('./lib/pick-model')
 const apiUsage = require('./lib/api-usage')
 const modelProspect = require('./lib/model-prospect')
@@ -884,9 +886,10 @@ async function todo() {
   return {
     guard,
     dms: dmsForPage(),
-    scraper: { ...followingScraper.summary(), enrich: tempEnrich.summary(), promote: tempPromote.summary() },
+    // The Mac that does the scraping, enriching and the model publishes its numbers; the other shows them.
+    scraper: remoteScraper() || await scraperSummary(),
     partners: await partnersForPage(),
-    prospecting: { remaining: counts().remaining, ...modelProgress(), total: rows.length, yesToday: counts().yesToday, yesTarget: sendQueue.DAILY_LIMIT, health: runners.health.message },
+    prospecting: { remaining: counts().remaining, ...modelProgress(), total: rows.length, yesToday: counts().yesToday, yesTarget: sendQueue.DAILY_LIMIT, health: runners.health.message, ...(liveStatus.current()?.prospecting || {}) },
     voice: { toSend: voice.length, sentToday: Math.max(sendQueue.sentToday(), guard.app ? guard.kinds.voice.today : 0), limit: sendQueue.DAILY_LIMIT },
     hustle: { ...hustle.status(), auto: autoCommentStatus() },
     relaunch: { 1: relaunch.summary(yesRows, 1), 2: relaunch.summary(yesRows, 2) },
@@ -1249,6 +1252,23 @@ function lookupFollowers(username) {
 
 async function partnersForPage() {
   return (await partners.list().catch(() => [])).map((partner) => ({ ...partner, followers: followersOf(partner.username) }))
+}
+
+// The Finding new creators card's numbers: this Mac's own, with each account's list read so far.
+async function scraperSummary() {
+  const summary = { ...followingScraper.summary(), enrich: tempEnrich.summary(), promote: tempPromote.summary() }
+  for (const account of summary.accounts) {
+    if (!account.current || account.status !== 'running') continue
+    const progress = await instagram.scraperProgress(account.account).catch(() => null)
+    if (progress && progress.reading && progress.username === account.current.username) account.reading = { loaded: progress.loaded, since: progress.at }
+  }
+  return summary
+}
+
+// The scraper card as published by the working Mac (null on that Mac itself).
+function remoteScraper() {
+  const remote = liveStatus.current()
+  return remote?.scraper ? { ...remote.scraper, remoteMachine: remote.machine, remoteAt: remote.at } : null
 }
 
 function dmsForPage({ all = false, trace = null } = {}) {
@@ -2075,7 +2095,10 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'GET' && url.pathname === '/api/autopilot') {
       const guard = await guardStatus()
-      sendJson(res, 200, { ...autopilot.status(), preview: await autopilot.preview(guard), guard })
+      // Launch running on the other Mac (this one idle): shown as such, from its published numbers.
+      const remote = liveStatus.current()
+      const own = autopilot.status()
+      sendJson(res, 200, { ...own, preview: await autopilot.preview(guard), guard, remote: !own.running && remote?.launch?.running ? { ...remote.launch, machine: remote.machine } : null })
       return
     }
     if (req.method === 'POST' && url.pathname === '/api/partners/mark') {
@@ -2291,14 +2314,7 @@ const server = http.createServer(async (req, res) => {
       return
     }
     if (req.method === 'GET' && url.pathname === '/api/scraper') {
-      const summary = { ...followingScraper.summary(), enrich: tempEnrich.summary(), promote: tempPromote.summary() }
-      // While a following list is being read: how many accounts are loaded so far (each scraper account).
-      for (const account of summary.accounts) {
-        if (!account.current || account.status !== 'running') continue
-        const progress = await instagram.scraperProgress(account.account).catch(() => null)
-        if (progress && progress.reading && progress.username === account.current.username) account.reading = { loaded: progress.loaded, since: progress.at }
-      }
-      sendJson(res, 200, summary)
+      sendJson(res, 200, remoteScraper() || await scraperSummary())
       return
     }
     // A scraper account's window (body.account: 1, 2...), to log in or verify it.
@@ -2349,7 +2365,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && url.pathname === '/api/counts') {
       await log.refresh(4000).catch((error) => console.error(error))
       // With the model's numbers, so the Prospecting card follows the day (today's counts reset at midnight).
-      sendJson(res, 200, { ...counts(), model: { ...modelProgress(), health: runners.health.message } })
+      sendJson(res, 200, { ...counts(), model: liveStatus.current()?.prospecting || { ...modelProgress(), health: runners.health.message } })
       return
     }
     if (req.method === 'GET' && url.pathname === '/api/autopilot/running') {
@@ -2533,6 +2549,27 @@ async function boot() {
   setTimeout(repliesSync, 20 * 1000).unref()
   setInterval(repliesSync, 2 * 60 * 1000).unref()
   setInterval(() => repliesSheet.rows().catch(() => {}), 60 * 1000).unref()
+  // The other Mac stays on the latest version from GitHub (lib/self-update.js), between Launch's actions.
+  const update = () => selfUpdate.check({
+    busy: () => Boolean(autopilot.status().current) || replySending,
+    relaunchApp: () => instagram.relaunchApp().then(() => true),
+    log: (text) => console.log(text),
+  }).catch((error) => console.error('self-update', error.message))
+  setTimeout(update, 3 * 60 * 1000).unref()
+  setInterval(update, 10 * 60 * 1000).unref()
+  // Live numbers between the Macs: the working Mac publishes every minute, the other reads them.
+
+  const shareLive = async () => {
+    if (liveStatus.runsHere()) {
+      await liveStatus.publish({
+        scraper: await scraperSummary(),
+        prospecting: { ...modelProgress(), health: runners.health.message },
+        launch: autopilot.status(),
+      })
+    } else await liveStatus.fetchRemote()
+  }
+  setTimeout(() => shareLive().catch((error) => console.error('live status', error.message)), 25 * 1000).unref()
+  setInterval(() => shareLive().catch((error) => console.error('live status', error.message)), 60 * 1000).unref()
   // The scraper accounts' @usernames for the card (each window asked once; checked again every 30 min).
   const names = () => followingScraper.refreshNames(instagram).catch(() => {})
   setTimeout(names, 45 * 1000).unref()

@@ -1084,6 +1084,8 @@ function renderScraper() {
   bar.append(fill)
   const lines = el('div', 'scraper-lines')
   const buttons = el('div', 'dm-buttons')
+  // The numbers of the Mac that does the scraping (this one only shows them).
+  if (scraper.remoteMachine) lines.append(el('div', 'scraper-message', `Runs on ${scraper.remoteMachine} · updated ${new Date(scraper.remoteAt).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' })}`))
   // TEMP Scrape's usernames getting their followers and bio (logged out, slowly).
   const enrich = scraper.enrich
   if (enrich && (enrich.today || enrich.left)) {
@@ -1108,6 +1110,7 @@ function renderScraper() {
     const needsYou = account.status === 'needs check' || account.status === 'needs login'
     if (account.message && !needsYou) block.append(el('div', 'scraper-message', account.message))
     const own = el('div', 'dm-buttons')
+    if (scraper.remoteMachine) { lines.append(block); continue }
     const open = () => api('/api/scraper/login', { account: account.account }).catch(() => {})
     if (needsYou) {
       // Instagram wants this account checked (confirm you're human, a code...) or it is not logged in:
@@ -1310,6 +1313,18 @@ function renderLaunch() {
   if (!data) return
   const card = el('div', 'launch-card')
   launchEl.append(card)
+  // Launch running on the other Mac: its progress, and no second Launch here (both Macs would be driving
+  // the same Instagram account).
+  if (!data.running && data.remote?.running) {
+    const remote = data.remote
+    card.classList.add('on')
+    const head = el('div', 'launch-head')
+    head.append(el('span', 'launch-pill', `Running on ${remote.machine || 'the other Mac'}`), el('strong', '', remote.current || waitingLabel(remote)))
+    card.append(head)
+    card.append(el('p', 'launch-line', `Sent so far: ${remote.sent?.voice || 0} voicenotes · ${remote.sent?.comment || 0} comments · ${remote.sent?.dm || 0} relaunches · ${remote.sent?.unfollow || 0} unfollows. Runs until ${remote.window?.endHour || 21}:00. Started and stopped on that Mac.`))
+    for (const event of (remote.events || []).slice(0, 5)) card.append(el('p', `launch-line ${event.tone === 'bad' ? 'bad' : ''}`, `${new Date(event.at).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' })} · ${event.text}`))
+    return
+  }
   if (data.running) {
     card.classList.add('on')
     const head = el('div', 'launch-head')

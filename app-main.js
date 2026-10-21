@@ -537,6 +537,12 @@ function startControl() {
         if (scraper.win && !scraper.win.isDestroyed() && scraper.win.isVisible()) scraper.win.hide()
         return reply(200, { ok: true })
       }
+      // The app restarts itself (a new version arrived from GitHub, see lib/self-update.js).
+      if (url.pathname === '/relaunch') {
+        reply(200, { ok: true })
+        setTimeout(() => { app.relaunch(); app.exit(0) }, 500)
+        return
+      }
       if (url.pathname === '/scraper/progress') return reply(200, scraperOf(body.account).progress)
       if (url.pathname === '/scraper/status') {
         const id = await scraperAccount(body.account)
