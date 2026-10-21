@@ -161,7 +161,8 @@ function createWindow() {
     title: 'Outreach',
     backgroundColor: '#f6f6f3',
   })
-  ui = new WebContentsView({ webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true } })
+  // Not slowed down in the background either: the To do page keeps its live numbers up to date.
+  ui = new WebContentsView({ webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false } })
   panel = new WebContentsView({
     webPreferences: {
       preload: path.join(ROOT, 'record-preload-ig.js'),

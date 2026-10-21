@@ -99,6 +99,25 @@ async function checkVersion() {
 }
 setInterval(checkVersion, 30000)
 checkVersion()
+
+// The page never stays out of date: fresh numbers as soon as it is looked at again, the live refresh
+// restarted when it has not succeeded for a minute, and a new day reloads the page (date, daily counts).
+function refreshHome() {
+  if (new Date().toDateString() !== pageDay && route === 'home') return location.reload()
+  if (route !== 'home') return
+  pollLaunch()
+  loadTodo(true)
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refreshHome() })
+window.addEventListener('focus', refreshHome)
+setInterval(() => {
+  if (new Date().toDateString() !== pageDay && route === 'home') return location.reload()
+  if (route === 'home' && Date.now() - lastLivePoll > 60 * 1000) {
+    lastLivePoll = Date.now()
+    pollLaunch()
+    loadTodo(true)
+  }
+}, 20 * 1000)
 window.addEventListener('hashchange', () => {
   if (updateWaiting && route === 'home') location.reload()
 })
@@ -1351,10 +1370,13 @@ function renderLaunch() {
 
 // Keeps the To do page live for both computers: Launch, the "Instagram today" line, and the
 // Prospecting card's yes today / profiles left.
+let lastLivePoll = Date.now()
+const pageDay = new Date().toDateString()
 async function pollLaunch() {
   clearTimeout(launchTimer)
   try {
     const [autopilot, latest, scraper] = await Promise.all([api('/api/autopilot', null, 30000), api('/api/counts', null, 15000), api('/api/scraper', null, 10000).catch(() => null)])
+    lastLivePoll = Date.now()
     launchData = autopilot
     // The scraper card follows the scraper live.
     if (todoData && scraper && JSON.stringify(scraper) !== JSON.stringify(todoData.scraper)) {
