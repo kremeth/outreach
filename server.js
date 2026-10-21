@@ -830,10 +830,19 @@ async function postComment({ permalink, message, username, pk, code, kind }) {
   return result
 }
 
+let sheetRefreshStarted = 0
 function refreshSheet(force) {
+  // A refresh still going after 2 minutes is stuck: left behind, and a new one starts (nothing waits on
+  // a stuck one for ever).
+  if (sheetRefreshing && Date.now() - sheetRefreshStarted > 2 * 60 * 1000) {
+    console.error('sheet refresh: stuck for over 2 minutes, starting a new one')
+    sheetRefreshing = null
+  }
   if (sheetRefreshing) return sheetRefreshing
   if (!force && Date.now() - sheetRefreshedAt < SHEET_REFRESH_MS) return Promise.resolve()
-  sheetRefreshing = sheet.loadPending()
+  sheetRefreshStarted = Date.now()
+  const thisRefresh = sheet.loadPending()
+  sheetRefreshing = thisRefresh
     .then((loaded) => {
       yesRows = loaded.yesRows || []
       outreachColumns = loaded.outreachColumns || outreachColumns
@@ -854,8 +863,9 @@ function refreshSheet(force) {
       refreshError = ''
     })
     .finally(() => {
-      sheetRefreshing = null
+      if (sheetRefreshing === refreshPromise) sheetRefreshing = null
     })
+  const refreshPromise = sheetRefreshing
   return sheetRefreshing
 }
 
