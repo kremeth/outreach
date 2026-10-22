@@ -1281,7 +1281,9 @@ function dmsForPage({ all = false, trace = null } = {}) {
   summary.toReply = summary.toReply.map((item) => {
     const matches = yesRows.filter((row) => norm(row.name) === norm(item.name))
     const row = matches.length === 1 ? matches[0] : null
-    return { ...item, username: row ? data.usernameFrom(row.link) : '', voice: row && /^(romain|mathieu)$/i.test(row.voice || '') ? row.voice : '', reply: sent[item.name] || null }
+    // The username: the sheet (one exact name match), else the chat saved under this name (display names
+    // like "𝐀 𝐑 𝐋 𝐄 𝐍 𝐄" never match the sheet).
+    return { ...item, username: row ? data.usernameFrom(row.link) : dmChats.chatOf(item.name, '')?.username || '', voice: row && /^(romain|mathieu)$/i.test(row.voice || '') ? row.voice : '', reply: sent[item.name] || null }
   }).map((item) => ({
     ...item,
     // A reply sent before this inbox read: they wrote again since, so it is a new conversation turn.
@@ -1379,6 +1381,15 @@ function dmsForPage({ all = false, trace = null } = {}) {
   summary.sendingNow = Date.now() < replyNowUntil
   step('before answered')
   summary.toReply = summary.toReply.filter((item) => !answered(item)).map((item) => ({ ...item, followers: followersOf(item.username) }))
+  // One row per person, whatever the name it came under (the inbox's display name, a chat read under
+  // the username): the first one (the inbox's) stays.
+  const seenPeople = new Set()
+  summary.toReply = summary.toReply.filter((item) => {
+    const key = String(item.username || '').toLowerCase() || `name:${item.name}`
+    if (seenPeople.has(key)) return false
+    seenPeople.add(key)
+    return true
+  })
   step('end')
   return summary
 }
