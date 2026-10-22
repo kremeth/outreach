@@ -448,7 +448,12 @@ function dmRow(item) {
   if (state && state.status !== 'failed') {
     const label = { queued: 'Queued', sending: 'Sending…', sent: 'Sent ✓' }[state.status] || state.status
     top.append(el('span', `dm-tag ${state.status === 'sent' ? 'sent' : 'queued'}`, state.kind === 'like' ? (state.status === 'sent' ? 'Liked ❤️' : 'Liking…') : `${state.kind === 'voice' ? '🎙 ' : ''}${label}`))
-  } else if (state?.status === 'failed') top.append(el('span', 'dm-tag declined', 'Not sent'))
+  } else if (state?.status === 'failed') {
+    // On hover: what "Not sent" means, and why this one was not.
+    const tag = el('span', 'dm-tag declined', 'Not sent')
+    tag.title = `Not sent: your reply was queued but Outreach could not send it, so nothing reached them. Open the conversation to send it again.${state.error ? `\n\nWhy: ${state.error}` : ''}`
+    top.append(tag)
+  }
 
   top.append(el('span', 'dm-age', item.age || ''))
   if (item.unread) top.append(el('span', 'dm-dot'))

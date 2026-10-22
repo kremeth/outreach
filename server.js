@@ -2559,7 +2559,7 @@ async function boot() {
   repliesSheet.rows().catch(() => {}) // the decisions, before the first list is shown
   setTimeout(repliesSync, 20 * 1000).unref()
   setInterval(repliesSync, 2 * 60 * 1000).unref()
-  setInterval(() => repliesSheet.rows().catch(() => {}), 60 * 1000).unref()
+  setInterval(() => repliesSheet.rows().catch(() => {}), 2 * 60 * 1000).unref()
   // The other Mac stays on the latest version from GitHub (lib/self-update.js), between Launch's actions.
   const update = () => selfUpdate.check({
     busy: () => Boolean(autopilot.status().current) || replySending,
