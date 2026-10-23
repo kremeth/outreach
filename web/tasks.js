@@ -993,8 +993,47 @@ function messageStatus(value) {
   const text = String(value || '')
   if (!text) return null
   if (/^queued/i.test(text)) return { text: 'queued, going out soon', tone: 'soon' }
+  if (/^draft ready/i.test(text)) return { text: 'draft ready, review it', tone: 'soon', draft: true }
+  if (/^skipped/i.test(text)) return { text: 'skipped', tone: '' }
   if (/^failed/i.test(text)) return { text: 'not sent, check the chat', tone: 'late' }
   return { text: `sent ${text.slice(0, 5)}`, tone: 'done' }
+}
+// The day 7 / day 14 draft open for review, by "username:which".
+const openPartnerDraft = new Set()
+// A draft to review: what the data showed, the message (editable), and Send / Write again / Skip.
+function partnerDraftEditor(partner, which, refresh) {
+  const draft = partner.drafts?.[which]
+  const box = el('div', 'partner-draft')
+  if (!draft) return box
+  const title = which === 'day7' ? 'Day 7 message' : 'Day 14 message'
+  box.append(el('strong', '', `${title} (draft: nothing is sent until you press Send)`))
+  if (draft.findings?.length) {
+    const list = el('ul', 'partner-findings')
+    for (const item of draft.findings) list.append(el('li', '', `${item.label}: ${item.before} → ${item.after}${item.research?.length ? ` · research: ${item.research.join(', ')}` : ''}`))
+    box.append(list)
+  } else box.append(el('p', 'partner-draft-note', draft.reason ? `No data used: ${draft.reason}` : `No clear change in their data yet (${draft.daysAfter || 0} days since they started), so the message says nothing about results.`))
+  const text = document.createElement('textarea')
+  text.className = 'partner-draft-text'
+  text.value = draft.text || ''
+  text.rows = 4
+  const note = document.createElement('input')
+  note.className = 'partner-draft-ask'
+  note.placeholder = 'Note for a new version, e.g. mention their marathon, shorter'
+  const buttons = el('div', 'dm-buttons')
+  const act = async (action, extra = {}) => {
+    for (const item of buttons.querySelectorAll('button')) item.disabled = true
+    const result = await api('/api/partners/draft', { username: partner.username, which, action, ...extra }, 300000).catch((error) => ({ error: error.message }))
+    if (result?.error) { box.append(el('p', 'partner-draft-note bad', result.error)); for (const item of buttons.querySelectorAll('button')) item.disabled = false; return }
+    if (action !== 'regenerate') openPartnerDraft.delete(`${partner.username}:${which}`)
+    refresh(result)
+  }
+  buttons.append(
+    button('Send', 'dm-primary', () => act('send', { text: text.value })),
+    button('Write again', 'dm-ghost', (event) => { event.target.textContent = 'Writing…'; act('regenerate', { note: note.value }) }),
+    button('Skip', 'dm-ghost', () => act('skip')),
+  )
+  box.append(text, note, buttons)
+  return box
 }
 function renderPartners() {
   partnersEl.replaceChildren()
@@ -1103,12 +1142,30 @@ function renderPartners() {
       }
       const days = (isoText) => Math.round((new Date(`${isoText}T00:00:00`) - new Date(`${today}T00:00:00`)) / 86400000)
       const when = (isoText) => { const d = days(isoText); return d === 0 ? 'today' : d === 1 ? 'tomorrow' : d < 0 ? `${-d}d ago` : `in ${d}d` }
+      // Day 7 (from their data, a draft to review) and day 14 (same, with the dates).
+      const draftChip = (label, which, statusText, dueIso) => {
+        const status = messageStatus(statusText)
+        const item = status ? chip(label, status.text, status.tone) : chip(label, `${shortDate(dueIso)} · ${when(dueIso)}`, days(dueIso) <= 0 ? 'soon' : '')
+        if (partner.drafts?.[which]) {
+          item.classList.add('clickable')
+          item.title = 'Open the draft'
+          item.addEventListener('click', () => {
+            const key = `${partner.username}:${which}`
+            if (openPartnerDraft.has(key)) openPartnerDraft.delete(key)
+            else openPartnerDraft.add(key)
+            renderPartners()
+          })
+        }
+        return item
+      }
+      plan.append(draftChip('Day 7', 'day7', partner.day7Sent, partner.day7Due))
       plan.append(
-        messageStatus(partner.checkinSent) ? chip('Check-in', messageStatus(partner.checkinSent).text, messageStatus(partner.checkinSent).tone) : chip('Check-in', `${shortDate(partner.checkinDue)} · ${when(partner.checkinDue)}`, days(partner.checkinDue) <= 0 ? 'soon' : ''),
+        partner.drafts?.day14 ? draftChip('Day 14', 'day14', partner.checkinSent, partner.checkinDue) : messageStatus(partner.checkinSent) ? chip('Check-in', messageStatus(partner.checkinSent).text, messageStatus(partner.checkinSent).tone) : chip('Check-in', `${shortDate(partner.checkinDue)} · ${when(partner.checkinDue)}`, days(partner.checkinDue) <= 0 ? 'soon' : ''),
         chip('Monthly report', `${shortDate(partner.reportDate)} · ${when(partner.reportDate)}`, days(partner.reportDate) <= 2 ? 'soon' : ''),
         chip('Reel due', `${shortDate(partner.reelDue)} · ${when(partner.reelDue)}`, days(partner.reelDue) <= 2 ? 'soon' : ''),
       )
       row.append(plan)
+      for (const which of ['day7', 'day14']) if (openPartnerDraft.has(`${partner.username}:${which}`)) row.append(partnerDraftEditor(partner, which, refresh))
     }
     card.append(row)
   }

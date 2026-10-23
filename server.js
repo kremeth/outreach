@@ -1252,6 +1252,7 @@ function lookupFollowers(username) {
 
 // ---------- Partnerships: monthly report, reel and the check-in (lib/partners.js schedule) ----------
 const CHECKIN_APPROVED = path.join(__dirname, 'data', 'partner-checkin-approved')
+const partnerInsights = require('./lib/partner-insights')
 const longDate = (isoText) => new Date(`${isoText}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long' })
 // How to greet them: "Nick and Lindall" from the notes ("Nick & Lindall: ..."), else the first name
 // from the sheet ("L A U R I S S A" -> "Laurissa"), else nothing.
@@ -1290,6 +1291,9 @@ async function partnerCheckins() {
   try {
     const added = await partners.schedule()
     for (const item of added) console.log(`partner @${item.username}: report ${item.report}, reel ${item.reel}`)
+    // Day 7 and day 14: drafts from their data (never sent on their own: the person sends them from the
+    // card). Any time of day.
+    await partnerDrafts().catch((error) => console.error('partner drafts', error.message))
     const hour = new Date().getHours()
     if (!fs.existsSync(CHECKIN_APPROVED) || hour < 9 || hour >= 20) return
     const today = new Date().toISOString().slice(0, 10)
@@ -1311,14 +1315,32 @@ async function partnerCheckins() {
         console.log(`partner @${partner.username}: story reminder queued`)
       }
     }
+  } finally {
+    partnerWorkBusy = false
+  }
+}
+
+let partnerDraftsBusy = false
+async function partnerDrafts() {
+  if (partnerDraftsBusy || !liveStatus.runsHere()) return
+  partnerDraftsBusy = true
+  try {
+    const today = new Date().toISOString().slice(0, 10)
     for (const partner of await partners.list(true)) {
-      if (!partner.story || partner.post || partner.checkinSent || !partner.reportDate || !partner.checkinDue) continue
-      if (partner.checkinDue > today || partner.reportDate < today) continue
-      const chat = dmChats.chatOf(`@${partner.username}`, partner.username)
-      const name = `@${partner.username}`
-      dmReply.add({ name, username: partner.username, kind: 'text', text: checkinMessage(partner), voice: '', emoji: '', partnerMessage: 'checkin', sendAfter: Date.now() + (60 + Math.random() * 180) * 1000 })
-      await partners.checkinSent(partner.username, `queued ${partners.formatDate(new Date())}`)
-      console.log(`partner @${partner.username}: check-in queued${chat ? '' : ' (no saved chat)'}`)
+      if (!partner.story || partner.post || !partner.storyDate) continue
+      const drafts = partnerInsights.get(partner.username)
+      // Day 7: from day 7 until the day 14 message is due.
+      if (partner.day7Due && partner.day7Due <= today && partner.checkinDue > today && !partner.day7Sent && !drafts.day7) {
+        await partnerInsights.draft(partner, 'day7')
+        await partners.day7Sent(partner.username, 'draft ready').catch(() => {})
+        console.log(`partner @${partner.username}: day 7 draft ready`)
+      }
+      // Day 14: once due, while the report is still ahead.
+      if (partner.reportDate && partner.checkinDue && partner.checkinDue <= today && partner.reportDate >= today && !partner.checkinSent && !drafts.day14) {
+        await partnerInsights.draft(partner, 'day14')
+        await partners.checkinSent(partner.username, 'draft ready').catch(() => {})
+        console.log(`partner @${partner.username}: day 14 draft ready`)
+      }
     }
   } finally {
     partnerWorkBusy = false
@@ -1326,7 +1348,7 @@ async function partnerCheckins() {
 }
 
 async function partnersForPage() {
-  return (await partners.list().catch(() => [])).map((partner) => ({ ...partner, followers: followersOf(partner.username) }))
+  return (await partners.list().catch(() => [])).map((partner) => ({ ...partner, followers: followersOf(partner.username), drafts: partnerInsights.get(partner.username) }))
 }
 
 // The Finding new creators card's numbers: this Mac's own, with each account's list read so far.
@@ -1530,7 +1552,10 @@ async function sendQueuedReplies() {
     } else await instagram.sendDm({ username, threadId, message: item.text, detail: 'reply' })
     dmReply.update(item.id, { status: 'sent', sentAt: Date.now() })
     // A partnership message: its column says sent (with the day) only now that it really went out.
-    if (item.partnerMessage) partners.markMessage(username, item.partnerMessage, new Date()).catch((error) => console.error('partners', error.message))
+    if (item.partnerMessage) {
+      partners.markMessage(username, item.partnerMessage, new Date()).catch((error) => console.error('partners', error.message))
+      if (['day7', 'checkin'].includes(item.partnerMessage)) partnerInsights.setStatus(username, item.partnerMessage === 'day7' ? 'day7' : 'day14', 'sent', { sentAt: Date.now() })
+    }
     if (item.kind !== 'react') dmMissed.answered(username)
     if (item.kind !== 'read' && item.kind !== 'react') dmChats.addOurs(item.name, item.kind === 'voice' ? { voice: true, text: `(${item.voice}'s Message 2 voicenotes, part 1 and part 2)` } : item.kind === 'like' ? { text: '(liked their last message ❤️)' } : { text: item.text })
     panelReads.inbox = 0 // the list refreshes on the next pass: this one is answered now
@@ -2199,6 +2224,38 @@ const server = http.createServer(async (req, res) => {
       return
     }
     // A story or reel date set by hand (the countdown follows).
+    // Day 7 / day 14 drafts: send (queued like a reply, the column says sent once it went out),
+    // write again (optionally with a note), or skip.
+    if (req.method === 'POST' && url.pathname === '/api/partners/draft') {
+      const body = await readBody(req)
+      const username = String(body.username || '').toLowerCase()
+      const which = body.which === 'day7' ? 'day7' : 'day14'
+      const partner = (await partners.list(true)).find((item) => item.username === username)
+      if (!partner) {
+        sendJson(res, 404, { error: 'Not an ongoing partnership.' })
+        return
+      }
+      const kind = which === 'day7' ? 'day7' : 'checkin'
+      try {
+        if (body.action === 'send') {
+          const text = dmReply.oneParagraph(body.text || partnerInsights.get(username)[which]?.text || '')
+          if (!text) throw new Error('The message is empty.')
+          dmReply.add({ name: `@${username}`, username, kind: 'text', text, voice: '', emoji: '', partnerMessage: kind, sendAfter: Date.now() + (60 + Math.random() * 120) * 1000 })
+          partnerInsights.setStatus(username, which, 'queued', { text })
+          await partners.markMessage(username, kind, `queued ${partners.formatDate(new Date())}`)
+        } else if (body.action === 'regenerate') {
+          await partnerInsights.draft(partner, which, { note: String(body.note || '').slice(0, 500) })
+          await partners.markMessage(username, kind, 'draft ready')
+        } else if (body.action === 'skip') {
+          partnerInsights.setStatus(username, which, 'skipped')
+          await partners.markMessage(username, kind, 'skipped')
+        }
+        sendJson(res, 200, { ok: true, partners: await partnersForPage() })
+      } catch (error) {
+        sendJson(res, 500, { error: error.message })
+      }
+      return
+    }
     if (req.method === 'POST' && url.pathname === '/api/partners/date') {
       const body = await readBody(req)
       const ok = await partners.setDate(String(body.username || ''), body.kind === 'post' ? 'post' : 'story', String(body.date || ''))
