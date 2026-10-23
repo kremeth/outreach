@@ -1270,7 +1270,7 @@ const dayName = (isoText) => new Date(`${isoText}T00:00:00`).toLocaleDateString(
 function boxMessage(partner) {
   const who = partnerGreeting(partner)
   const [first, second] = partner.arrives
-  return `Hey${who ? ` ${who}` : ''}! We just sent out your box 📦 It should be with you on ${dayName(first)} or ${dayName(second)}. Can't wait to hear what you think once it lands!`
+  return `Hey${who ? ` ${who}` : ''}! We just sent out your box! It should be with you on ${dayName(first)} or ${dayName(second)}. Can't wait to hear what you think once it lands!`
 }
 function checkinMessage(partner) {
   const who = partnerGreeting(partner)
