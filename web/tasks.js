@@ -1064,6 +1064,25 @@ function renderPartners() {
 
     line.append(storyStep, track, reelStep)
     row.append(line)
+    // The plan once their story is up: the check-in message (day 14), the monthly report (day 27, spread
+    // over weekdays) and the reel a week after the report.
+    if (partner.story && !partner.post && partner.reportDate) {
+      const plan = el('div', 'partner-plan')
+      const today = new Date().toISOString().slice(0, 10)
+      const chip = (label, value, tone = '') => {
+        const item = el('span', `partner-chip ${tone}`)
+        item.append(el('span', 'partner-chip-label', label), el('span', '', value))
+        return item
+      }
+      const days = (isoText) => Math.round((new Date(`${isoText}T00:00:00`) - new Date(`${today}T00:00:00`)) / 86400000)
+      const when = (isoText) => { const d = days(isoText); return d === 0 ? 'today' : d === 1 ? 'tomorrow' : d < 0 ? `${-d}d ago` : `in ${d}d` }
+      plan.append(
+        partner.checkinSent ? chip('Check-in', `sent ${partner.checkinSent.slice(0, 5)}`, 'done') : chip('Check-in', `${shortDate(partner.checkinDue)} · ${when(partner.checkinDue)}`, days(partner.checkinDue) <= 0 ? 'soon' : ''),
+        chip('Monthly report', `${shortDate(partner.reportDate)} · ${when(partner.reportDate)}`, days(partner.reportDate) <= 2 ? 'soon' : ''),
+        chip('Reel due', `${shortDate(partner.reelDue)} · ${when(partner.reelDue)}`, days(partner.reelDue) <= 2 ? 'soon' : ''),
+      )
+      row.append(plan)
+    }
     card.append(row)
   }
   partnersEl.append(card)

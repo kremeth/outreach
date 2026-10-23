@@ -1250,6 +1250,51 @@ function lookupFollowers(username) {
   }).finally(() => followerLookups.delete(username))
 }
 
+// ---------- Partnerships: monthly report, reel and the check-in (lib/partners.js schedule) ----------
+const CHECKIN_APPROVED = path.join(__dirname, 'data', 'partner-checkin-approved')
+const longDate = (isoText) => new Date(`${isoText}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long' })
+// How to greet them: "Nick and Lindall" from the notes ("Nick & Lindall: ..."), else the first name
+// from the sheet ("L A U R I S S A" -> "Laurissa"), else nothing.
+function partnerGreeting(partner) {
+  const pair = String(partner.notes || '').match(/^([A-Z][a-z]+)\s*&\s*([A-Z][a-z]+)/)
+  if (pair) return `${pair[1]} and ${pair[2]}`
+  const row = yesRows.find((entry) => data.usernameFrom(entry.link) === partner.username) || rows.find((entry) => data.usernameFrom(entry['DIRECT LINK'] || '') === partner.username)
+  let name = String(row?.name || row?.NAME || '').normalize('NFKC')
+  if (/^(\S\s){2,}\S$/.test(name.trim())) name = name.replace(/\s+/g, '')
+  const first = (name.match(/[A-Za-zÀ-ÿ'’-]{2,}/) || [''])[0]
+  return first ? first[0].toUpperCase() + first.slice(1).toLowerCase() : ''
+}
+function checkinMessage(partner) {
+  const who = partnerGreeting(partner)
+  return `Hey${who ? ` ${who}` : ''}! Hope you're getting on well with the supplements 🙌 Just a heads up, your monthly report will be ready on ${longDate(partner.reportDate)}. We think it's great for the reel to include the experience of the report too, so we've pencilled your reel in for ${longDate(partner.reelDue)}. Let me know if that works for you!`
+}
+// Every 30 minutes on the working Mac, in Launch's hours: schedules new stories, and queues the check-in
+// on day 14 (only once the person approved the message: data/partner-checkin-approved). Never when the
+// report day has already passed.
+let partnerWorkBusy = false
+async function partnerCheckins() {
+  if (partnerWorkBusy || !liveStatus.runsHere()) return
+  partnerWorkBusy = true
+  try {
+    const added = await partners.schedule()
+    for (const item of added) console.log(`partner @${item.username}: report ${item.report}, reel ${item.reel}`)
+    const hour = new Date().getHours()
+    if (!fs.existsSync(CHECKIN_APPROVED) || hour < 9 || hour >= 20) return
+    const today = new Date().toISOString().slice(0, 10)
+    for (const partner of await partners.list(true)) {
+      if (!partner.story || partner.post || partner.checkinSent || !partner.reportDate || !partner.checkinDue) continue
+      if (partner.checkinDue > today || partner.reportDate < today) continue
+      const chat = dmChats.chatOf(`@${partner.username}`, partner.username)
+      const name = `@${partner.username}`
+      dmReply.add({ name, username: partner.username, kind: 'text', text: checkinMessage(partner), voice: '', emoji: '', sendAfter: Date.now() + (60 + Math.random() * 180) * 1000 })
+      await partners.checkinSent(partner.username)
+      console.log(`partner @${partner.username}: check-in queued${chat ? '' : ' (no saved chat)'}`)
+    }
+  } finally {
+    partnerWorkBusy = false
+  }
+}
+
 async function partnersForPage() {
   return (await partners.list().catch(() => [])).map((partner) => ({ ...partner, followers: followersOf(partner.username) }))
 }
@@ -2581,6 +2626,9 @@ async function boot() {
   }
   setTimeout(() => shareLive().catch((error) => console.error('live status', error.message)), 25 * 1000).unref()
   setInterval(() => shareLive().catch((error) => console.error('live status', error.message)), 60 * 1000).unref()
+  // Partnerships: schedule and check-ins (lib/partners.js), every 30 minutes on the working Mac.
+  setTimeout(() => partnerCheckins().catch((error) => console.error('partners', error.message)), 2 * 60 * 1000).unref()
+  setInterval(() => partnerCheckins().catch((error) => console.error('partners', error.message)), 30 * 60 * 1000).unref()
   // The scraper accounts' @usernames for the card (each window asked once; checked again every 30 min).
   const names = () => followingScraper.refreshNames(instagram).catch(() => {})
   setTimeout(names, 45 * 1000).unref()
