@@ -1297,8 +1297,8 @@ async function partnerCheckins() {
     // The box message: a partnership added today or yesterday (the box just went out), before any story.
     for (const partner of await partners.list(true)) {
       if (partner.story || partner.boxMessageSent || !partner.sentDate || partner.sentDate < yesterday || !partner.arrives.length) continue
-      dmReply.add({ name: `@${partner.username}`, username: partner.username, kind: 'text', text: boxMessage(partner), voice: '', emoji: '', sendAfter: Date.now() + (60 + Math.random() * 180) * 1000 })
-      await partners.boxMessageSent(partner.username)
+      dmReply.add({ name: `@${partner.username}`, username: partner.username, kind: 'text', text: boxMessage(partner), voice: '', emoji: '', partnerMessage: 'box', sendAfter: Date.now() + (60 + Math.random() * 180) * 1000 })
+      await partners.boxMessageSent(partner.username, `queued ${partners.formatDate(new Date())}`)
       console.log(`partner @${partner.username}: box message queued`)
     }
     // The story reminder: still no story 7 days after the box went out (only once its wording is
@@ -1306,8 +1306,8 @@ async function partnerCheckins() {
     if (fs.existsSync(path.join(__dirname, 'data', 'partner-reminder-approved'))) {
       for (const partner of await partners.list(true)) {
         if (partner.story || partner.post || partner.reminderSent || !partner.reminderDue || partner.reminderDue > today) continue
-        dmReply.add({ name: `@${partner.username}`, username: partner.username, kind: 'text', text: reminderMessage(partner), voice: '', emoji: '', sendAfter: Date.now() + (60 + Math.random() * 180) * 1000 })
-        await partners.reminderSent(partner.username)
+        dmReply.add({ name: `@${partner.username}`, username: partner.username, kind: 'text', text: reminderMessage(partner), voice: '', emoji: '', partnerMessage: 'reminder', sendAfter: Date.now() + (60 + Math.random() * 180) * 1000 })
+        await partners.reminderSent(partner.username, `queued ${partners.formatDate(new Date())}`)
         console.log(`partner @${partner.username}: story reminder queued`)
       }
     }
@@ -1316,8 +1316,8 @@ async function partnerCheckins() {
       if (partner.checkinDue > today || partner.reportDate < today) continue
       const chat = dmChats.chatOf(`@${partner.username}`, partner.username)
       const name = `@${partner.username}`
-      dmReply.add({ name, username: partner.username, kind: 'text', text: checkinMessage(partner), voice: '', emoji: '', sendAfter: Date.now() + (60 + Math.random() * 180) * 1000 })
-      await partners.checkinSent(partner.username)
+      dmReply.add({ name, username: partner.username, kind: 'text', text: checkinMessage(partner), voice: '', emoji: '', partnerMessage: 'checkin', sendAfter: Date.now() + (60 + Math.random() * 180) * 1000 })
+      await partners.checkinSent(partner.username, `queued ${partners.formatDate(new Date())}`)
       console.log(`partner @${partner.username}: check-in queued${chat ? '' : ' (no saved chat)'}`)
     }
   } finally {
@@ -1529,6 +1529,8 @@ async function sendQueuedReplies() {
       if (result?.already) console.log(`dm like @${username}: already liked`)
     } else await instagram.sendDm({ username, threadId, message: item.text, detail: 'reply' })
     dmReply.update(item.id, { status: 'sent', sentAt: Date.now() })
+    // A partnership message: its column says sent (with the day) only now that it really went out.
+    if (item.partnerMessage) partners.markMessage(username, item.partnerMessage, new Date()).catch((error) => console.error('partners', error.message))
     if (item.kind !== 'react') dmMissed.answered(username)
     if (item.kind !== 'read' && item.kind !== 'react') dmChats.addOurs(item.name, item.kind === 'voice' ? { voice: true, text: `(${item.voice}'s Message 2 voicenotes, part 1 and part 2)` } : item.kind === 'like' ? { text: '(liked their last message ❤️)' } : { text: item.text })
     panelReads.inbox = 0 // the list refreshes on the next pass: this one is answered now
@@ -1541,7 +1543,10 @@ async function sendQueuedReplies() {
       tomorrow.setHours(8, 0, 0, 0)
       dmReply.update(item.id, { status: 'queued', waitUntil: daily ? tomorrow.getTime() : Date.now() + Math.max(30000, error.waitMs || 60000), waitReason: error.message })
     } else if (['busy', 'hidden', 'app', 'timeout'].includes(error.kind)) dmReply.update(item.id, { status: 'queued' })
-    else dmReply.update(item.id, { status: 'failed', error: error.message })
+    else {
+      dmReply.update(item.id, { status: 'failed', error: error.message })
+      if (item.partnerMessage) partners.markMessage(item.username, item.partnerMessage, `failed ${partners.formatDate(new Date())}`).catch(() => {})
+    }
   } finally {
     replySending = false
   }

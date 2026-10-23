@@ -987,6 +987,15 @@ function datePicker(partner, kind, current, onPicked) {
   return input
 }
 
+// A partnership message's status from its sheet column: "23/10/2026" sent, "queued ..." waiting to go
+// out, "failed ..." not sent.
+function messageStatus(value) {
+  const text = String(value || '')
+  if (!text) return null
+  if (/^queued/i.test(text)) return { text: 'queued, going out soon', tone: 'soon' }
+  if (/^failed/i.test(text)) return { text: 'not sent, check the chat', tone: 'late' }
+  return { text: `sent ${text.slice(0, 5)}`, tone: 'done' }
+}
 function renderPartners() {
   partnersEl.replaceChildren()
   const list = todoData?.partners
@@ -1077,9 +1086,11 @@ function renderPartners() {
       const day = (isoText) => new Date(`${isoText}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })
       plan.append(item('Box sent', shortDate(partner.sentDate)))
       if (partner.arrives?.length) plan.append(item('Arrives', `${day(partner.arrives[0])} or ${day(partner.arrives[1])}`))
-      plan.append(partner.boxMessageSent ? item('Box message', `sent ${partner.boxMessageSent.slice(0, 5)}`, 'done') : item('Box message', 'not sent'))
+      const box = messageStatus(partner.boxMessageSent)
+      plan.append(box ? item('Box message', box.text, box.tone) : item('Box message', 'not sent'))
       // 7 days after the box with no story: the reminder.
-      if (partner.reminderDue) plan.append(partner.reminderSent ? item('Story reminder', `sent ${partner.reminderSent.slice(0, 5)}`, 'done') : item('Story reminder', shortDate(partner.reminderDue), new Date(`${partner.reminderDue}T00:00:00`) <= new Date() ? 'soon' : ''))
+      const reminder = messageStatus(partner.reminderSent)
+      if (partner.reminderDue) plan.append(reminder ? item('Story reminder', reminder.text, reminder.tone) : item('Story reminder', shortDate(partner.reminderDue), new Date(`${partner.reminderDue}T00:00:00`) <= new Date() ? 'soon' : ''))
       row.append(plan)
     }
     if (partner.story && !partner.post && partner.reportDate) {
@@ -1093,7 +1104,7 @@ function renderPartners() {
       const days = (isoText) => Math.round((new Date(`${isoText}T00:00:00`) - new Date(`${today}T00:00:00`)) / 86400000)
       const when = (isoText) => { const d = days(isoText); return d === 0 ? 'today' : d === 1 ? 'tomorrow' : d < 0 ? `${-d}d ago` : `in ${d}d` }
       plan.append(
-        partner.checkinSent ? chip('Check-in', `sent ${partner.checkinSent.slice(0, 5)}`, 'done') : chip('Check-in', `${shortDate(partner.checkinDue)} · ${when(partner.checkinDue)}`, days(partner.checkinDue) <= 0 ? 'soon' : ''),
+        messageStatus(partner.checkinSent) ? chip('Check-in', messageStatus(partner.checkinSent).text, messageStatus(partner.checkinSent).tone) : chip('Check-in', `${shortDate(partner.checkinDue)} · ${when(partner.checkinDue)}`, days(partner.checkinDue) <= 0 ? 'soon' : ''),
         chip('Monthly report', `${shortDate(partner.reportDate)} · ${when(partner.reportDate)}`, days(partner.reportDate) <= 2 ? 'soon' : ''),
         chip('Reel due', `${shortDate(partner.reelDue)} · ${when(partner.reelDue)}`, days(partner.reelDue) <= 2 ? 'soon' : ''),
       )
