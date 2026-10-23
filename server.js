@@ -1272,6 +1272,10 @@ function boxMessage(partner) {
   const [first, second] = partner.arrives
   return `Hey${who ? ` ${who}` : ''}! We just sent out your box! It should be with you on ${dayName(first)} or ${dayName(second)}. Can't wait to hear what you think once it lands!`
 }
+function reminderMessage(partner) {
+  const who = partnerGreeting(partner)
+  return `Hey${who ? ` ${who}` : ''}! Just checking in, has your box arrived okay? If it has, we'd love it if you could share a quick story whenever suits you, it kicks off your month with us 🙌 And if it hasn't turned up yet, just let us know and we'll chase it up for you straight away!`
+}
 function checkinMessage(partner) {
   const who = partnerGreeting(partner)
   return `Hey${who ? ` ${who}` : ''}! Hope you're getting on well with the supplements 🙌 Just a heads up, your monthly report will be ready on ${longDate(partner.reportDate)}. We think it's great for the reel to include the experience of the report too, so we've pencilled your reel in for ${longDate(partner.reelDue)}. Let me know if that works for you!`
@@ -1296,6 +1300,16 @@ async function partnerCheckins() {
       dmReply.add({ name: `@${partner.username}`, username: partner.username, kind: 'text', text: boxMessage(partner), voice: '', emoji: '', sendAfter: Date.now() + (60 + Math.random() * 180) * 1000 })
       await partners.boxMessageSent(partner.username)
       console.log(`partner @${partner.username}: box message queued`)
+    }
+    // The story reminder: still no story 7 days after the box went out (only once its wording is
+    // approved: data/partner-reminder-approved).
+    if (fs.existsSync(path.join(__dirname, 'data', 'partner-reminder-approved'))) {
+      for (const partner of await partners.list(true)) {
+        if (partner.story || partner.post || partner.reminderSent || !partner.reminderDue || partner.reminderDue > today) continue
+        dmReply.add({ name: `@${partner.username}`, username: partner.username, kind: 'text', text: reminderMessage(partner), voice: '', emoji: '', sendAfter: Date.now() + (60 + Math.random() * 180) * 1000 })
+        await partners.reminderSent(partner.username)
+        console.log(`partner @${partner.username}: story reminder queued`)
+      }
     }
     for (const partner of await partners.list(true)) {
       if (!partner.story || partner.post || partner.checkinSent || !partner.reportDate || !partner.checkinDue) continue

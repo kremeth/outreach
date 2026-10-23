@@ -1078,6 +1078,8 @@ function renderPartners() {
       plan.append(item('Box sent', shortDate(partner.sentDate)))
       if (partner.arrives?.length) plan.append(item('Arrives', `${day(partner.arrives[0])} or ${day(partner.arrives[1])}`))
       plan.append(partner.boxMessageSent ? item('Box message', `sent ${partner.boxMessageSent.slice(0, 5)}`, 'done') : item('Box message', 'not sent'))
+      // 7 days after the box with no story: the reminder.
+      if (partner.reminderDue) plan.append(partner.reminderSent ? item('Story reminder', `sent ${partner.reminderSent.slice(0, 5)}`, 'done') : item('Story reminder', shortDate(partner.reminderDue), new Date(`${partner.reminderDue}T00:00:00`) <= new Date() ? 'soon' : ''))
       row.append(plan)
     }
     if (partner.story && !partner.post && partner.reportDate) {
