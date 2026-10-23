@@ -1253,6 +1253,8 @@ function lookupFollowers(username) {
 // ---------- Partnerships: monthly report, reel and the check-in (lib/partners.js schedule) ----------
 const CHECKIN_APPROVED = path.join(__dirname, 'data', 'partner-checkin-approved')
 const partnerInsights = require('./lib/partner-insights')
+// A date as yyyy-mm-dd in Sydney time (toISOString is UTC: the day before until 11 am).
+const localIso = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 const longDate = (isoText) => new Date(`${isoText}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long' })
 // How to greet them: "Nick and Lindall" from the notes ("Nick & Lindall: ..."), else the first name
 // from the sheet ("L A U R I S S A" -> "Laurissa"), else nothing.
@@ -1296,8 +1298,8 @@ async function partnerCheckins() {
     await partnerDrafts().catch((error) => console.error('partner drafts', error.message))
     const hour = new Date().getHours()
     if (!fs.existsSync(CHECKIN_APPROVED) || hour < 9 || hour >= 20) return
-    const today = new Date().toISOString().slice(0, 10)
-    const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10)
+    const today = localIso(new Date())
+    const yesterday = localIso(new Date(Date.now() - 86400000))
     // The box message: a partnership added today or yesterday (the box just went out), before any story.
     for (const partner of await partners.list(true)) {
       if (partner.story || partner.boxMessageSent || !partner.sentDate || partner.sentDate < yesterday || !partner.arrives.length) continue
@@ -1325,7 +1327,7 @@ async function partnerDrafts() {
   if (partnerDraftsBusy || !liveStatus.runsHere()) return
   partnerDraftsBusy = true
   try {
-    const today = new Date().toISOString().slice(0, 10)
+    const today = localIso(new Date())
     for (const partner of await partners.list(true)) {
       if (!partner.story || partner.post || !partner.storyDate) continue
       const drafts = partnerInsights.get(partner.username)

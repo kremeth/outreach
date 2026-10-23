@@ -73,7 +73,8 @@ async function main() {
   const stack = latest.supplementList || []
   const subcollections = (await ref.listCollections()).map((c) => c.id)
   const start = input.start
-  const today = new Date().toISOString().slice(0, 10)
+  const now = new Date()
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
   // Days on the supplements so far: from the start, at most `days`, never today (not complete).
   const endAfter = [addDays(start, (input.days || 7) - 1), addDays(today, -1)].sort()[0]
   // The device with data after the start (a wearable first; Apple only when nothing else has it).
