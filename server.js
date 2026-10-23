@@ -1264,6 +1264,13 @@ function partnerGreeting(partner) {
   const first = (name.match(/[A-Za-zÀ-ÿ'’-]{2,}/) || [''])[0]
   return first ? first[0].toUpperCase() + first.slice(1).toLowerCase() : ''
 }
+// "Monday 26 October" style, for the box's arrival days.
+const dayName = (isoText) => new Date(`${isoText}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long' })
+function boxMessage(partner) {
+  const who = partnerGreeting(partner)
+  const [first, second] = partner.arrives
+  return `Hey${who ? ` ${who}` : ''}! We just sent out your box 📦 It should be with you on ${dayName(first)} or ${dayName(second)}. Can't wait to hear what you think once it lands!`
+}
 function checkinMessage(partner) {
   const who = partnerGreeting(partner)
   return `Hey${who ? ` ${who}` : ''}! Hope you're getting on well with the supplements 🙌 Just a heads up, your monthly report will be ready on ${longDate(partner.reportDate)}. We think it's great for the reel to include the experience of the report too, so we've pencilled your reel in for ${longDate(partner.reelDue)}. Let me know if that works for you!`
@@ -1281,6 +1288,14 @@ async function partnerCheckins() {
     const hour = new Date().getHours()
     if (!fs.existsSync(CHECKIN_APPROVED) || hour < 9 || hour >= 20) return
     const today = new Date().toISOString().slice(0, 10)
+    const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10)
+    // The box message: a partnership added today or yesterday (the box just went out), before any story.
+    for (const partner of await partners.list(true)) {
+      if (partner.story || partner.boxMessageSent || !partner.sentDate || partner.sentDate < yesterday || !partner.arrives.length) continue
+      dmReply.add({ name: `@${partner.username}`, username: partner.username, kind: 'text', text: boxMessage(partner), voice: '', emoji: '', sendAfter: Date.now() + (60 + Math.random() * 180) * 1000 })
+      await partners.boxMessageSent(partner.username)
+      console.log(`partner @${partner.username}: box message queued`)
+    }
     for (const partner of await partners.list(true)) {
       if (!partner.story || partner.post || partner.checkinSent || !partner.reportDate || !partner.checkinDue) continue
       if (partner.checkinDue > today || partner.reportDate < today) continue
@@ -2419,7 +2434,9 @@ const server = http.createServer(async (req, res) => {
       return
     }
     if (req.method === 'GET' && url.pathname === '/api/counts') {
-      await log.refresh(4000).catch((error) => console.error(error))
+      // At most every 30 s: the page asks every 5 s, and Google allows 60 sheet reads a minute for
+      // everything on both Macs together.
+      await log.refresh(30000).catch((error) => console.error(error))
       // With the model's numbers, so the Prospecting card follows the day (today's counts reset at midnight).
       sendJson(res, 200, { ...counts(), model: liveStatus.current()?.prospecting || { ...modelProgress(), health: runners.health.message } })
       return

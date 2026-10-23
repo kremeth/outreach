@@ -1066,6 +1066,20 @@ function renderPartners() {
     row.append(line)
     // The plan once their story is up: the check-in message (day 14), the monthly report (day 27, spread
     // over weekdays) and the reel a week after the report.
+    // Before the story: the box (sent, arriving) and its message.
+    if (!partner.story && partner.sentDate) {
+      const plan = el('div', 'partner-plan')
+      const item = (label, value, tone = '') => {
+        const chip = el('span', `partner-chip ${tone}`)
+        chip.append(el('span', 'partner-chip-label', label), el('span', '', value))
+        return chip
+      }
+      const day = (isoText) => new Date(`${isoText}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })
+      plan.append(item('Box sent', shortDate(partner.sentDate)))
+      if (partner.arrives?.length) plan.append(item('Arrives', `${day(partner.arrives[0])} or ${day(partner.arrives[1])}`))
+      plan.append(partner.boxMessageSent ? item('Box message', `sent ${partner.boxMessageSent.slice(0, 5)}`, 'done') : item('Box message', 'not sent'))
+      row.append(plan)
+    }
     if (partner.story && !partner.post && partner.reportDate) {
       const plan = el('div', 'partner-plan')
       const today = new Date().toISOString().slice(0, 10)
