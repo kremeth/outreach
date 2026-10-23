@@ -229,6 +229,23 @@ const dmNotes = new Map()
 const dmCopilot = new Map()
 // Messages lined up for one conversation before Done (sent one after the other, in that order).
 const dmOutbox = new Map()
+// Instagram cuts a direct message at 1,000 characters. Counted strictly (an emoji counts as 2, as in
+// Instagram's own composer), so "within the limit" here is always within it there.
+const DM_LIMIT = 1000
+const dmLength = (text) => String(text || '').length
+// "624 / 1,000" under a message box, red (and Send blocked) once over.
+function lengthCounter(area) {
+  const counter = el('div', 'dm-length')
+  const update = () => {
+    const n = dmLength(area.value)
+    counter.textContent = n > DM_LIMIT ? `${number(n)} / ${number(DM_LIMIT)} characters: ${number(n - DM_LIMIT)} too many for one Instagram message (split it with "+ Add another message")` : `${number(n)} / ${number(DM_LIMIT)}`
+    counter.classList.toggle('over', n > DM_LIMIT)
+    counter.classList.toggle('near', n > DM_LIMIT * 0.9 && n <= DM_LIMIT)
+  }
+  area.addEventListener('input', update)
+  update()
+  return counter
+}
 const dmFullChat = new Map()
 const dmReading = new Set()
 const dmReacted = new Map()
@@ -748,13 +765,14 @@ function dmBody(item) {
           entry.text = text.value
           fitArea(text)
           const current = entries[selectedIndex()]?.text.trim()
-          send.disabled = busy || !(outbox.length || current)
-          addMessage.disabled = busy || !current
+          const over = dmLength(current) > DM_LIMIT
+          send.disabled = busy || over || !(outbox.length || current)
+          addMessage.disabled = busy || over || !current
           if (outbox.length) send.textContent = `Done, send ${outbox.length + (current ? 1 : 0)} messages`
         })
         text.addEventListener('focus', () => { if (selectedIndex() !== index) { entries.forEach((other) => { other.picked = false }); entry.picked = true; card.classList.add('chosen') } lastFocus = text })
         text.addEventListener('keydown', (event) => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) send.click() })
-        card.append(head, text)
+        card.append(head, text, lengthCounter(text))
         list.append(card)
         requestAnimationFrame(() => fitArea(text))
       })
@@ -773,8 +791,9 @@ function dmBody(item) {
       const current = entries[selectedIndex()]?.text.trim()
       const count = outbox.length + (current ? 1 : 0)
       send.textContent = outbox.length ? `Done, send ${count} message${count === 1 ? '' : 's'}` : 'Send reply'
-      send.disabled = busy || !count
-      addMessage.disabled = busy || !current
+      const over = dmLength(current) > DM_LIMIT
+      send.disabled = busy || over || !count
+      addMessage.disabled = busy || over || !current
       list.scrollTop = list.scrollHeight
     }
     const fitArea = (area) => {
@@ -1016,6 +1035,7 @@ function partnerDraftEditor(partner, which, refresh) {
   text.className = 'partner-draft-text'
   text.value = draft.text || ''
   text.rows = 4
+  const counter = lengthCounter(text)
   const note = document.createElement('input')
   note.className = 'partner-draft-ask'
   note.placeholder = 'Note for a new version, e.g. mention their marathon, shorter'
@@ -1032,7 +1052,10 @@ function partnerDraftEditor(partner, which, refresh) {
     button('Write again', 'dm-ghost', (event) => { event.target.textContent = 'Writing…'; act('regenerate', { note: note.value }) }),
     button('Skip', 'dm-ghost', () => act('skip')),
   )
-  box.append(text, note, buttons)
+  // Send blocked while the message is over Instagram's limit.
+  text.addEventListener('input', () => { buttons.firstChild.disabled = dmLength(text.value.trim()) > DM_LIMIT })
+  box.append(text, counter, note, buttons)
+  requestAnimationFrame(() => { buttons.firstChild.disabled = dmLength(text.value.trim()) > DM_LIMIT })
   return box
 }
 function renderPartners() {

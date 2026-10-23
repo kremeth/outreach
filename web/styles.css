@@ -1808,3 +1808,8 @@ a.person.current {
 .scraper-account .dm-buttons { margin-top: 2px; }
 
 .model-health { color: var(--warn); font-weight: 600; }
+
+/* Message length against Instagram's 1,000-character limit */
+.dm-length { margin-top: 4px; font-size: 12px; color: var(--muted); text-align: right; }
+.dm-length.near { color: #8a5300; }
+.dm-length.over { color: var(--danger-ink, #7a2a1a); font-weight: 600; }

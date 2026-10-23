@@ -2242,6 +2242,7 @@ const server = http.createServer(async (req, res) => {
         if (body.action === 'send') {
           const text = dmReply.oneParagraph(body.text || partnerInsights.get(username)[which]?.text || '')
           if (!text) throw new Error('The message is empty.')
+          if (text.length > 1000) throw new Error(`That message is ${text.length} characters; Instagram allows 1,000 in one message.`)
           dmReply.add({ name: `@${username}`, username, kind: 'text', text, voice: '', emoji: '', partnerMessage: kind, sendAfter: Date.now() + (60 + Math.random() * 120) * 1000 })
           partnerInsights.setStatus(username, which, 'queued', { text })
           await partners.markMessage(username, kind, `queued ${partners.formatDate(new Date())}`)
@@ -2422,6 +2423,12 @@ const server = http.createServer(async (req, res) => {
       const emoji = kind === 'react' ? (['❤️', '😂', '😮', '😢', '😡', '👍'].find((item) => item.replace(/\uFE0F/g, '') === String(body.emoji || '').replace(/\uFE0F/g, '')) || '') : ''
       if (kind === 'react' && !emoji) {
         sendJson(res, 400, { error: 'Pick one of the quick reactions.' })
+        return
+      }
+      // Instagram cuts a direct message at 1,000 characters: never queued longer (split it instead).
+      const tooLong = [text, ...(Array.isArray(body.texts) ? body.texts.map((one) => dmReply.oneParagraph(one)) : [])].find((one) => kind === 'text' && one.length > 1000)
+      if (tooLong) {
+        sendJson(res, 400, { error: `That message is ${tooLong.length} characters; Instagram allows 1,000 in one message. Shorten it or split it with "+ Add another message".` })
         return
       }
       if (!body.name || (kind === 'text' && !text) || (kind === 'voice' && !voice)) {
