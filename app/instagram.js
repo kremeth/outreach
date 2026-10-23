@@ -69,7 +69,10 @@ async function key(wc, keyCode, modifiers = []) {
 // problem: 'blocked' (any Instagram warning: stops everything), 'login', 'missing' or ''.
 const PAGE_PROBLEM = String.raw`
   const pageText = (document.body && document.body.innerText) || ''
-  const popupText = [...document.querySelectorAll('[role="dialog"], [role="alertdialog"], [role="alert"]')].map((el) => el.innerText || '').join(' | ')
+  // Pop-ups, except a list of accounts (followers / following / likes): its names and bios are anyone's
+  // words, not Instagram's ("suspicious", "try again later" in someone's bio stopped a scraper, 24 Oct).
+  const accountList = (el) => el.querySelectorAll('a[href^="/"][role="link"], a[href^="/"]').length >= 8 || /^\s*(following|followers|likes)\b/i.test(el.innerText || '')
+  const popupText = [...document.querySelectorAll('[role="dialog"], [role="alertdialog"], [role="alert"]')].filter((el) => !accountList(el)).map((el) => el.innerText || '').join(' | ')
   const pagePath = location.pathname.toLowerCase()
   const problem = ${guard.WARNING_PATH}.test(pagePath) || ${guard.POPUP_WARNING}.test(popupText) || ${guard.PAGE_WARNING}.test(pageText.slice(0, 2000)) ? 'blocked'
     : pagePath.startsWith('/accounts/login') || /log in to continue|log into instagram/i.test(pageText.slice(0, 3000)) ? 'login'

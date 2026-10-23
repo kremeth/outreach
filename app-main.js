@@ -264,7 +264,13 @@ function scraperOf(account) {
 function openScraper(account = 1, show = true) {
   const scraper = scraperOf(account)
   if (scraper.win && !scraper.win.isDestroyed()) {
-    if (show) scraper.win.show()
+    // Shown to the person: in front of everything, focused, on the current desktop.
+    if (show) {
+      if (scraper.win.isMinimized()) scraper.win.restore()
+      scraper.win.show()
+      scraper.win.focus()
+      app.focus({ steal: true })
+    }
     return scraper.view.webContents
   }
   const partition = scraperPartition(scraper.account)
@@ -285,6 +291,10 @@ function openScraper(account = 1, show = true) {
     scraper.win.hide()
   })
   scraper.view.webContents.loadURL('https://www.instagram.com/').catch(() => {})
+  if (show) {
+    scraper.win.focus()
+    app.focus({ steal: true })
+  }
   return scraper.view.webContents
 }
 
