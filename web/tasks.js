@@ -1134,7 +1134,7 @@ function renderPartners() {
     }
     if (partner.story && !partner.post && partner.reportDate) {
       const plan = el('div', 'partner-plan')
-      const today = new Date().toISOString().slice(0, 10)
+      const today = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` })()
       const chip = (label, value, tone = '') => {
         const item = el('span', `partner-chip ${tone}`)
         item.append(el('span', 'partner-chip-label', label), el('span', '', value))
