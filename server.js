@@ -1256,6 +1256,7 @@ const longDate = (isoText) => new Date(`${isoText}T00:00:00`).toLocaleDateString
 // How to greet them: "Nick and Lindall" from the notes ("Nick & Lindall: ..."), else the first name
 // from the sheet ("L A U R I S S A" -> "Laurissa"), else nothing.
 function partnerGreeting(partner) {
+  if (partner.firstName) return partner.firstName
   const pair = String(partner.notes || '').match(/^([A-Z][a-z]+)\s*&\s*([A-Z][a-z]+)/)
   if (pair) return `${pair[1]} and ${pair[2]}`
   const row = yesRows.find((entry) => data.usernameFrom(entry.link) === partner.username) || rows.find((entry) => data.usernameFrom(entry['DIRECT LINK'] || '') === partner.username)
