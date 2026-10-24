@@ -1019,6 +1019,9 @@ function messageStatus(value) {
 }
 // The day 7 / day 14 draft open for review, by "username:which".
 const openPartnerDraft = new Set()
+// What the person typed in a draft (kept until it is sent or skipped, whatever redraws the card).
+const partnerDraftEdits = new Map()
+let partnersShown = ''
 // A draft to review: what the data showed, the message (editable), and Send / Write again / Skip.
 function partnerDraftEditor(partner, which, refresh) {
   const draft = partner.drafts?.[which]
@@ -1031,10 +1034,12 @@ function partnerDraftEditor(partner, which, refresh) {
     for (const item of draft.findings) list.append(el('li', '', `${item.label}: ${item.before} → ${item.after}${item.research?.length ? ` · research: ${item.research.join(', ')}` : ''}`))
     box.append(list)
   } else box.append(el('p', 'partner-draft-note', draft.reason ? `No data used: ${draft.reason}` : `No clear change in their data yet (${draft.daysAfter || 0} days since they started), so the message says nothing about results.`))
+  const key = `${partner.username}:${which}`
   const text = document.createElement('textarea')
   text.className = 'partner-draft-text'
-  text.value = draft.text || ''
-  text.rows = 4
+  text.value = partnerDraftEdits.has(key) ? partnerDraftEdits.get(key) : draft.text || ''
+  text.rows = 6
+  text.addEventListener('input', () => partnerDraftEdits.set(key, text.value))
   const counter = lengthCounter(text)
   const note = document.createElement('input')
   note.className = 'partner-draft-ask'
@@ -1045,6 +1050,9 @@ function partnerDraftEditor(partner, which, refresh) {
     const result = await api('/api/partners/draft', { username: partner.username, which, action, ...extra }, 300000).catch((error) => ({ error: error.message }))
     if (result?.error) { box.append(el('p', 'partner-draft-note bad', result.error)); for (const item of buttons.querySelectorAll('button')) item.disabled = false; return }
     if (action !== 'regenerate') openPartnerDraft.delete(`${partner.username}:${which}`)
+    // Sent, skipped or written again: the typed version is done with.
+    partnerDraftEdits.delete(`${partner.username}:${which}`)
+    partnersShown = ''
     refresh(result)
   }
   buttons.append(
@@ -1059,9 +1067,14 @@ function partnerDraftEditor(partner, which, refresh) {
   return box
 }
 function renderPartners() {
-  partnersEl.replaceChildren()
   const list = todoData?.partners
   if (!list) return
+  // Never redrawn under the person's hands (typing in a draft), nor when nothing changed.
+  if (partnersEl.contains(document.activeElement) && /^(TEXTAREA|INPUT)$/.test(document.activeElement.tagName)) return
+  const shown = JSON.stringify([list, [...openPartnerDraft]])
+  if (shown === partnersShown && partnersEl.childElementCount) return
+  partnersShown = shown
+  partnersEl.replaceChildren()
   const card = el('div', 'side-card partner-card')
   // How many, after the section's title.
   const count = document.getElementById('partners-count')
