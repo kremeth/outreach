@@ -64,6 +64,11 @@ function args() {
   return { list: [...new Set(list)], pause, watch }
 }
 
+const FAILS_BEFORE_ASIDE = 3
+const FAILURES_PATH = path.join(DIR, 'acquire-failures.json')
+const readFailures = () => { try { return JSON.parse(fs.readFileSync(FAILURES_PATH, 'utf8')) } catch { return {} } }
+const writeFailures = (failures) => { try { fs.writeFileSync(FAILURES_PATH, JSON.stringify(failures, null, 1)) } catch {} }
+
 async function acquire(username) {
   const file = path.join(DIR, 'profiles', `${username}.json`)
   const started = Date.now()
@@ -144,6 +149,15 @@ async function acquire(username) {
   }
   record.acquiredAt = new Date().toISOString()
   record.seconds = Math.round((Date.now() - started) / 100) / 10
+  // A failure: logged (with why), and after FAILS_BEFORE_ASIDE failed rounds the profile is set aside as
+  // 'unreadable' (saved, so it stops holding up the queue; the person judges it in Prospecting).
+  if (record.status === 'error') {
+    const failures = readFailures()
+    const entry = failures[username] = { count: (failures[username]?.count || 0) + 1, error: record.error, at: Date.now() }
+    writeFailures(failures)
+    console.log(`@${username}: ${record.error} (failure ${entry.count})`)
+    if (entry.count >= FAILS_BEFORE_ASIDE) record.status = 'unreadable'
+  }
   // A login wall or a failure on our side (no browser...) says nothing about the profile: not saved,
   // so it is retried.
   if (record.status !== 'login-wall' && record.status !== 'error' && record.status !== 'deferred') {

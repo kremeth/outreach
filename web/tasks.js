@@ -1063,6 +1063,9 @@ function renderPartners() {
   const list = todoData?.partners
   if (!list) return
   const card = el('div', 'side-card partner-card')
+  // How many, after the section's title.
+  const count = document.getElementById('partners-count')
+  if (count) count.textContent = list.length ? `· ${list.length}` : ''
   if (!list.length) card.append(el('p', 'side-empty', 'No ongoing partnerships (add them on the "Ongoing Partnerships" tab).'))
   const refresh = (result) => {
     if (result?.partners && todoData) todoData.partners = result.partners
