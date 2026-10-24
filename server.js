@@ -2232,7 +2232,8 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req)
       const username = String(body.username || '').toLowerCase()
       const which = body.which === 'day7' ? 'day7' : 'day14'
-      const partner = (await partners.list(true)).find((item) => item.username === username)
+      // The list as already read (no wait on the sheet); read fresh only when not known yet.
+      const partner = (await partners.list()).find((item) => item.username === username) || (await partners.list(true)).find((item) => item.username === username)
       if (!partner) {
         sendJson(res, 404, { error: 'Not an ongoing partnership.' })
         return
@@ -2245,10 +2246,14 @@ const server = http.createServer(async (req, res) => {
           if (text.length > 1000) throw new Error(`That message is ${text.length} characters; Instagram allows 1,000 in one message.`)
           dmReply.add({ name: `@${username}`, username, kind: 'text', text, voice: '', emoji: '', partnerMessage: kind, sendAfter: Date.now() + (60 + Math.random() * 120) * 1000 })
           partnerInsights.setStatus(username, which, 'queued', { text })
-          await partners.markMessage(username, kind, `queued ${partners.formatDate(new Date())}`)
+          // Queued: the answer goes back at once; the sheet is told in the background.
+          partners.markMessage(username, kind, `queued ${partners.formatDate(new Date())}`).catch((error) => console.error('partners', error.message))
+          const list = (await partners.list()).map((item) => ({ ...item, followers: followersOf(item.username), drafts: partnerInsights.get(item.username), ...(item.username === username ? { [kind === 'day7' ? 'day7Sent' : 'checkinSent']: `queued ${partners.formatDate(new Date())}` } : {}) }))
+          sendJson(res, 200, { ok: true, partners: list })
+          return
         } else if (body.action === 'regenerate') {
-          await partnerInsights.draft(partner, which, { note: String(body.note || '').slice(0, 500) })
-          await partners.markMessage(username, kind, 'draft ready')
+          // The data analysis from the first draft is reused (same day): only the message is written again.
+          await partnerInsights.draft(partner, which, { note: String(body.note || '').slice(0, 500), reuse: true })
         } else if (body.action === 'skip') {
           partnerInsights.setStatus(username, which, 'skipped')
           await partners.markMessage(username, kind, 'skipped')

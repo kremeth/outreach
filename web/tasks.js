@@ -1047,6 +1047,12 @@ function partnerDraftEditor(partner, which, refresh) {
   const buttons = el('div', 'dm-buttons')
   const act = async (action, extra = {}) => {
     for (const item of buttons.querySelectorAll('button')) item.disabled = true
+    // Send: shown as queued straight away (the server answers at once too).
+    if (action === 'send') {
+      const sendButton = buttons.firstChild
+      sendButton.textContent = 'Queued ✓'
+      box.classList.add('sent')
+    }
     const result = await api('/api/partners/draft', { username: partner.username, which, action, ...extra }, 300000).catch((error) => ({ error: error.message }))
     if (result?.error) { box.append(el('p', 'partner-draft-note bad', result.error)); for (const item of buttons.querySelectorAll('button')) item.disabled = false; return }
     if (action !== 'regenerate') openPartnerDraft.delete(`${partner.username}:${which}`)
