@@ -2542,7 +2542,8 @@ const server = http.createServer(async (req, res) => {
       return
     }
     if (req.method === 'POST' && url.pathname === '/api/autopilot/stop') {
-      sendJson(res, 200, autopilot.stop('Stopped by you.'))
+      // Paused by the person: stays paused until they press Launch again (otherwise Launch is always on).
+      sendJson(res, 200, autopilot.stop('Paused by you. Press Launch to start again.', { byPerson: true }))
       return
     }
     if (req.method === 'POST' && url.pathname === '/api/hustle/pick') {
@@ -2661,6 +2662,20 @@ async function boot() {
   }
   writer.start()
   autopilot.resume()
+  // Launch is always on (on the working Mac): started again on its own whenever it is not running,
+  // unless a person paused it, or Instagram has a stop in force (then once it ends), or the panel is not
+  // logged into Instagram.
+  const keepRunning = async () => {
+    if (!liveStatus.runsHere() || autopilot.status().running) return
+    const saved = autopilot.saved()
+    if (saved.byPerson) return
+    const guard = await guardStatus().catch(() => null)
+    if (!guard?.app || guard.blocked || guard.loggedIn === false) return
+    console.log(`Launch started again on its own${saved.reason ? ` (it had stopped: ${saved.reason})` : ''}`)
+    autopilot.start(saved.tasks || { voice: true, comment: true, relaunch1: true, relaunch2: true, unfollow: true, reply: true })
+  }
+  setTimeout(() => keepRunning().catch((error) => console.error('launch keep running', error.message)), 2 * 60 * 1000).unref()
+  setInterval(() => keepRunning().catch((error) => console.error('launch keep running', error.message)), 5 * 60 * 1000).unref()
   pickModel.startAutoRetrain()
   setInterval(async () => {
     await autoNo()
