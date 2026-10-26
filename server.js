@@ -1388,7 +1388,8 @@ function dmsForPage({ all = false, trace = null } = {}) {
     const row = matches.length === 1 ? matches[0] : null
     // The username: the sheet (one exact name match), else the chat saved under this name (display names
     // like "𝐀 𝐑 𝐋 𝐄 𝐍 𝐄" never match the sheet).
-    return { ...item, username: row ? data.usernameFrom(row.link) : dmChats.chatOf(item.name, '')?.username || '', voice: row && /^(romain|mathieu)$/i.test(row.voice || '') ? row.voice : '', reply: sent[item.name] || null }
+    const username = row ? data.usernameFrom(row.link) : dmChats.chatOf(item.name, '')?.username || ''
+    return { ...item, username, voice: row && /^(romain|mathieu)$/i.test(row.voice || '') ? row.voice : '', reply: sent[item.name] || (username && sent[`@${username.toLowerCase()}`]) || null }
   }).map((item) => ({
     ...item,
     // A reply sent before this inbox read: they wrote again since, so it is a new conversation turn.
@@ -1425,7 +1426,7 @@ function dmsForPage({ all = false, trace = null } = {}) {
       age: days >= 7 ? `${Math.floor(days / 7)}w` : days >= 1 ? `${days}d` : `${Math.max(1, Math.round((Date.now() - at) / 3600000))}h`,
       voice: row && /^(romain|mathieu)$/i.test(row.voice || '') ? row.voice : '',
       tag: dmInbox.tagOf(missed.text), preview: missed.text, rawPreview: missed.text,
-      reply: sent[name] || null,
+      reply: sent[name] || sent[`@${missed.username}`] || null,
     })
   }
   summary.toReply = summary.toReply.map((item) => (item.missed ? { ...item, draftReady: Boolean(dmChats.draftFor(item, dmReply.MODEL)) } : item))
@@ -1535,6 +1536,16 @@ async function sendQueuedReplies() {
         const chat = await instagram.openInboxRow({ name: item.name, transcribe: false })
         threadId = chat.threadId || ''
         if (threadId) dmChats.remember({ name: item.name, username: chat.username || username, messages: chat.messages || [], threadId })
+      }
+    }
+    // Message 2 goes once per person, whatever queued it: the shared log (both Macs) says if it already went.
+    if (item.kind === 'voice') {
+      await log.refresh(0).catch(() => {})
+      const before = log.list((entry) => entry.action === 'answerVoice' && String(entry.target || '').toLowerCase() === String(username).toLowerCase() && /Message 2/i.test(entry.detail || '') && !/ (notsent|failed)$/.test(entry.detail || '')).pop()
+      if (before && !(item.sentParts > 0)) {
+        dmReply.update(item.id, { status: 'failed', error: `Message 2 already went to @${username} on ${new Date(before.time).toLocaleString('en-AU')}: not sent twice.` })
+        console.log(`dm reply: Message 2 to @${username} already sent ${new Date(before.time).toLocaleString('en-AU')}; not sent again`)
+        return
       }
     }
     if (item.kind === 'voice') {
@@ -2478,6 +2489,10 @@ const server = http.createServer(async (req, res) => {
         return
       }
       const item = dmReply.add({ name: String(body.name), username: String(body.username || ''), kind, text: kind === 'react' ? String(body.text || '').slice(0, 200) : text, voice, emoji, sendAfter: start })
+      if (item.duplicate) {
+        sendJson(res, 409, { error: kind === 'voice' ? `Message 2 was already ${item.status === 'sent' ? `sent to @${item.username} on ${new Date(item.sentAt).toLocaleDateString('en-AU')}` : 'queued for them'}: it never goes twice.` : 'That exact message is already queued for them.', kind: 'duplicate' })
+        return
+      }
       sendQueuedReplies().catch(() => {})
       sendJson(res, 200, { ok: true, item })
       return
