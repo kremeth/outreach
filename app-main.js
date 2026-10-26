@@ -442,6 +442,10 @@ function startControl() {
       if (url.pathname === '/comment') {
         return reply(200, await inPanel('comment', 'posting a comment', () => ({ target: body.username || '', detail: body.pk || body.permalink }), (wc) => ig.comment(wc, body)))
       }
+      // Never messaged again (the do-not-message list in the shared log): refused before anything opens.
+      if (['/dm', '/reply-relaunch', '/voice/reply', '/like-last', '/react'].includes(url.pathname) && body.username && guard.noMessage(body.username)) {
+        return reply(409, { error: `@${body.username} is on the do-not-message list.`, kind: 'nomessage' })
+      }
       if (url.pathname === '/dm') {
         // A reply to someone who wrote to us has its own allowance (answer); outreach DMs count as dm.
         return reply(200, await inPanel(body.detail === 'reply' ? 'answer' : 'dm', 'sending a DM', () => ({ target: body.username || '', detail: body.detail || 'dm' }), (wc) => ig.dm(wc, body)))

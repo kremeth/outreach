@@ -120,7 +120,13 @@ function voiceStatus(row) {
 // Yeses waiting for their first voicenote, minus those skipped because their chat was not empty.
 function voiceQueue() {
   const skipped = new Set(log.list((entry) => entry.action === 'skip' && entry.target.startsWith('voice:')).map((entry) => Number(entry.target.slice(6))))
-  return yesRows.filter((row) => voiceStatus(row) === 'to-send' && !skipped.has(row.sheetRow))
+  return yesRows.filter((row) => voiceStatus(row) === 'to-send' && !skipped.has(row.sheetRow) && !neverMessage(data.usernameFrom(row.link)))
+}
+
+// The do-not-message list (shared log, both Macs): left out of every message queue.
+function neverMessage(username) {
+  const key = `nomessage:${String(username || '').replace(/^@/, '').trim().toLowerCase()}`
+  return Boolean(username) && log.list((entry) => entry.action === 'skip' && entry.target === key).length > 0
 }
 
 function presentYes(row) {
@@ -1806,7 +1812,7 @@ async function replyQueue() {
   const guard = await guardStatus().catch(() => null)
   const allowance = guard?.relaunch?.reply
   const sendsLeft = !allowance || allowance.today < allowance.limit
-  return replyRelaunch.queue(yesRows, data).filter((item) => sendsLeft || !['reply1', 'reply2'].includes(replyRelaunch.pending(item.sheetRow)))
+  return replyRelaunch.queue(yesRows, data).filter((item) => sendsLeft || !['reply1', 'reply2'].includes(replyRelaunch.pending(item.sheetRow))).filter((item) => !neverMessage(item.username || data.usernameFrom(item.link || '')))
 }
 
 // One Replied conversation: read the chat (no action), decide, and when due send reply relaunch 1 (the
@@ -1914,6 +1920,7 @@ async function relaunchQueue(tasks) {
   }
   return items
     .filter((item) => !log.claimedByOther(`relaunch:${item.sheetRow}`))
+    .filter((item) => !neverMessage(item.username || data.usernameFrom(item.link || '')))
     .sort((a, b) => {
       if (a.previousDate && b.previousDate) return Date.parse(b.previousDate) - Date.parse(a.previousDate)
       if (a.previousDate) return -1
