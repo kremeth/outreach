@@ -1576,7 +1576,8 @@ async function sendQueuedReplies() {
       partners.markMessage(username, item.partnerMessage, new Date()).catch((error) => console.error('partners', error.message))
       if (['day7', 'checkin'].includes(item.partnerMessage)) partnerInsights.setStatus(username, item.partnerMessage === 'day7' ? 'day7' : 'day14', 'sent', { sentAt: Date.now() })
     }
-    if (item.kind !== 'react') dmMissed.answered(username)
+    if (item.kind === 'like') dmMissed.liked(username, item.text || '', Date.now())
+    else if (item.kind !== 'react') dmMissed.answered(username)
     if (item.kind !== 'read' && item.kind !== 'react') dmChats.addOurs(item.name, item.kind === 'voice' ? { voice: true, text: `(${item.voice}'s Message 2 voicenotes, part 1 and part 2)` } : item.kind === 'like' ? { text: '(liked their last message ❤️)' } : { text: item.text })
     panelReads.inbox = 0 // the list refreshes on the next pass: this one is answered now
   } catch (error) {
@@ -2736,6 +2737,12 @@ async function boot() {
   })
   setInterval(() => checkMissed().catch((error) => console.error('dm missed check', error.message)), 5 * 60 * 1000).unref()
   setTimeout(() => checkMissed().catch((error) => console.error('dm missed check', error.message)), 30 * 1000).unref()
+  // Likes sent before a like counted as the answer for good (27 Oct, George Rhigas came back as a
+  // missed reply after his message was liked): their message from before the like stays answered.
+  for (const missed of dmMissed.list()) {
+    const like = dmReply.lastSentTo(missed.username, ['like'])
+    if (like && missed.at && missed.at < like) dmMissed.liked(missed.username, missed.text, like)
+  }
   const backfilled = dmMissed.backfill()
   if (backfilled) console.log(`dm missed: ${backfilled} earlier chats where they wrote last`)
   // DMs read ahead (messages, voicenote transcripts, a drafted reply) between Launch's actions.
