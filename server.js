@@ -2501,7 +2501,10 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 200, { ok: true, item: items[0], items })
         return
       }
-      const item = dmReply.add({ name: String(body.name), username: String(body.username || ''), kind, text: kind === 'react' ? String(body.text || '').slice(0, 200) : text, voice, emoji, sendAfter: start })
+      // partnerMessage 'box': a partnership's box message in your own words (its column on Ongoing
+      // Partnerships says sent once it really went out, and the automatic one is not sent).
+      const partnerMessage = kind === 'text' && body.partnerMessage === 'box' ? { partnerMessage: 'box' } : {}
+      const item = dmReply.add({ name: String(body.name), username: String(body.username || ''), kind, text: kind === 'react' ? String(body.text || '').slice(0, 200) : text, voice, emoji, sendAfter: start, ...partnerMessage })
       if (item.duplicate) {
         sendJson(res, 409, { error: kind === 'voice' ? `Message 2 was already ${item.status === 'sent' ? `sent to @${item.username} on ${new Date(item.sentAt).toLocaleDateString('en-AU')}` : 'queued for them'}: it never goes twice.` : 'That exact message is already queued for them.', kind: 'duplicate' })
         return
