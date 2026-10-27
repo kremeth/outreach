@@ -429,6 +429,46 @@ const DM_STATE = String.raw`(() => {
   return { problem: '', x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), text: (box.value != null ? box.value : box.innerText || '').trim() }
 })()`
 
+// Which side of the chat a bubble is on. Instagram lines each message up in a row as wide as the chat:
+// ours pushed right (justify-content: flex-end), theirs left (flex-start). Read from that row, not from
+// where the bubble's box sits: a row of pictures (their screenshots) is wider than its bubble and runs
+// to the right edge of a narrow panel, which made them look like ours (27 Oct, Zak Stolz). A bubble as
+// wide as the whole chat is one of Instagram's own notes ("Auto-detected outcome", "You can now
+// message..."), not a message.
+// Instagram's own notes in a chat, never a message from either side (also by their words, in case
+// one is drawn like a message).
+const INSTAGRAM_NOTE = require('../lib/dm-chats').INSTAGRAM_NOTE
+const SIDE = String.raw`const columnOf = (bubble) => {
+    let scrollable = null
+    let styled = null
+    for (let node = bubble.parentElement; node && node !== document.body; node = node.parentElement) {
+      if (!/(auto|scroll)/.test(getComputedStyle(node).overflowY)) continue
+      if (!styled) styled = node
+      if (node.scrollHeight > node.clientHeight + 10) { scrollable = node; break }
+    }
+    return (scrollable || styled || bubble.closest('[role="main"]') || document.body).getBoundingClientRect()
+  }
+  const sideOf = (bubble) => {
+    const area = columnOf(bubble)
+    const box = bubble.getBoundingClientRect()
+    if (box.width >= area.width * 0.95 || new RegExp(${JSON.stringify(INSTAGRAM_NOTE.source)}, 'i').test((bubble.innerText || '').trim())) return 'note'
+    const lane = (bubble.closest('[role="group"]') || bubble.parentElement).getBoundingClientRect()
+    // The first row (flex, left to right) spanning the message's whole lane: where it pushes the bubble.
+    for (let node = bubble.parentElement; node && node !== document.body; node = node.parentElement) {
+      const r = node.getBoundingClientRect()
+      if (r.left > lane.left + 2 || r.right < lane.right - 2) continue
+      const style = getComputedStyle(node)
+      if (!/flex/.test(style.display) || style.flexDirection !== 'row') continue
+      if (/flex-end|^end|right/.test(style.justifyContent)) return 'ours'
+      if (/flex-start|^start|left|normal/.test(style.justifyContent)) return 'theirs'
+      break
+    }
+    // Otherwise by its edges: ours end at the right, theirs start at the left (after their picture).
+    const left = box.left - area.left
+    const right = area.right - Math.min(box.right, area.right)
+    return right < left ? 'ours' : 'theirs'
+  }`
+
 // The newest messages in the open chat, oldest first: who sent each one (by side of the chat) and
 // whether it is a voicenote. Messages are role="article" bubbles; ours sit on the right half.
 // Each message also gets "at": the time of the timestamp shown above its group in the chat (e.g.
@@ -475,16 +515,15 @@ const THREAD = String.raw`(() => {
     .map((el) => ({ top: el.getBoundingClientRect().top, at: parse(el.innerText) }))
     .filter((stamp) => stamp.at)
     .sort((a, b) => a.top - b.top)
+  ${SIDE}
   return [...document.querySelectorAll('[role="main"] [role="article"]')]
-    .filter((bubble) => bubble.getBoundingClientRect().height > 0)
+    .filter((bubble) => bubble.getBoundingClientRect().height > 0 && sideOf(bubble) !== 'note')
     .map((bubble) => {
-      const lane = bubble.closest('[role="group"]') || bubble.parentElement
-      const area = lane.getBoundingClientRect()
       const box = bubble.getBoundingClientRect()
       return {
-        ours: box.left + box.width / 2 > area.left + area.width / 2,
+        ours: sideOf(bubble) === 'ours',
         voice: Boolean(bubble.querySelector(voiceMark)) || /view transcription/i.test(bubble.innerText || ''),
-        text: (bubble.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 600),
+        text: (bubble.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 4000),
         top: Math.round(box.top),
         at: stamps.filter((stamp) => stamp.top < box.top).pop()?.at || null,
         // A reaction on the message (e.g. their ❤️ under ours): an emoji-only label next to the bubble.
@@ -929,13 +968,11 @@ function likeLast(wc, options) {
 // voice bubbles look like (to adjust this to Instagram's page).
 const VOICE_BUBBLES = String.raw`(() => {
   const voiceMark = '[aria-label="Waveform for audio message"], [aria-label="Voice clip"], [aria-label="Audio progress bar"]'
+  ${SIDE}
   return [...document.querySelectorAll('[role="main"] [role="article"]')]
     .filter((bubble) => bubble.getBoundingClientRect().height > 0)
     .map((bubble, index) => {
-      const lane = bubble.closest('[role="group"]') || bubble.parentElement
-      const area = lane.getBoundingClientRect()
-      const box = bubble.getBoundingClientRect()
-      const ours = box.left + box.width / 2 > area.left + area.width / 2
+      const ours = sideOf(bubble) === 'ours'
       const voice = Boolean(bubble.querySelector(voiceMark)) || /view transcription/i.test(bubble.innerText || '')
       return { index, ours, voice, text: (bubble.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 120) }
     })
@@ -1205,7 +1242,16 @@ async function probeChat(wc, { username, gifQuery }) {
       const lane = bubble.closest('[role="group"]') || bubble.parentElement?.parentElement || bubble
       return [...lane.querySelectorAll('[aria-label], span, img')].map((el) => [el.tagName, el.getAttribute('aria-label') || '', el.tagName === 'IMG' ? (el.alt || '') : (el.children.length ? '' : (el.innerText || '').slice(0, 20))].join('|')).filter((line) => !/\|\|$/.test(line)).slice(0, 25)
     })
-    return { stamps: stamps.slice(-15), times, controls: controls.slice(0, 30), around }
+    // Where each of the last bubbles sits, and the boxes around it (to read which side it is on).
+    const geometry = [...main.querySelectorAll('[role="article"]')].slice(-6).map((bubble) => {
+      const rect = (el) => { const r = el.getBoundingClientRect(); return [Math.round(r.left), Math.round(r.right), Math.round(r.width)] }
+      const chain = []
+      for (let node = bubble.parentElement, i = 0; node && node !== document.body && i < 14; node = node.parentElement, i++) {
+        chain.push([node.tagName, node.getAttribute('role') || '', getComputedStyle(node).display, getComputedStyle(node).flexDirection, getComputedStyle(node).overflowY, node.scrollHeight > node.clientHeight + 10, getComputedStyle(node).justifyContent || '', getComputedStyle(node).alignItems || '', ...rect(node)].join(' '))
+      }
+      return { text: (bubble.innerText || '').slice(0, 40), box: rect(bubble), imgs: bubble.querySelectorAll('img').length, chain }
+    })
+    return { stamps: stamps.slice(-15), times, controls: controls.slice(0, 30), around, geometry }
   })()`)
   const result = { username, messages: messages.slice(-6).map((m) => ({ ours: m.ours, voice: m.voice, text: m.text.slice(0, 80), top: m.top })), ...page }
   if (!gifQuery) return result
