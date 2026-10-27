@@ -1762,6 +1762,11 @@ a.person.current {
 .dm-ask { flex: 1; min-height: 22px; max-height: 140px; padding: 4px 0; border: 0; outline: 0; background: transparent; color: var(--ink); font: inherit; font-size: 14px; line-height: 1.4; resize: none; }
 .dm-ask-send { flex: none; width: 30px; height: 30px; border: 0; border-radius: 50%; background: var(--ink); color: var(--surface); font-size: 16px; font-weight: 700; cursor: pointer; }
 .dm-ask-send:hover { opacity: 0.85; }
+.dm-ask-mic { flex: none; min-width: 30px; height: 30px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: 15px; background: var(--surface); color: var(--ink); font-size: 14px; font-variant-numeric: tabular-nums; cursor: pointer; }
+.dm-ask-mic:hover { background: var(--surface-2, rgba(0,0,0,0.04)); }
+.dm-ask-mic.recording { border-color: #d93025; background: #d93025; color: #fff; animation: dm-mic-pulse 1.2s ease-in-out infinite; }
+.dm-ask-mic:disabled { opacity: 0.6; cursor: default; }
+@keyframes dm-mic-pulse { 50% { box-shadow: 0 0 0 4px rgba(217, 48, 37, 0.2); } }
 /* Send: the picked version lights up and lifts; the others step back. */
 .dm-copilot.sending .dm-draft:not(.picked) { opacity: 0.35; }
 .dm-draft.picked { border-color: #6f9632; box-shadow: 0 0 0 4px rgba(111, 150, 50, 0.25), 0 8px 24px rgba(47, 93, 10, 0.18); transform: translateY(-2px) scale(1.01); animation: dm-picked 0.9s ease; }

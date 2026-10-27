@@ -27,6 +27,7 @@ const unfollowCleanup = require('./lib/unfollow-cleanup')
 const igGraph = require('./lib/ig-graph')
 const dmMissed = require('./lib/dm-missed')
 const voiceText = require('./lib/voice-transcribe')
+const openaiApi = require('./lib/openai')
 const followingScraper = require('./lib/following-scraper')
 const tempEnrich = require('./lib/temp-enrich')
 const tempPromote = require('./lib/temp-promote')
@@ -2286,6 +2287,18 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req)
       const ok = await partners.setDate(String(body.username || ''), body.kind === 'post' ? 'post' : 'story', String(body.date || ''))
       sendJson(res, ok ? 200 : 400, { ok, partners: await partnersForPage() })
+      return
+    }
+    // Your voice note to GPT (the 🎙️ next to "Tell GPT what to change"), in words.
+    if (req.method === 'POST' && url.pathname === '/api/dms/transcribe') {
+      const body = await readBody(req)
+      try {
+        if (!body.audio) throw new Error('No recording.')
+        const text = await openaiApi.transcribe({ audio: String(body.audio), mime: String(body.mime || 'audio/webm').split(';')[0] })
+        sendJson(res, 200, { ok: true, text })
+      } catch (error) {
+        sendJson(res, 500, { ok: false, error: `Could not transcribe: ${error.message}` })
+      }
       return
     }
     // A proposed reply: the one drafted ahead when there is one (instant), otherwise drafted now from the

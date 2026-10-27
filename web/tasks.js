@@ -90,12 +90,14 @@ window.addEventListener('hashchange', go)
 // task in progress (and anything still saving) is never interrupted.
 let loadedVersion = ''
 let updateWaiting = false
+// A voice note to GPT being recorded or transcribed: no reload until it is done.
+const recording = () => Boolean(document.querySelector('.dm-ask-mic.recording, .dm-ask-mic:disabled'))
 async function checkVersion() {
   const { version } = await api('/api/version', null, 10000).catch(() => ({}))
   if (!version) return
   if (!loadedVersion) loadedVersion = version
   else if (version !== loadedVersion) updateWaiting = true
-  if (updateWaiting && route === 'home') location.reload()
+  if (updateWaiting && route === 'home' && !recording()) location.reload()
 }
 setInterval(checkVersion, 30000)
 checkVersion()
@@ -103,7 +105,7 @@ checkVersion()
 // The page never stays out of date: fresh numbers as soon as it is looked at again, the live refresh
 // restarted when it has not succeeded for a minute, and a new day reloads the page (date, daily counts).
 function refreshHome() {
-  if (new Date().toDateString() !== pageDay && route === 'home') return location.reload()
+  if (new Date().toDateString() !== pageDay && route === 'home' && !recording()) return location.reload()
   if (route !== 'home') return
   pollLaunch()
   loadTodo(true)
@@ -111,7 +113,7 @@ function refreshHome() {
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refreshHome() })
 window.addEventListener('focus', refreshHome)
 setInterval(() => {
-  if (new Date().toDateString() !== pageDay && route === 'home') return location.reload()
+  if (new Date().toDateString() !== pageDay && route === 'home' && !recording()) return location.reload()
   if (route === 'home' && Date.now() - lastLivePoll > 60 * 1000) {
     lastLivePoll = Date.now()
     pollLaunch()
@@ -119,7 +121,7 @@ setInterval(() => {
   }
 }, 20 * 1000)
 window.addEventListener('hashchange', () => {
-  if (updateWaiting && route === 'home') location.reload()
+  if (updateWaiting && route === 'home' && !recording()) location.reload()
 })
 
 window.addEventListener('keydown', (event) => {
@@ -853,8 +855,68 @@ function dmBody(item) {
     })
     askSend.title = 'Send to GPT (Enter)'
     ask.addEventListener('keydown', (event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); askSend.click() } })
+    // Or say it: 🎙️ records you, a second click stops, and what you said goes to GPT as your note.
+    const mic = button('🎙️', 'dm-ask-mic', async () => {
+      if (mic.recorder) return mic.recorder.stop()
+      if (mic.disabled) return
+      let stream
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      } catch {
+        note.textContent = 'No access to the microphone (System Settings › Privacy › Microphone › Outreach).'
+        return
+      }
+      const type = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/ogg;codecs=opus'].find((t) => window.MediaRecorder?.isTypeSupported(t)) || ''
+      const recorder = new MediaRecorder(stream, type ? { mimeType: type } : {})
+      const chunks = []
+      const started = Date.now()
+      recorder.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data) }
+      const tick = setInterval(() => {
+        const seconds = Math.floor((Date.now() - started) / 1000)
+        mic.textContent = `■ ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
+        // At most 3 minutes.
+        if (seconds >= 180) recorder.stop()
+      }, 250)
+      recorder.onstop = async () => {
+        clearInterval(tick)
+        stream.getTracks().forEach((track) => track.stop())
+        mic.recorder = null
+        mic.classList.remove('recording')
+        mic.disabled = true
+        mic.textContent = '…'
+        ask.placeholder = 'Transcribing…'
+        try {
+          const blob = new Blob(chunks, { type: recorder.mimeType || type || 'audio/webm' })
+          if (Date.now() - started < 700 || !blob.size) throw new Error('Too short, hold on a little longer.')
+          const audio = await new Promise((resolve, reject) => {
+            const reader = new FileReader()
+            reader.onload = () => resolve(String(reader.result).split(',')[1] || '')
+            reader.onerror = () => reject(new Error('Could not read the recording.'))
+            reader.readAsDataURL(blob)
+          })
+          const result = await api('/api/dms/transcribe', { audio, mime: blob.type }, 90000)
+          const said = String(result.text || '').trim()
+          if (!said) throw new Error('Nothing heard in the recording.')
+          ask.value = [ask.value.trim(), said].filter(Boolean).join(' ')
+          if (body.isConnected) {
+            if (busy) { dmNotes.set(item.name, ask.value); fitArea(ask) } else askSend.click()
+          }
+        } catch (error) {
+          note.textContent = error.message
+        }
+        mic.disabled = false
+        mic.textContent = '🎙️'
+        ask.placeholder = "Tell GPT what to change… e.g. we don't have NSF, make it shorter"
+      }
+      recorder.start(1000)
+      mic.recorder = recorder
+      mic.classList.add('recording')
+      mic.textContent = '■ 0:00'
+      note.textContent = ''
+    })
+    mic.title = 'Say what to change (click again to stop)'
     const askRow = el('div', 'dm-ask-row')
-    askRow.append(ask, askSend)
+    askRow.append(ask, mic, askSend)
     const again = button('↻ Another version', 'dm-ghost', () => { if (!busy) generate({ fresh: true }) })
     const own = button('✍️ Write my own', 'dm-ghost', () => {
       entries.forEach((other) => { other.picked = false })
