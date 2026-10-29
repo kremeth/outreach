@@ -74,11 +74,19 @@ const PAGE_PROBLEM = String.raw`
   const accountList = (el) => el.querySelectorAll('a[href^="/"][role="link"], a[href^="/"]').length >= 8 || /^\s*(following|followers|likes)\b/i.test(el.innerText || '')
   const popupText = [...document.querySelectorAll('[role="dialog"], [role="alertdialog"], [role="alert"]')].filter((el) => !accountList(el)).map((el) => el.innerText || '').join(' | ')
   const pagePath = location.pathname.toLowerCase()
+  // A page that is really gone: Instagram's own title ("Post isn't available • Instagram") or its
+  // headline on the page itself. Never words anywhere on the page: a chat left open on top of a post
+  // ("…may have been removed" under a shared post) made six live posts read as deleted (29 Oct).
+  const goneTitle = /isn.?t available|page not found/i.test(document.title || '') ? document.title : ''
+  const goneHeadline = goneTitle ? '' : [...document.querySelectorAll('h1, h2, span')]
+    .filter((el) => el.children.length < 3 && !el.closest('[role="dialog"], [role="article"], [role="row"], [role="grid"], [role="listitem"], [role="complementary"]'))
+    .map((el) => (el.innerText || '').trim())
+    .find((text) => /^(sorry, )?(this )?(page|post|profile|account) isn.?t available\.?$/i.test(text)) || ''
   const problem = ${guard.WARNING_PATH}.test(pagePath) || ${guard.POPUP_WARNING}.test(popupText) || ${guard.PAGE_WARNING}.test(pageText.slice(0, 2000)) ? 'blocked'
     : pagePath.startsWith('/accounts/login') || /log in to continue|log into instagram/i.test(pageText.slice(0, 3000)) ? 'login'
-    : /sorry, this page isn't available|may have been removed/i.test(pageText) ? 'missing'
+    : goneTitle || goneHeadline ? 'missing'
     : ''
-  const warning = problem === 'blocked' ? (popupText || pageText).replace(/\s+/g, ' ').slice(0, 240) : ''
+  const warning = problem === 'blocked' ? (popupText || pageText).replace(/\s+/g, ' ').slice(0, 240) : problem === 'missing' ? (goneTitle || goneHeadline) : ''
 `
 
 const PROBLEM_ONLY = String.raw`(() => {
@@ -161,7 +169,7 @@ const shown = (snippet) => String.raw`(() => {
 function problemError(state) {
   if (state?.problem === 'login') return fail('Instagram wants you to log in. Log in inside the Instagram panel, then try again.', 'login')
   if (state?.problem === 'blocked') return fail(`Instagram showed a warning: ${state.warning || 'action limited'}`, 'blocked')
-  if (state?.problem === 'missing') return fail('This post no longer exists.', 'missing')
+  if (state?.problem === 'missing') return fail(`This post no longer exists (Instagram: "${state.warning || 'not available'}").`, 'missing')
   return null
 }
 
@@ -524,6 +532,10 @@ const THREAD = String.raw`(() => {
         ours: sideOf(bubble) === 'ours',
         voice: Boolean(bubble.querySelector(voiceMark)) || /view transcription/i.test(bubble.innerText || ''),
         text: (bubble.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 4000),
+        // Photos they (or we) sent: the pictures in the bubble, not a profile picture or an icon.
+        images: [...bubble.querySelectorAll('img')]
+          .filter((img) => !/profile.picture/i.test(img.alt || '') && img.getBoundingClientRect().width >= 60)
+          .map((img) => img.currentSrc || img.src).filter((src) => /^https:/.test(src)).slice(0, 6),
         top: Math.round(box.top),
         at: stamps.filter((stamp) => stamp.top < box.top).pop()?.at || null,
         // A reaction on the message (e.g. their ❤️ under ours): an emoji-only label next to the bubble.

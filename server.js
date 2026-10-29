@@ -1290,6 +1290,25 @@ function checkinMessage(partner) {
   const who = partnerGreeting(partner)
   return `Hey${who ? ` ${who}` : ''}! Hope you're getting on well with the supplements 🙌 Just a heads up, your monthly report will be ready on ${longDate(partner.reportDate)}. We think it's great for the reel to include the experience of the report too, so we've pencilled your reel in for ${longDate(partner.reelDue)}. Let me know if that works for you!`
 }
+// A message column still saying "queued ..." when that message went out (the sheet write after sending
+// was lost, e.g. the server restarted right then): the day it was sent.
+async function settlePartnerColumns() {
+  const sent = dmReply.partnerSent()
+  const columns = { box: 'boxMessageSent', checkin: 'checkinSent', reminder: 'reminderSent', day7: 'day7Sent' }
+  for (const partner of await partners.list(true)) {
+    for (const [kind, field] of Object.entries(columns)) {
+      if (!/^queued\b/i.test(String(partner[field] || ''))) continue
+      // Sent on or after the day it was queued (an older message of the same kind does not count).
+      const [, d, m, y] = String(partner[field]).match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/) || []
+      const queuedDay = d ? new Date(Number(y), Number(m) - 1, Number(d)).getTime() : 0
+      const item = sent.filter((entry) => entry.username === partner.username && entry.partnerMessage === kind && entry.sentAt >= queuedDay).pop()
+      if (!item) continue
+      await partners.markMessage(partner.username, kind, new Date(item.sentAt))
+      console.log(`partner @${partner.username}: ${kind} marked sent (${partners.formatDate(new Date(item.sentAt))})`)
+    }
+  }
+}
+
 // Every 30 minutes on the working Mac, in Launch's hours: schedules new stories, and queues the check-in
 // on day 14 (only once the person approved the message: data/partner-checkin-approved). Never when the
 // report day has already passed.
@@ -1303,6 +1322,7 @@ async function partnerCheckins() {
     // Day 7 and day 14: drafts from their data (never sent on their own: the person sends them from the
     // card). Any time of day.
     await partnerDrafts().catch((error) => console.error('partner drafts', error.message))
+    await settlePartnerColumns().catch((error) => console.error('partner columns', error.message))
     const hour = new Date().getHours()
     if (!fs.existsSync(CHECKIN_APPROVED) || hour < 9 || hour >= 20) return
     const today = localIso(new Date())
@@ -1617,8 +1637,47 @@ async function readFullChat({ name, username }) {
   let messages = chat.messages || []
   if (chat.username) messages = await voiceText.fill(instagram, chat.username, messages, threadId).catch((error) => { console.error('voicenotes', error.message); return messages })
   if (chat.username && chat.avatar) saveAvatar(chat.username, chat.avatar).catch(() => {})
+  messages = await saveChatImages(chat.username || username, messages)
   dmChats.remember({ name, username: chat.username || username, messages, threadId })
   return { ...chat, messages, threadId }
+}
+
+// Photos in a chat, kept on this Mac (Instagram's links expire): data/dm-media/<username>/<id>.jpg, the
+// id from the picture's own address (the same photo read again is not downloaded again). A message's
+// images become those ids; one that could not be downloaded is left out.
+const DM_MEDIA_DIR = path.join(__dirname, 'data', 'dm-media')
+async function saveChatImages(username, messages) {
+  const who = String(username || '').replace(/[^\w.]/g, '')
+  if (!who) return messages.map(({ images, ...message }) => message)
+  const out = []
+  for (const message of messages) {
+    if (!message.images?.length) {
+      out.push(message)
+      continue
+    }
+    const ids = []
+    for (const src of message.images) {
+      const id = require('crypto').createHash('sha1').update(String(src).split('?')[0]).digest('hex').slice(0, 16)
+      const file = path.join(DM_MEDIA_DIR, who, `${id}.jpg`)
+      try {
+        if (!fs.existsSync(file)) {
+          const response = await fetch(src, { signal: AbortSignal.timeout(20000) })
+          if (!response.ok) continue
+          fs.mkdirSync(path.dirname(file), { recursive: true })
+          fs.writeFileSync(file, Buffer.from(await response.arrayBuffer()))
+        }
+        ids.push(id)
+      } catch {}
+    }
+    out.push({ ...message, images: ids })
+  }
+  return out
+}
+function chatImageFile(username, id) {
+  const who = String(username || '').replace(/[^\w.]/g, '')
+  const clean = String(id || '').replace(/[^a-f0-9]/g, '')
+  const file = path.join(DM_MEDIA_DIR, who, `${clean}.jpg`)
+  return who && clean && fs.existsSync(file) ? file : ''
 }
 
 // Profile pictures for DMs to reply: the wearable model's copy when it has one, else the chat header's.
@@ -1653,7 +1712,7 @@ async function predraftReplies() {
       const history = dmChats.history(item)
       if (!history) continue
       try {
-        const reply = await dmReply.draft({ name: item.name, messages: history.messages.slice(-20) })
+        const reply = await dmReply.draft({ name: item.name, username: item.username, messages: history.messages.slice(-20) })
         dmChats.rememberDraft(item, reply, history.complete ? 'chat' : 'list', dmReply.MODEL)
       } catch (error) {
         console.error('dm predraft', item.name, error.message)
@@ -1692,11 +1751,14 @@ function needsReading(item) {
   if (saved.readAt > scannedAt) return false
   const latest = String(item.rawPreview || item.preview || '').trim()
   if (dmChats.HIDDEN_PREVIEW.test(latest) || !latest || /^·?$/.test(latest)) return saved.messages[saved.messages.length - 1]?.ours === true
+  // A photo or attachment last: read again unless the saved chat already ends with it (read after the
+  // conversation showed this way). Never matched against their earlier messages without words.
+  if (dmChats.ATTACHMENT_PREVIEW.test(latest)) return saved.messages[saved.messages.length - 1]?.ours === true || (saved.readAt || 0) < (item.firstSeen || 0)
   // Their latest message is in the saved chat (letters and digits compared: emojis and the inbox
   // cutting long previews short do not matter).
   const norm = (text) => String(text || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '')
   const want = norm(latest).slice(0, 40)
-  return !want || !theirs.some((message) => norm(message.text).startsWith(want) || want.startsWith(norm(message.text).slice(0, 40)))
+  return !want || !theirs.some((message) => norm(message.text) && (norm(message.text).startsWith(want) || want.startsWith(norm(message.text).slice(0, 40))))
 }
 async function readChatsAhead(limit = 6) {
   if (readingAhead) return
@@ -2328,7 +2390,7 @@ const server = http.createServer(async (req, res) => {
           if (chat.username && !item.username) item.username = chat.username
           history = dmChats.history(item) || { messages: chat.messages || [], complete: true }
         }
-        const reply = await dmReply.draft({ name: item.name, messages: history.messages.slice(-20), note, turns })
+        const reply = await dmReply.draft({ name: item.name, username: item.username, messages: history.messages.slice(-20), note, turns })
         if (listed && !turns.length) dmChats.rememberDraft(item, reply, history.complete ? 'chat' : 'list', dmReply.MODEL)
         sendJson(res, 200, { reply, username: item.username || '' })
       } catch (error) {
@@ -2388,6 +2450,16 @@ const server = http.createServer(async (req, res) => {
       } catch (error) {
         sendJson(res, error.kind === 'busy' ? 409 : 502, { error: error.message || 'Could not read the chat.' })
       }
+      return
+    }
+    if (req.method === 'GET' && url.pathname === '/api/dms/image') {
+      const file = chatImageFile(url.searchParams.get('u'), url.searchParams.get('id'))
+      if (!file) {
+        send(res, 404, 'Not found', 'text/plain; charset=utf-8')
+        return
+      }
+      res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=86400' })
+      fs.createReadStream(file).pipe(res)
       return
     }
     if (req.method === 'GET' && url.pathname === '/api/dms/avatar') {

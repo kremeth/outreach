@@ -1820,3 +1820,10 @@ a.person.current {
 .dm-length.over { color: var(--danger-ink, #7a2a1a); font-weight: 600; }
 
 .partner-draft.sent { opacity: 0.6; transition: opacity 0.3s; }
+
+/* Photos sent in a DM, inside their bubble */
+.dm-bubble.has-photos { padding: 6px; }
+.dm-photos { display: flex; flex-wrap: wrap; gap: 6px; }
+.dm-photo { display: block; line-height: 0; }
+.dm-photo img { max-width: 220px; max-height: 300px; border-radius: 12px; object-fit: cover; cursor: zoom-in; }
+.dm-bubble.has-photos > span { display: block; padding: 6px 8px 2px; }

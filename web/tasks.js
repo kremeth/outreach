@@ -534,7 +534,28 @@ function dmBody(item) {
     const bubble = el('div', `dm-bubble${message.ours ? ' ours' : ''}${message.voice ? ' voice' : ''}`)
     if (message.voice) bubble.append(el('span', 'dm-voice-tag', message.transcribed ? '🎙 Voicenote · transcribed' : '🎙 Voicenote'))
     const words = String(message.text || '').replace(/\d+:\d{2}/, '').replace(/(view|hide) transcription|unable to transcribe,?\s*(try again)?/gi, '').trim()
-    bubble.append(el('span', '', words || (message.voice ? (message.ours ? 'Our voicenote' : '(no words)') : '(photo, GIF or attachment)')))
+    // Photos they sent: shown in the bubble (click for full size).
+    const photos = (message.images || []).filter(() => item.username)
+    if (photos.length) {
+      const strip = el('div', 'dm-photos')
+      for (const id of photos) {
+        const src = `/api/dms/image?u=${encodeURIComponent(item.username)}&id=${encodeURIComponent(id)}`
+        const link = el('a', 'dm-photo')
+        link.href = src
+        link.target = '_blank'
+        link.rel = 'noreferrer'
+        const img = document.createElement('img')
+        img.src = src
+        img.alt = 'Photo'
+        img.loading = 'lazy'
+        img.addEventListener('error', () => link.remove())
+        link.append(img)
+        strip.append(link)
+      }
+      bubble.classList.add('has-photos')
+      bubble.append(strip)
+    }
+    if (words || !photos.length) bubble.append(el('span', '', words || (message.voice ? (message.ours ? 'Our voicenote' : '(no words)') : '(photo, GIF or attachment)')))
     if (!message.ours) line.append(face())
     line.append(bubble)
     // Their messages: double-click for ❤️, or a quick reaction from the bar on hover. Done a few minutes
