@@ -65,7 +65,12 @@ async function main() {
   const input = JSON.parse(inputJson || '{}')
   if (!admin.apps.length) admin.initializeApp({ credential: admin.credential.cert(require(path.join(functions, 'service_account.json'))) })
   const db = admin.firestore()
-  const user = await findUser(db, input.email)
+  // A cell can hold more than one email (a couple sharing a partnership): the first with an app account.
+  let user = null
+  for (const email of String(input.email || '').split(/[\s,;]+/).filter(Boolean)) {
+    user = await findUser(db, email)
+    if (user) break
+  }
   if (!user) return { ok: false, reason: `No app account with the email ${input.email}.` }
   const ref = db.collection('users').doc(user.id)
   const supplements = await ref.collection('current_supplements').get()
