@@ -1352,7 +1352,7 @@ async function partnerDrafts() {
       }
     }
   } finally {
-    partnerWorkBusy = false
+    partnerDraftsBusy = false
   }
 }
 

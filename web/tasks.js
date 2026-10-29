@@ -1095,7 +1095,15 @@ function partnerDraftEditor(partner, which, refresh) {
     const list = el('ul', 'partner-findings')
     for (const item of draft.findings) list.append(el('li', '', `${item.label}: ${item.before} → ${item.after}${item.research?.length ? ` · research: ${item.research.join(', ')}` : ''}`))
     box.append(list)
-  } else box.append(el('p', 'partner-draft-note', draft.reason ? `No data used: ${draft.reason}` : `No clear change in their data yet (${draft.daysAfter || 0} days since they started), so the message says nothing about results.`))
+  } else {
+    box.append(el('p', 'partner-draft-note', draft.reason ? `No data used: ${draft.reason}` : `Nothing clearly better in their data yet (${draft.daysAfter || 0} days since they started, against the 14 days before), so the message says nothing about results.`))
+    // What was compared, so it is plain why: each metric before → since.
+    if (draft.checked?.length) {
+      const list = el('ul', 'partner-findings partner-checked')
+      for (const item of draft.checked) list.append(el('li', item.better ? 'up' : 'down', `${item.label}: ${item.before} → ${item.after}${item.better ? ' (slightly better, within their normal swing)' : ' (not better)'}`))
+      box.append(list)
+    }
+  }
   const key = `${partner.username}:${which}`
   const text = document.createElement('textarea')
   text.className = 'partner-draft-text'
