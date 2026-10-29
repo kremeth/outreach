@@ -139,6 +139,7 @@ function prefetchAhead() {
   for (const item of queue.slice(1, 1 + PREFETCH_AHEAD)) {
     if (!item.username) continue
     loadProfile(item.username, false).then(preloadImages).catch(() => {})
+    modelAnswer(item, 15000).catch(() => {})
   }
 }
 
@@ -146,6 +147,7 @@ function refill() {
   if (refilling || queue.length >= REFILL_BELOW) return refilling
   const last = queue[queue.length - 1] || history[history.length - 1]?.item
   const from = last ? last.index : -1
+  const wasShowing = queue.length > 0
   refilling = api(`/api/queue?from=${from}`)
     .then((payload) => {
       const present = new Set(queue.map((item) => item.sheetRow))
@@ -158,6 +160,7 @@ function refill() {
       renderChrome()
       prefetchAhead()
       if (!queue.length) show()
+      else if (!wasShowing) advance()
     })
     .catch(() => {
       setTimeout(refill, 2000)
@@ -778,16 +781,27 @@ function paintModel(item, prediction) {
   modelPanel.hidden = false
 }
 
+// The model's answer for a profile, kept for a while: a finished one ('ready') for good, one still
+// being checked only for maxAge ms.
+const answers = new Map()
+async function modelAnswer(item, maxAge, timeoutMs = 8000) {
+  const known = answers.get(item.username)
+  if (known && (known.prediction.status === 'ready' || Date.now() - known.at < maxAge)) return known.prediction
+  let prediction = { status: 'pending' }
+  try {
+    prediction = await api(`/api/model-prediction?username=${encodeURIComponent(item.username)}`, null, timeoutMs)
+    answers.set(item.username, { at: Date.now(), prediction })
+  } catch {}
+  return prediction
+}
+
 async function loadModel(item) {
   clearTimeout(modelPoll)
   if (!item?.username) {
     modelPanel.hidden = true
     return
   }
-  let prediction = { status: 'pending' }
-  try {
-    prediction = await api(`/api/model-prediction?username=${encodeURIComponent(item.username)}`, null, 8000)
-  } catch {}
+  const prediction = await modelAnswer(item, 0)
   if (prediction.status === 'none') {
     if (queue[0] === item) modelPanel.hidden = true
     return
@@ -822,7 +836,7 @@ async function refreshTally() {
 }
 
 function choose(choice, device) {
-  if (mode !== 'review') return
+  if (mode !== 'review' || advancing) return
   const item = queue[0]
   if (!item) return
   if (choice === 'yes' && !device) {
@@ -837,8 +851,7 @@ function choose(choice, device) {
   queue = queue.slice(1)
   save(item, choice, device)
   setTimeout(refreshTally, 1500)
-  show()
-  refill()
+  advance()
 }
 
 function modelNo(item) {
@@ -852,11 +865,48 @@ function modelDecides(item, choice, device) {
   updatePeople(item, choice, device)
   queue = queue.slice(1)
   save(item, choice, device, 'model')
-  show()
-  refill()
+  advance()
+}
+
+// Moves on to the next profile for the person. The ones in front the model has already decided are
+// saved and dropped first, without being shown: one profile follows the other, never a run of
+// profiles flashing past. The answer buttons wait meanwhile, so a click never lands on a profile
+// that is not on screen yet.
+let advancing = null
+function advance() {
+  if (advancing) return advancing
+  noButton.disabled = true
+  yesButton.disabled = true
+  advancing = (async () => {
+    while (mode === 'review' && queue[0]?.username) {
+      const item = queue[0]
+      const prediction = await modelAnswer(item, 3000, 4000)
+      if (queue[0] !== item) continue
+      if (prediction.autoNo) {
+        decideQuietly(item, 'no', '')
+        refill()
+      } else if (prediction.autoYes) {
+        decideQuietly(item, 'yes', prediction.autoYes)
+        refill()
+      } else break
+    }
+  })().finally(() => {
+    advancing = null
+    show()
+    refill()
+  })
+  return advancing
+}
+
+function decideQuietly(item, choice, device) {
+  adjustCounts(item, choice)
+  updatePeople(item, choice, device)
+  queue = queue.slice(1)
+  save(item, choice, device, 'model')
 }
 
 function previous() {
+  if (advancing) return
   if (askingDevice) {
     askingDevice = false
     renderMode()
@@ -924,6 +974,7 @@ async function start() {
   queue = (state.queue || []).filter((item) => !saving.has(item.sheetRow))
   renderDevices()
   show()
+  advance()
   for (const entry of outbox) send(entry.item, entry.choice, entry.device || '')
   refill()
 }
