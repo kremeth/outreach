@@ -2208,7 +2208,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && url.pathname === '/api/hustle/sync') {
       const body = await readBody(req)
-      sendJson(res, 200, hustle.start({ force: Boolean(body.force) }))
+      sendJson(res, 200, hustle.start({ force: Boolean(body.force), resume: Boolean(body.resume) }))
       return
     }
     if (req.method === 'GET' && url.pathname === '/api/hustle/status') {
