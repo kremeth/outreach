@@ -1827,3 +1827,7 @@ a.person.current {
 .dm-photo { display: block; line-height: 0; }
 .dm-photo img { max-width: 220px; max-height: 300px; border-radius: 12px; object-fit: cover; cursor: zoom-in; }
 .dm-bubble.has-photos > span { display: block; padding: 6px 8px 2px; }
+
+/* Remove on a DM: red, and redder once it asks to be sure */
+.dm-link.dm-remove { color: #b3412f; }
+.dm-link.dm-remove[data-sure] { font-weight: 600; }

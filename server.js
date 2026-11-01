@@ -1497,6 +1497,8 @@ function dmsForPage({ all = false, trace = null } = {}) {
     // The inbox shows their message last: listed unless "No reply needed" was pressed on that message.
     return !username || !dmMissed.isHandled(username, item.rawPreview || item.preview, item.missed ? 0 : -1, !item.missed)
   })
+  // Removed (or on the do-not-message list): never listed again, whatever they write.
+  summary.toReply = summary.toReply.filter((item) => !neverMessage(item.username || dmChats.chatOf(item.name, '')?.username || ''))
   // (Likes not checked yet are not counted: most turn out to be a like of our message.)
   step('summary.preparing =')
   summary.preparing = summary.toReply.filter((item) => !ready(item) && !item.check).length
@@ -2500,6 +2502,39 @@ const server = http.createServer(async (req, res) => {
         sendQueuedReplies().catch(() => {})
       }
       sendJson(res, 200, { ok: true, dms: dmsForPage() })
+      return
+    }
+    // Remove: done with this person for good. On the do-not-message list (both Macs: never listed or
+    // messaged again, whatever they write), their queued replies dropped, and, when they are on the
+    // sheet, marked No so Launch unfollows them at its next unfollow step (as for a creator who said no).
+    if (req.method === 'POST' && url.pathname === '/api/dms/remove') {
+      const body = await readBody(req)
+      const name = String(body.name || '')
+      const username = (String(body.username || '') || usernameForName(name)).replace(/^@/, '').trim().toLowerCase()
+      if (!username) {
+        sendJson(res, 400, { error: 'No Instagram username for this conversation, so it could not be removed.' })
+        return
+      }
+      const reason = 'removed from DMs to reply'
+      if (!neverMessage(username)) await log.append({ action: 'skip', target: `nomessage:${username}`, detail: reason })
+      dmReply.cancelFor(username, reason)
+      const listed = dmsForPage({ all: true }).toReply.find((entry) => entry.name === name) || { name, username, preview: String(body.preview || ''), rawPreview: String(body.preview || '') }
+      await repliesSheet.mark({ ...listed, username }, 'Removed').catch((error) => console.error('replies sheet', error.message))
+      dmInbox.dismiss(name, String(body.preview || ''))
+      dmMissed.dismiss(username, String(body.preview || ''))
+      let unfollow = 'not on the sheet, so Launch cannot unfollow them: unfollow them on Instagram if you want to'
+      const row = yesRows.find((entry) => data.usernameFrom(entry.link) === username)
+      if (row) {
+        try {
+          await relaunch.queueUnfollow(row.sheetRow, reason)
+          await relaunch.markClosed(row, 'No', reason)
+          unfollow = 'marked No on the sheet; Launch unfollows them at its next unfollow step'
+        } catch (error) {
+          unfollow = `could not be marked on the sheet (${error.message}); not unfollowed`
+        }
+      }
+      console.log(`dm removed @${username}: ${unfollow}`)
+      sendJson(res, 200, { ok: true, username, unfollow, dms: dmsForPage() })
       return
     }
     // The Message 2 voicenotes, to listen to before sending.

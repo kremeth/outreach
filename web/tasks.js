@@ -1046,7 +1046,30 @@ function dmBody(item) {
       like.disabled = false
     }
   })
-  foot.append(like, skip)
+  // Remove: never shown or messaged again, and unfollowed by Launch. Two clicks, so it is never by accident.
+  const remove = button('Remove', 'dm-link dm-remove', async () => {
+    if (!remove.dataset.sure) {
+      remove.dataset.sure = '1'
+      remove.textContent = 'Sure? Unfollow and never show again'
+      setTimeout(() => {
+        if (!remove.isConnected || remove.disabled) return
+        delete remove.dataset.sure
+        remove.textContent = 'Remove'
+      }, 5000)
+      return
+    }
+    remove.disabled = true
+    try {
+      const result = await api('/api/dms/remove', { name: item.name, username: item.username, preview: item.rawPreview ?? item.preview })
+      if (todoData && result.dms) todoData.dms = result.dms
+      dmOpen = ''
+      renderDms(true)
+    } catch (error) {
+      note.textContent = error.message
+      remove.disabled = false
+    }
+  })
+  foot.append(like, skip, remove)
   if (item.username) {
     const link = el('a', 'dm-link', 'Open on Instagram ↗')
     link.href = `https://ig.me/m/${item.username}`
