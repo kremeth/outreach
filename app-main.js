@@ -692,6 +692,10 @@ if (!gotLock) {
     if (server && server.exitCode === null) server.kill()
   })
   app.whenReady().then(async () => {
+    // The Dock icon from assets/icon.png (the same on both Macs, without rebuilding Outreach.app).
+    if (process.platform === 'darwin' && app.dock) {
+      try { app.dock.setIcon(path.join(__dirname, 'assets', 'icon.png')) } catch {}
+    }
     createWindow()
     voice.init({
       webContents: panel.webContents,
