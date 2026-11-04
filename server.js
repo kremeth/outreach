@@ -124,6 +124,14 @@ function voiceQueue() {
   return yesRows.filter((row) => voiceStatus(row) === 'to-send' && !skipped.has(row.sheetRow) && !neverMessage(data.usernameFrom(row.link)))
 }
 
+// DMs paused by a person, on both Macs (shared log, the latest 'dms' pause or resume decides): no
+// voicenotes, relaunches, reply relaunches, replies or partnership messages go out until resumed.
+// Comments, likes and unfollows carry on. Queued replies stay queued meanwhile.
+function dmsPaused() {
+  const last = log.list((entry) => entry.target === 'dms' && (entry.action === 'pause' || entry.action === 'resume')).pop()
+  return last?.action === 'pause' ? last : null
+}
+
 // The do-not-message list (shared log, both Macs): left out of every message queue.
 function neverMessage(username) {
   const key = `nomessage:${String(username || '').replace(/^@/, '').trim().toLowerCase()}`
@@ -900,7 +908,7 @@ async function todo() {
     voice: { toSend: voice.length, sentToday: Math.max(sendQueue.sentToday(), guard.app ? guard.kinds.voice.today : 0), limit: sendQueue.DAILY_LIMIT },
     hustle: { ...hustle.status(), auto: autoCommentStatus() },
     relaunch: { 1: relaunch.summary(yesRows, 1), 2: relaunch.summary(yesRows, 2) },
-    warnings: [loadError, refreshError, writeNote(), igGraph.warning()].filter(Boolean),
+    warnings: [loadError, refreshError, writeNote(), igGraph.warning(), dmsPaused() ? `DMs paused on both Macs since ${new Date(dmsPaused().time).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}: no voicenotes, relaunches or replies go out. Comments and unfollows carry on.` : ''].filter(Boolean),
     sheetRefreshedAt: sheetRefreshedAt ? new Date(sheetRefreshedAt).toISOString() : '',
   }
 }
@@ -1528,7 +1536,7 @@ function dmsForPage({ all = false, trace = null } = {}) {
 let replySending = false
 let replyNowUntil = 0 // "Send now": the queued replies go out even outside Launch's hours, for 3 hours
 async function sendQueuedReplies() {
-  if (replySending) return
+  if (replySending || dmsPaused()) return
   const pilot = autopilot.status()
   if (pilot.current) return
   // In a gap between Launch's actions (its next one at least a minute away).
@@ -2025,6 +2033,7 @@ autopilot.init({
   sheetReady: () => Boolean(sheetRefreshedAt),
   voiceCount: () => voiceQueue().length,
   voiceRemainingToday: () => sendQueue.remainingToday(),
+  dmsPaused: () => Boolean(dmsPaused()),
   nextPick: () => hustle.picks().find((item) => !log.claimedByOther(`hustle:${item.username}`)),
 })
 
@@ -2507,6 +2516,15 @@ const server = http.createServer(async (req, res) => {
     // Remove: done with this person for good. On the do-not-message list (both Macs: never listed or
     // messaged again, whatever they write), their queued replies dropped, and, when they are on the
     // sheet, marked No so Launch unfollows them at its next unfollow step (as for a creator who said no).
+    // Pause or resume every DM Launch and the reply queue send, on both Macs: {paused: true|false, reason}.
+    if (req.method === 'POST' && url.pathname === '/api/dms/pause') {
+      const body = await readBody(req)
+      const paused = Boolean(body.paused)
+      if (paused !== Boolean(dmsPaused())) await log.append({ action: paused ? 'pause' : 'resume', target: 'dms', detail: String(body.reason || 'by hand').slice(0, 200) })
+      await log.refresh(0)
+      sendJson(res, 200, { ok: true, paused: Boolean(dmsPaused()) })
+      return
+    }
     if (req.method === 'POST' && url.pathname === '/api/dms/remove') {
       const body = await readBody(req)
       const name = String(body.name || '')
