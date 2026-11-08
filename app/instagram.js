@@ -278,11 +278,16 @@ const isCommentPost = (request) => /\/comments\/\d+\/add\b/i.test(request.url)
 
 // What Instagram's servers said about posting the comment. sent: anything about comments left the
 // browser after Post was pressed (then Post is never pressed again, it may have gone through).
-function commentVerdict(requests) {
+// The answer repeats the comment itself, so the comment's own words are left out before looking for
+// Instagram's refusals in it (a comment saying "try again later" is not a block).
+function commentVerdict(requests, text = '') {
   const posts = requests.filter(isCommentPost)
-  const refused = posts.find((request) => request.done && !request.failed && ((request.status || 0) >= 400 || REFUSED.test(request.body || '')))
+  // Whole, JSON-escaped, and its plain-text runs (Instagram may escape the emojis between them).
+  const own = [text, JSON.stringify(text).slice(1, -1), ...String(text).split(/[^\x20-\x7e]+/).filter((run) => run.trim().length >= 6)].filter(Boolean)
+  const answer = (body) => own.reduce((rest, words) => rest.split(words).join(''), String(body || ''))
+  const refused = posts.find((request) => request.done && !request.failed && ((request.status || 0) >= 400 || REFUSED.test(answer(request.body))))
   if (refused) {
-    const detail = (String(refused.body || '').match(REFUSED) || [])[0] || `status ${refused.status}`
+    const detail = (answer(refused.body).match(REFUSED) || [])[0] || `status ${refused.status}`
     return { refused: true, reason: `Instagram answered the comment with "${detail}".` }
   }
   return {
@@ -443,7 +448,7 @@ async function commentSteps(wc, { permalink, message, dryRun = false, allowLiked
   try {
     const check = async () => {
       const value = await run(wc, POST_STATE)
-      const verdict = commentVerdict(net.list())
+      const verdict = commentVerdict(net.list(), text)
       const onPage = !value.problem && !String(value.boxText || '').trim() && await run(wc, shown(snippet))
       return { ...value, onPage, done: Boolean(value.problem) || verdict.refused || verdict.accepted || onPage }
     }
@@ -454,15 +459,15 @@ async function commentSteps(wc, { permalink, message, dryRun = false, allowLiked
     result = await waitFor(check, 8000)
     // Nothing about the comment left the browser and it is still in the box (a missed click): Return
     // once. Never when something was sent: that comment may be going up.
-    if (!result?.done && !commentVerdict(net.list()).sent && String(result?.boxText || '').trim()) {
+    if (!result?.done && !commentVerdict(net.list(), text).sent && String(result?.boxText || '').trim()) {
       await click(wc, boxPoint)
       await key(wc, 'Return')
       result = await waitFor(check, 8000)
     }
     // Instagram's answer still on its way: wait for it, pressing nothing.
-    if (!result?.done && commentVerdict(net.list()).pending) result = await waitFor(check, 10000)
+    if (!result?.done && commentVerdict(net.list(), text).pending) result = await waitFor(check, 10000)
     if (result?.problem) throw problemError(result)
-    const verdict = commentVerdict(net.list())
+    const verdict = commentVerdict(net.list(), text)
     // Worded like Instagram's own "Couldn't post comment", so a first one pauses comments for a day
     // (lib/ig-guard trip) and a second one stops everything.
     if (verdict.refused) throw fail(`Couldn't post comment: ${verdict.reason}`, 'blocked')

@@ -1836,22 +1836,31 @@ a.person.current {
 .section-toggle {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-align: left;
+  cursor: pointer;
+}
+.section-toggle:hover { color: var(--ink-2); }
+/* Folded: a white card, so the section and its count are easy to spot. */
+.section-toggle[aria-expanded="false"] {
+  gap: 10px;
   padding: 16px 20px;
   border: 1px solid var(--line);
   border-radius: 16px;
   background: var(--surface);
-  font: inherit;
   font-size: 12px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
   color: var(--ink-2);
-  text-align: left;
-  cursor: pointer;
 }
-.section-toggle:hover { color: var(--ink); background: var(--surface-hover); border-color: var(--line-strong); }
-.section-toggle[aria-expanded="true"] { margin-bottom: 10px; }
+.section-toggle[aria-expanded="false"]:hover { color: var(--ink); background: var(--surface-hover); border-color: var(--line-strong); }
 .section-toggle:focus-visible { outline: 2px solid var(--line-focus); outline-offset: 4px; border-radius: 4px; }
 .section-caret {
   width: 0;
