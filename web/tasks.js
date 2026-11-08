@@ -1,4 +1,4 @@
-// Home (To do) and the task screens: Hustling, Relaunch, 2nd relaunch, Voicenotes.
+// Home (To do) and the task screens: Comments (Hustling), Voicenotes, Relaunch, 2nd relaunch.
 // Prospecting lives in app.js; this file routes between them and shares its helpers.
 const viewHome = document.getElementById('view-home')
 const viewProspect = document.getElementById('view-prospect')
@@ -139,20 +139,58 @@ window.addEventListener('keydown', (event) => {
 
 // ---------- Home ----------
 
+// DMs to reply and Ongoing partnerships fold away under their titles (closed unless opened; the choice
+// is remembered on this computer), with how many there are in a circle next to the title.
+const SECTION_KEY = 'outreach.open-sections'
+function openSections() {
+  try { return new Set(JSON.parse(localStorage.getItem(SECTION_KEY) || '[]')) } catch { return new Set() }
+}
+for (const toggle of document.querySelectorAll('.section-toggle')) {
+  const name = toggle.dataset.section
+  const body = document.getElementById(toggle.getAttribute('aria-controls'))
+  const set = (open) => {
+    toggle.setAttribute('aria-expanded', String(open))
+    if (body) body.hidden = !open
+  }
+  set(openSections().has(name))
+  toggle.addEventListener('click', () => {
+    const open = toggle.getAttribute('aria-expanded') !== 'true'
+    set(open)
+    const sections = openSections()
+    if (open) sections.add(name)
+    else sections.delete(name)
+    try { localStorage.setItem(SECTION_KEY, JSON.stringify([...sections])) } catch {}
+  })
+}
+
+function sectionBadge(id, count) {
+  const badge = document.getElementById(id)
+  if (!badge) return
+  badge.textContent = count ? number(count) : ''
+  badge.hidden = !count
+}
+
+
 const TASKS = [
+  {
+    id: 'hustle',
+    title: 'Comments',
+    hint: 'New posts to pick a comment for',
+    count: (data) => data.hustle.toDo,
+    side: (data) => {
+      const paused = data.guard?.commentsPaused
+      if (paused) return `Paused until ${untilLabel(paused.until)}`
+      return data.hustle.auto?.on ? (data.hustle.auto.always || data.hustle.auto.until ? `Auto-commenting · ${number(data.hustle.auto.pickedToday)} today` : `Auto-commenting starts after ${number(data.hustle.auto.waiting)} waiting picks`) : `${number(data.hustle.picked || 0)} picked`
+    },
+    // On: the pick model picks each new post's comment by itself and Launch posts it.
+    toggle: (data) => ({ on: Boolean(data.hustle.auto?.on), label: 'Auto-comment' }),
+  },
   {
     id: 'voice',
     title: 'Voicenotes',
     hint: 'Yeses with a device, sent by Launch',
     count: (data) => data.voice.toSend,
     side: (data) => `${data.voice.sentToday} / ${data.voice.limit} sent today`,
-  },
-  {
-    id: 'hustle',
-    title: 'Hustling',
-    hint: 'New posts to pick a comment for',
-    count: (data) => data.hustle.toDo,
-    side: (data) => (data.hustle.auto?.on ? (data.hustle.auto.always || data.hustle.auto.until ? `Auto-commenting · ${number(data.hustle.auto.pickedToday)} today` : `Auto-commenting starts after ${number(data.hustle.auto.waiting)} waiting picks`) : `${number(data.hustle.picked || 0)} picked`),
   },
   {
     id: 'relaunch/1',
@@ -269,6 +307,7 @@ function renderDms(force) {
   const when = dms.scannedAt ? new Date(dms.scannedAt).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' }) : ''
   const head = el('div', 'dm-head')
   const waiting = dms.toReply.length
+  sectionBadge('dms-count', dms.scannedAt ? waiting : 0)
   head.append(el('strong', '', !dms.scannedAt ? 'Inbox not read yet' : waiting ? `${waiting} waiting on you` : 'All answered'))
   if (dms.outgoing?.length) head.append(el('span', 'dm-outgoing', `${dms.outgoing.length} ${dms.outgoing.length === 1 ? 'reply' : 'replies'} going out`))
   // Being read, transcribed and drafted in the background: they appear here once ready.
@@ -1197,8 +1236,7 @@ function renderPartners() {
   partnersEl.replaceChildren()
   const card = el('div', 'side-card partner-card')
   // How many, after the section's title.
-  const count = document.getElementById('partners-count')
-  if (count) count.textContent = list.length ? `· ${list.length}` : ''
+  sectionBadge('partners-count', list.length)
   if (!list.length) card.append(el('p', 'side-empty', 'No ongoing partnerships (add them on the "Ongoing Partnerships" tab).'))
   const refresh = (result) => {
     if (result?.partners && todoData) todoData.partners = result.partners
@@ -1433,6 +1471,7 @@ function renderTasks() {
     const side = el('div', 'task-side')
     const sideText = syncing ? 'Checking for new posts…' : task.side(todoData)
     if (sideText) side.append(el('span', '', sideText))
+    if (task.toggle) side.append(taskSwitch(task.toggle(todoData)))
     side.append(el('span', 'chev', '→'))
     link.append(value, copy, side)
     if (task === PROSPECT_TASK) {
@@ -1444,6 +1483,31 @@ function renderTasks() {
       tasksEl.append(link)
     }
   }
+}
+
+// The auto-commenting switch on the Comments card (inside the card's link: a click on it never opens
+// the screen).
+function taskSwitch({ on, label }) {
+  const node = el('span', `switch${on ? ' on' : ''}`)
+  node.setAttribute('role', 'switch')
+  node.setAttribute('aria-checked', String(on))
+  node.setAttribute('aria-label', label)
+  node.tabIndex = 0
+  node.title = on ? `${label} is on` : `${label} is off`
+  node.append(el('span', 'switch-text', label), el('span', 'switch-track'))
+  const flip = async (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    if (node.classList.contains('busy')) return
+    node.classList.add('busy')
+    const want = !on
+    const status = await api('/api/hustle/auto', want ? { always: true } : { hours: 0 }).catch(() => null)
+    if (status && todoData?.hustle) todoData.hustle.auto = status
+    renderTasks()
+  }
+  node.addEventListener('click', flip)
+  node.addEventListener('keydown', (event) => { if (event.key === ' ' || event.key === 'Enter') flip(event) })
+  return node
 }
 
 function untilLabel(ms) {
@@ -1616,7 +1680,7 @@ function renderLaunch() {
     const list = el('div', 'launch-tasks')
     list.append(
       launchCheckbox('voice', 'voicenotes', counts.voice),
-      launchCheckbox('comment', 'picked comments, each with a like', counts.comment, counts.comment ? '' : 'pick them in Hustling'),
+      launchCheckbox('comment', 'picked comments, each with a like', counts.comment, counts.comment ? '' : 'pick them in Comments'),
       launchCheckbox('relaunch1', 'relaunches', counts.relaunch1),
       launchCheckbox('relaunch2', '2nd relaunches', counts.relaunch2),
       launchCheckbox('unfollow', 'unfollows', counts.unfollow || 0, unfollowNote(counts)),
@@ -2053,16 +2117,40 @@ function postRead(drafted) {
   return box
 }
 
-function postCard(image, full, caption, alt) {
+// The post's picture; a carousel shows every slide, paged with the arrows on its sides.
+function postCard(image, full, caption, alt, slides = []) {
   const card = el('div', 'post-card')
-  if (image) {
+  const pictures = slides.length > 1 ? slides.map((src) => ({ src, full: src })) : image ? [{ src: image, full: full || image }] : []
+  if (pictures.length) {
+    let at = 0
+    const frame = el('div', 'post-frame')
     const holder = button('', 'post-image')
     const img = document.createElement('img')
     img.alt = alt || ''
-    img.src = mediaUrl(image)
     holder.append(img)
-    holder.addEventListener('click', () => openZoom(mediaUrl(full || image), alt, img.src))
-    card.append(holder)
+    holder.addEventListener('click', () => openZoom(mediaUrl(pictures[at].full), alt, img.src))
+    frame.append(holder)
+    const many = pictures.length > 1
+    const prev = many ? button('‹', 'slide-arrow prev', () => go(at - 1)) : null
+    const next = many ? button('›', 'slide-arrow next', () => go(at + 1)) : null
+    const counter = many ? el('div', 'slide-count') : null
+    if (many) {
+      prev.setAttribute('aria-label', 'Previous slide')
+      next.setAttribute('aria-label', 'Next slide')
+      frame.append(prev, next, counter)
+      for (const picture of pictures.slice(1, 4)) new Image().src = mediaUrl(picture.src)
+    }
+    function go(to) {
+      at = Math.max(0, Math.min(pictures.length - 1, to))
+      img.src = mediaUrl(pictures[at].src)
+      if (!many) return
+      counter.textContent = `${at + 1} / ${pictures.length}`
+      prev.disabled = at === 0
+      next.disabled = at === pictures.length - 1
+      if (pictures[at + 1]) new Image().src = mediaUrl(pictures[at + 1].src)
+    }
+    go(0)
+    card.append(frame)
   }
   if (caption) card.append(el('p', 'post-caption', caption))
   return card
@@ -2236,7 +2324,7 @@ function hustleScreen() {
       corner.push(stop)
     }
     const parts = shell({
-      kicker: item ? `Hustling · ${index + 1} of ${queue.length}` : 'Hustling',
+      kicker: item ? `Comments · ${index + 1} of ${queue.length}` : 'Comments',
       title: item ? item.name : (picked ? `${picked} comments picked` : 'All caught up'),
       meta: item ? [`@${item.username}`, item.followers && `${item.followers} followers`, item.latest?.at && `posted ${ago(item.latest.at)}`].filter(Boolean).join(' · ') : '',
       corner,
@@ -2273,7 +2361,7 @@ function hustleScreen() {
         if (left || queue[index] !== item) return
         item.drafted = drafted
         shown(item)
-        postSide.replaceChildren(postCard(drafted.image, drafted.full, drafted.caption, drafted.description))
+        postSide.replaceChildren(postCard(drafted.image, drafted.full, drafted.caption, drafted.description, drafted.slideImages || []))
         right.replaceChildren(commentPicker(item, drafted))
         prefetch()
       })
@@ -2442,14 +2530,14 @@ function hustleScreen() {
     }
   }
 
-  shell({ kicker: 'Hustling', title: 'Loading…' })
+  shell({ kicker: 'Comments', title: 'Loading…' })
   ready.then(() => Promise.all([api('/api/hustle/queue'), api('/api/hustle/picks')])).then(([payload, current]) => {
     queue = payload.queue || []
     picked = (current.picks || []).length
     if (payload.status?.running) note = `Sync still running · ${payload.status.done} / ${payload.status.total} checked`
     render()
   }).catch((error) => {
-    const parts = shell({ kicker: 'Hustling', title: 'Could not load' })
+    const parts = shell({ kicker: 'Comments', title: 'Could not load' })
     parts.main.append(el('p', 'warn', error.message))
   })
 

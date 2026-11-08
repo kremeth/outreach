@@ -1831,3 +1831,115 @@ a.person.current {
 /* Remove on a DM: red, and redder once it asks to be sure */
 .dm-link.dm-remove { color: #b3412f; }
 .dm-link.dm-remove[data-sure] { font-weight: 600; }
+
+/* DMs to reply and Ongoing partnerships: titles that fold their section away, with a count. */
+.section-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-align: left;
+  cursor: pointer;
+}
+.section-toggle:hover { color: var(--ink-2); }
+.section-toggle:focus-visible { outline: 2px solid var(--line-focus); outline-offset: 4px; border-radius: 4px; }
+.section-caret {
+  width: 0;
+  height: 0;
+  border-left: 5px solid currentColor;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  transition: transform 0.15s ease;
+}
+.section-toggle[aria-expanded="true"] .section-caret { transform: rotate(90deg); }
+.section-badge {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--chip);
+  color: var(--ink-2);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 20px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.section-badge.alert { background: #e5484d; color: #ffffff; }
+.section-badge[hidden] { display: none; }
+
+/* The auto-commenting switch on the Comments card. */
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-2);
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+.switch-track {
+  position: relative;
+  width: 34px;
+  height: 20px;
+  border-radius: 10px;
+  background: var(--track);
+  transition: background 0.15s ease;
+}
+.switch-track::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition: transform 0.15s ease;
+}
+.switch.on .switch-track { background: var(--fill); }
+.switch.on .switch-track::after { transform: translateX(14px); }
+.switch.busy { opacity: 0.5; pointer-events: none; }
+.switch:focus-visible { outline: 2px solid var(--line-focus); outline-offset: 3px; border-radius: 6px; }
+
+/* Carousel slides: arrows on the picture's sides and which slide this is. */
+.post-frame { position: relative; }
+.slide-arrow {
+  position: absolute;
+  top: 50%;
+  width: 36px;
+  height: 36px;
+  margin-top: -18px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.9);
+  color: #141413;
+  font-size: 24px;
+  line-height: 34px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+}
+.slide-arrow.prev { left: 10px; }
+.slide-arrow.next { right: 10px; }
+.slide-arrow:disabled { opacity: 0; pointer-events: none; }
+.slide-count {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(20, 20, 19, 0.65);
+  color: #ffffff;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}

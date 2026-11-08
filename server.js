@@ -729,7 +729,9 @@ async function readPost(post, photo, urgent = true) {
         if (item) media.push(item)
       }
       if (!media.length) throw new Error('No slide could be downloaded.')
-      return { format: 'carousel', media, caption, slides: slides.length, note: full.slides.length > MAX_SLIDES ? `Read the first ${MAX_SLIDES} of ${full.slides.length} slides.` : '' }
+      // Every slide's picture, for the page to page through (left / right).
+      const slideImages = full.slides.map((slide) => slide.image).filter(Boolean)
+      return { format: 'carousel', media, caption, slides: slides.length, slideImages, note: full.slides.length > MAX_SLIDES ? `Read the first ${MAX_SLIDES} of ${full.slides.length} slides.` : '' }
     }
     if (full.image) return { format: 'photo', media: [await preview.downloadImage(full.image)], caption, slides: 0, note: '' }
   } catch (error) {
@@ -802,6 +804,7 @@ async function commentDrafts(username, avoid = [], guidance = '', { background =
     followers: profile.followers || '',
     image: photo.src,
     full: photo.full || photo.src,
+    slideImages: read.slideImages || [],
     description: drafted.description,
     transcript: drafted.transcript,
     comments: drafted.comments,

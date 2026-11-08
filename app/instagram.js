@@ -166,6 +166,14 @@ const shown = (snippet) => String.raw`(() => {
   return [...document.querySelectorAll('span, div, h1')].some((el) => el.children.length < 4 && (el.innerText || '').includes(want))
 })()`
 
+// How many separate times the text is on the page (the innermost elements holding it): 2 or more for
+// our own comment means it went up twice.
+const shownCount = (snippet) => String.raw`(() => {
+  const want = ${JSON.stringify(snippet)}
+  const holding = [...document.querySelectorAll('span, div, h1')].filter((el) => (el.innerText || '').includes(want))
+  return holding.filter((el) => ![...el.children].some((child) => (child.innerText || '').includes(want))).length
+})()`
+
 function problemError(state) {
   if (state?.problem === 'login') return fail('Instagram wants you to log in. Log in inside the Instagram panel, then try again.', 'login')
   if (state?.problem === 'blocked') return fail(`Instagram showed a warning: ${state.warning || 'action limited'}`, 'blocked')
@@ -214,7 +222,9 @@ async function watchNetwork(wc, pattern) {
   const onMessage = (_event, method, params) => {
     if (method === 'Network.requestWillBeSent') {
       const headers = params.request.headers || {}
-      const name = headers['X-FB-Friendly-Name'] || headers['x-fb-friendly-name'] || ''
+      // GraphQL calls name themselves in a header or in the form body (fb_api_req_friendly_name).
+      const bodyName = (String(params.request.postData || '').match(/fb_api_req_friendly_name=([^&]+)/) || [])[1] || ''
+      const name = headers['X-FB-Friendly-Name'] || headers['x-fb-friendly-name'] || decodeURIComponent(bodyName)
       const label = `${params.request.url} ${name}`
       if (params.request.method === 'POST' && pattern.test(label) && !/unlike/i.test(label)) {
         requests.set(params.requestId, { url: params.request.url, name, done: false })
@@ -258,6 +268,37 @@ function likeVerdict(requests) {
     pending: requests.some((request) => !request.done),
     sent: requests.length > 0,
   }
+}
+
+// The request that posts a comment: the web API's /comments/<id>/add/, or a GraphQL mutation about a
+// comment. Never a query that only reads comments, nor liking, deleting or pinning one.
+const COMMENT_REQUEST = /comment/i
+const isCommentPost = (request) => /\/comments\/\d+\/add\b/i.test(request.url)
+  || (/mutation/i.test(request.name) && /comment/i.test(request.name) && !/like|delete|pin|report|hide|translat/i.test(request.name))
+
+// What Instagram's servers said about posting the comment. sent: anything about comments left the
+// browser after Post was pressed (then Post is never pressed again, it may have gone through).
+function commentVerdict(requests) {
+  const posts = requests.filter(isCommentPost)
+  const refused = posts.find((request) => request.done && !request.failed && ((request.status || 0) >= 400 || REFUSED.test(request.body || '')))
+  if (refused) {
+    const detail = (String(refused.body || '').match(REFUSED) || [])[0] || `status ${refused.status}`
+    return { refused: true, reason: `Instagram answered the comment with "${detail}".` }
+  }
+  return {
+    accepted: posts.some((request) => request.done && !request.failed && request.status >= 200 && request.status < 300 && !/"errors"\s*:\s*\[/.test(request.body || '')),
+    pending: posts.some((request) => !request.done),
+    sent: requests.length > 0,
+  }
+}
+
+// Each comment attempt's requests about comments, kept on this Mac (data/ig-comment-checks.jsonl) to
+// see what Instagram answered when a comment cannot be confirmed.
+function noteCommentCheck(entry) {
+  try {
+    const file = require('path').join(__dirname, '..', 'data', 'ig-comment-checks.jsonl')
+    require('fs').appendFileSync(file, `${JSON.stringify({ at: new Date().toISOString(), ...entry })}\n`)
+  } catch {}
 }
 
 // Likes the post. Re-aims and clicks again only when no like request left the browser at all (a
@@ -339,6 +380,7 @@ async function commentSteps(wc, { permalink, message, dryRun = false, allowLiked
   // Test mode: finds everything, types into the box, locates Post, then clears the box. Clicks nothing that publishes.
   if (dryRun) {
     const onPost = text ? await run(wc, shown(text.slice(0, 40))) : false
+    const timesOnPost = text ? await run(wc, shownCount(text.slice(0, 40))) : 0
     const heartPoint = await aim(wc, 'heartButton')
     const typedPoint = await aim(wc, 'box')
     await click(wc, typedPoint)
@@ -353,7 +395,7 @@ async function commentSteps(wc, { permalink, message, dryRun = false, allowLiked
     await key(wc, 'Backspace')
     await sleep(400)
     const cleared = await run(wc, POST_STATE)
-    return { ok: true, dryRun: true, liked: state.liked, heartPoint, typedInBox: typed.boxText, postButton: postPoint, clearedAfter: cleared.boxText === '', commentAlreadyOnPost: onPost }
+    return { ok: true, dryRun: true, liked: state.liked, heartPoint, typedInBox: typed.boxText, postButton: postPoint, clearedAfter: cleared.boxText === '', commentAlreadyOnPost: onPost, timesOnPost }
   }
 
   let liked = state.liked
@@ -391,29 +433,61 @@ async function commentSteps(wc, { permalink, message, dryRun = false, allowLiked
     throw fail('The comment box did not hold exactly the comment (a key from elsewhere got in), so nothing was posted.', 'notsent')
   }
 
+  // Confirmed by Instagram's own answer to the request (as for likes), else by the comment showing on
+  // the page, else by opening the post again and finding it there. 4-9 Nov every comment went up but
+  // none showed on the page in time: 232 were marked failed while they were on the posts.
   const snippet = text.slice(0, 40)
-  const posted = async () => {
-    const value = await run(wc, POST_STATE)
-    const visible = !String(value.boxText || '').trim() && await run(wc, shown(snippet))
-    return { ...value, visible, done: visible || Boolean(value.problem) }
+  const net = await watchNetwork(wc, COMMENT_REQUEST)
+  let how = ''
+  let result = null
+  try {
+    const check = async () => {
+      const value = await run(wc, POST_STATE)
+      const verdict = commentVerdict(net.list())
+      const onPage = !value.problem && !String(value.boxText || '').trim() && await run(wc, shown(snippet))
+      return { ...value, onPage, done: Boolean(value.problem) || verdict.refused || verdict.accepted || onPage }
+    }
+    const postPoint = await aim(wc, 'postButton')
+    progress.pressed = true
+    if (postPoint) await click(wc, postPoint)
+    else await key(wc, 'Return')
+    result = await waitFor(check, 8000)
+    // Nothing about the comment left the browser and it is still in the box (a missed click): Return
+    // once. Never when something was sent: that comment may be going up.
+    if (!result?.done && !commentVerdict(net.list()).sent && String(result?.boxText || '').trim()) {
+      await click(wc, boxPoint)
+      await key(wc, 'Return')
+      result = await waitFor(check, 8000)
+    }
+    // Instagram's answer still on its way: wait for it, pressing nothing.
+    if (!result?.done && commentVerdict(net.list()).pending) result = await waitFor(check, 10000)
+    if (result?.problem) throw problemError(result)
+    const verdict = commentVerdict(net.list())
+    // Worded like Instagram's own "Couldn't post comment", so a first one pauses comments for a day
+    // (lib/ig-guard trip) and a second one stops everything.
+    if (verdict.refused) throw fail(`Couldn't post comment: ${verdict.reason}`, 'blocked')
+    how = verdict.accepted ? 'instagram' : result?.onPage ? 'page' : ''
+  } finally {
+    noteCommentCheck({ permalink, phase: 'post', how, box: String(result?.boxText || '').slice(0, 60), requests: net.list().map((request) => ({ url: request.url.slice(0, 120), name: request.name, status: request.status, failed: request.failed, body: String(request.body || '').slice(0, 300) })) })
+    net.stop()
   }
-  const postPoint = await aim(wc, 'postButton')
-  progress.pressed = true
-  if (postPoint) await click(wc, postPoint)
-  else await key(wc, 'Return')
-  let result = await waitFor(posted, 5000)
-  if (!result?.visible && !result?.problem && String(result?.boxText || '').trim()) {
-    await click(wc, boxPoint)
-    await key(wc, 'Return')
-    result = await waitFor(posted, 6000)
+  if (!how && !String(result?.boxText || '').trim()) {
+    await openUrl(wc, permalink)
+    const fresh = await waitFor(async () => {
+      const value = await run(wc, POST_STATE)
+      return { ...value, done: Boolean(value.problem) || (value.hasHeart && (value.hasBox || value.closed)) }
+    }, 12000, 400)
+    if (fresh?.problem) throw problemError(fresh)
+    const found = await waitFor(async () => ({ done: await run(wc, shown(snippet)) }), 6000, 500)
+    if (found?.done) how = 'reopened'
+    noteCommentCheck({ permalink, phase: 'reopened', how })
   }
-  if (result?.problem) throw problemError(result)
-  if (!result?.visible) throw fail('The comment was typed, but it never appeared on the post. Check the Instagram panel.')
+  if (!how) throw fail('The comment was typed and Post pressed, but neither Instagram nor the post confirmed it. Check the Instagram panel.')
   // Instagram sometimes shows its warning a moment after accepting the comment.
   await sleep(1500)
   const after = problemError(await pageProblem(wc))
   if (after) throw after
-  return { ok: true, liked, commented: true }
+  return { ok: true, liked, commented: true, confirmedBy: how }
 }
 
 const DM_BOX = String.raw`

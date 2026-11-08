@@ -18,16 +18,20 @@
         <section id="usage" class="usage" aria-label="API costs"></section>
         <div class="section-label">Prospecting</div>
         <div id="prospect-card" class="tasks"></div>
-        <div class="section-label">Finding new creators</div>
-        <div id="scraper" class="side-list"></div>
-        <div class="section-label">DMs to reply</div>
-        <div id="dms" class="side-list"></div>
-        <div class="section-label">Ongoing partnerships <span id="partners-count"></span></div>
-        <div id="partners" class="side-list"></div>
+        <button type="button" class="section-label section-toggle" data-section="dms" aria-controls="dms" aria-expanded="false">
+          <span class="section-caret" aria-hidden="true"></span>DMs to reply <span id="dms-count" class="section-badge alert" hidden></span>
+        </button>
+        <div id="dms" class="side-list" hidden></div>
         <div class="section-label daily-label">Daily</div>
         <div id="sync" class="sync"></div>
         <div id="launch" class="launch"></div>
         <div id="tasks" class="tasks"></div>
+        <button type="button" class="section-label section-toggle" data-section="partners" aria-controls="partners" aria-expanded="false">
+          <span class="section-caret" aria-hidden="true"></span>Ongoing partnerships <span id="partners-count" class="section-badge" hidden></span>
+        </button>
+        <div id="partners" class="side-list" hidden></div>
+        <div class="section-label">Finding new creators</div>
+        <div id="scraper" class="side-list"></div>
       </main>
     </div>
 
