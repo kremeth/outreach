@@ -925,7 +925,7 @@ async function todo() {
     voice: { toSend: voice.length, sentToday: Math.max(sendQueue.sentToday(), guard.app ? guard.kinds.voice.today : 0), limit: sendQueue.DAILY_LIMIT },
     hustle: { ...hustle.status(), auto: autoCommentStatus() },
     relaunch: { 1: relaunch.summary(yesRows, 1), 2: relaunch.summary(yesRows, 2) },
-    warnings: [loadError, refreshError, writeNote(), igGraph.warning(), igGuard.status().commentsPaused ? `Comments paused on both Macs until ${new Date(igGuard.status().commentsPaused.until).toLocaleString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}: ${igGuard.status().commentsPaused.reason}` : '', dmsPaused() ? `DMs paused on both Macs since ${new Date(dmsPaused().time).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}: no voicenotes, relaunches or replies go out. Comments and unfollows carry on.` : ''].filter(Boolean),
+    warnings: [loadError, refreshError, writeNote(), igGraph.warning(), igGuard.status().commentsPaused ? `Comments paused on both Macs until ${new Date(igGuard.status().commentsPaused.until).toLocaleString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}: ${igGuard.status().commentsPaused.reason}` : '', dmsPaused() ? `DMs paused on both Macs since ${new Date(dmsPaused().time).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}: no voicenotes, relaunches or replies go out.` : ''].filter(Boolean),
     sheetRefreshedAt: sheetRefreshedAt ? new Date(sheetRefreshedAt).toISOString() : '',
   }
 }
