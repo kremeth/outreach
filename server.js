@@ -25,6 +25,7 @@ const dmChats = require('./lib/dm-chats')
 const runners = require('./lib/runners')
 const unfollowCleanup = require('./lib/unfollow-cleanup')
 const igGraph = require('./lib/ig-graph')
+const igGuard = require('./lib/ig-guard')
 const dmMissed = require('./lib/dm-missed')
 const voiceText = require('./lib/voice-transcribe')
 const openaiApi = require('./lib/openai')
@@ -817,6 +818,21 @@ function withTimeout(promise, ms) {
   return Promise.race([promise, new Promise((resolve) => setTimeout(() => resolve(null), ms))])
 }
 
+// Comments that are typed but never show on the post, several in a row, usually mean Instagram is
+// holding the account's comments back (4-9 Nov: 232 in a row, with no warning shown). After
+// COMMENT_FAILS_TO_PAUSE such failures with no comment getting through in between, comments pause on
+// both Macs for a day (a 'comment' stop in the shared log, as after "Couldn't post comment"); likes,
+// DMs and unfollows are not affected. A person can lift it after checking Instagram's Account Status.
+const COMMENT_FAILS_TO_PAUSE = 3
+async function pauseCommentsIfNoneShow() {
+  await log.refresh(0)
+  const recent = log.list((entry) => entry.action === 'comment' && !/ notsent$/.test(entry.detail || '')).slice(-COMMENT_FAILS_TO_PAUSE)
+  if (recent.length < COMMENT_FAILS_TO_PAUSE || !recent.every((entry) => / failed$/.test(entry.detail || ''))) return
+  if (igGuard.status().commentsPaused) return
+  await log.append({ action: 'block', target: 'comment', detail: `Paused: the last ${COMMENT_FAILS_TO_PAUSE} comments were typed but never appeared on the post. Check Instagram's Account Status before resuming.`, until: Date.now() + 24 * 60 * 60 * 1000 })
+  await log.refresh(0)
+}
+
 async function postComment({ permalink, message, username, pk, code, kind }) {
   const text = String(message || '').trim()
   if (!/^https:\/\/www\.instagram\.com\/(p|reel)\/[A-Za-z0-9_-]+\/?$/.test(String(permalink || ''))) {
@@ -841,6 +857,7 @@ async function postComment({ permalink, message, username, pk, code, kind }) {
       await hustle.skip(username, pk).catch((skipError) => console.error(skipError))
       return { ok: false, duplicate: true, error: error.message }
     }
+    await pauseCommentsIfNoneShow().catch((pauseError) => console.error(pauseError))
     throw error
   }
   hustle.recordComment(username, { pk: String(pk), code: code || '', kind: kind || 'p' }, text)
@@ -908,7 +925,7 @@ async function todo() {
     voice: { toSend: voice.length, sentToday: Math.max(sendQueue.sentToday(), guard.app ? guard.kinds.voice.today : 0), limit: sendQueue.DAILY_LIMIT },
     hustle: { ...hustle.status(), auto: autoCommentStatus() },
     relaunch: { 1: relaunch.summary(yesRows, 1), 2: relaunch.summary(yesRows, 2) },
-    warnings: [loadError, refreshError, writeNote(), igGraph.warning(), dmsPaused() ? `DMs paused on both Macs since ${new Date(dmsPaused().time).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}: no voicenotes, relaunches or replies go out. Comments and unfollows carry on.` : ''].filter(Boolean),
+    warnings: [loadError, refreshError, writeNote(), igGraph.warning(), igGuard.status().commentsPaused ? `Comments paused on both Macs until ${new Date(igGuard.status().commentsPaused.until).toLocaleString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}: ${igGuard.status().commentsPaused.reason}` : '', dmsPaused() ? `DMs paused on both Macs since ${new Date(dmsPaused().time).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}: no voicenotes, relaunches or replies go out. Comments and unfollows carry on.` : ''].filter(Boolean),
     sheetRefreshedAt: sheetRefreshedAt ? new Date(sheetRefreshedAt).toISOString() : '',
   }
 }
