@@ -145,17 +145,45 @@ const SECTION_KEY = 'outreach.open-sections'
 function openSections() {
   try { return new Set(JSON.parse(localStorage.getItem(SECTION_KEY) || '[]')) } catch { return new Set() }
 }
+const GLIDE = 'cubic-bezier(0.25, 0.8, 0.25, 1)'
+// Opens or closes a section with a glide. Only the part that can be seen moves: a long list (45 DMs)
+// would otherwise rush past in a few frames; the rest, below the screen, is simply there at the end.
+function glide(fold, open, animate) {
+  for (const running of fold.getAnimations()) running.cancel()
+  fold.style.overflow = ''
+  if (!animate || matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    fold.hidden = !open
+    return
+  }
+  fold.hidden = false
+  const room = Math.max(160, window.innerHeight - fold.getBoundingClientRect().top + 40)
+  const height = Math.min(open ? fold.scrollHeight : fold.offsetHeight, room)
+  // While it moves its contents stay inside it; once open, menus may spill out again.
+  fold.style.overflow = 'hidden'
+  const shut = { height: '0px', opacity: 0, marginBottom: '0px' }
+  const full = { height: `${height}px`, opacity: 1, marginBottom: '8px' }
+  const run = fold.animate(open ? [shut, full] : [full, shut], { duration: open ? 320 : 260, easing: GLIDE })
+  run.onfinish = () => {
+    fold.style.overflow = ''
+    if (!open) fold.hidden = true
+  }
+}
+
 for (const toggle of document.querySelectorAll('.section-toggle')) {
   const name = toggle.dataset.section
-  const body = document.getElementById(toggle.getAttribute('aria-controls'))
-  const set = (open) => {
+  const fold = document.getElementById(toggle.getAttribute('aria-controls'))
+  const set = (open, animate) => {
     toggle.setAttribute('aria-expanded', String(open))
-    if (body) body.hidden = !open
+    if (fold) glide(fold, open, animate)
   }
-  set(openSections().has(name))
+  set(openSections().has(name), false)
+  // The title's card eases in and out only once the page is drawn (no glide for the remembered state).
+  const ready = () => toggle.classList.add('ready')
+  requestAnimationFrame(() => requestAnimationFrame(ready))
+  setTimeout(ready, 600)
   toggle.addEventListener('click', () => {
     const open = toggle.getAttribute('aria-expanded') !== 'true'
-    set(open)
+    set(open, true)
     const sections = openSections()
     if (open) sections.add(name)
     else sections.delete(name)

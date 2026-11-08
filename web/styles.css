@@ -1839,8 +1839,9 @@ a.person.current {
   gap: 8px;
   width: 100%;
   padding: 0;
-  border: 0;
-  background: none;
+  border: 1px solid transparent;
+  border-radius: 16px;
+  background: transparent;
   font: inherit;
   font-size: 11px;
   letter-spacing: 0.12em;
@@ -1854,13 +1855,20 @@ a.person.current {
 .section-toggle[aria-expanded="false"] {
   gap: 10px;
   padding: 16px 20px;
-  border: 1px solid var(--line);
-  border-radius: 16px;
+  border-color: var(--line);
   background: var(--surface);
   font-size: 12px;
   color: var(--ink-2);
 }
 .section-toggle[aria-expanded="false"]:hover { color: var(--ink); background: var(--surface-hover); border-color: var(--line-strong); }
+/* Opening and closing glide: the card eases into the title while the section slides open below it. */
+:root { --glide: cubic-bezier(0.25, 0.8, 0.25, 1); }
+.section-toggle.ready { transition: padding 0.32s var(--glide), gap 0.32s var(--glide), font-size 0.32s var(--glide), color 0.32s var(--glide), background-color 0.32s var(--glide), border-color 0.32s var(--glide); }
+.fold { margin-bottom: 8px; }
+.fold > .side-list { margin-bottom: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .section-toggle.ready { transition: none; }
+}
 .section-toggle:focus-visible { outline: 2px solid var(--line-focus); outline-offset: 4px; border-radius: 4px; }
 .section-caret {
   width: 0;
