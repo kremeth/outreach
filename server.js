@@ -125,9 +125,11 @@ function voiceQueue() {
   return yesRows.filter((row) => voiceStatus(row) === 'to-send' && !skipped.has(row.sheetRow) && !neverMessage(data.usernameFrom(row.link)))
 }
 
-// DMs paused by a person, on both Macs (shared log, the latest 'dms' pause or resume decides): no
-// voicenotes, relaunches, reply relaunches, replies or partnership messages go out until resumed.
-// Comments, likes and unfollows carry on. Queued replies stay queued meanwhile.
+// DMs paused by a person, on both Macs (shared log, the latest 'dms' pause or resume decides): no new
+// outreach goes out until resumed: no voicenotes, relaunches, reply relaunches, and no automatic
+// partnership messages (box message, story reminder: these stay queued). What a person schedules from
+// the app still goes: replies, Message 2, likes, reactions, partnership messages sent from the card.
+// Comments and unfollows carry on.
 function dmsPaused() {
   const last = log.list((entry) => entry.target === 'dms' && (entry.action === 'pause' || entry.action === 'resume')).pop()
   return last?.action === 'pause' ? last : null
@@ -868,14 +870,21 @@ async function postComment({ permalink, message, username, pk, code, kind }) {
 }
 
 let sheetRefreshStarted = 0
+const SHEET_STUCK_MS = 2 * 60 * 1000
+// Whoever waits on a refresh waits at most until it counts as stuck, then carries on with the sheet as
+// last read (9 Nov: Launch waited on one that never ended, from 8:13 pm to the next afternoon).
+function waitAtMost(promise, ms) {
+  let timer
+  const limit = new Promise((resolve) => { timer = setTimeout(resolve, Math.max(0, ms)) })
+  return Promise.race([promise, limit]).finally(() => clearTimeout(timer))
+}
 function refreshSheet(force) {
-  // A refresh still going after 2 minutes is stuck: left behind, and a new one starts (nothing waits on
-  // a stuck one for ever).
-  if (sheetRefreshing && Date.now() - sheetRefreshStarted > 2 * 60 * 1000) {
+  // A refresh still going after 2 minutes is stuck: left behind, and a new one starts.
+  if (sheetRefreshing && Date.now() - sheetRefreshStarted > SHEET_STUCK_MS) {
     console.error('sheet refresh: stuck for over 2 minutes, starting a new one')
     sheetRefreshing = null
   }
-  if (sheetRefreshing) return sheetRefreshing
+  if (sheetRefreshing) return waitAtMost(sheetRefreshing, sheetRefreshStarted + SHEET_STUCK_MS - Date.now())
   if (!force && Date.now() - sheetRefreshedAt < SHEET_REFRESH_MS) return Promise.resolve()
   sheetRefreshStarted = Date.now()
   const thisRefresh = sheet.loadPending()
@@ -903,7 +912,7 @@ function refreshSheet(force) {
       if (sheetRefreshing === refreshPromise) sheetRefreshing = null
     })
   const refreshPromise = sheetRefreshing
-  return sheetRefreshing
+  return waitAtMost(sheetRefreshing, SHEET_STUCK_MS)
 }
 
 async function guardStatus() {
@@ -928,7 +937,7 @@ async function todo() {
     voice: { toSend: voice.length, sentToday: Math.max(sendQueue.sentToday(), guard.app ? guard.kinds.voice.today : 0), limit: sendQueue.DAILY_LIMIT },
     hustle: { ...hustle.status(), auto: autoCommentStatus() },
     relaunch: { 1: relaunch.summary(yesRows, 1), 2: relaunch.summary(yesRows, 2) },
-    warnings: [loadError, refreshError, writeNote(), igGraph.warning(), igGuard.status().commentsPaused ? `Comments paused on both Macs until ${new Date(igGuard.status().commentsPaused.until).toLocaleString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}: ${igGuard.status().commentsPaused.reason}` : '', dmsPaused() ? `DMs paused on both Macs since ${new Date(dmsPaused().time).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}: no voicenotes, relaunches or replies go out.` : ''].filter(Boolean),
+    warnings: [loadError, refreshError, writeNote(), igGraph.warning(), igGuard.status().commentsPaused ? `Comments paused on both Macs until ${new Date(igGuard.status().commentsPaused.until).toLocaleString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}: ${igGuard.status().commentsPaused.reason}` : '', dmsPaused() ? `New DMs paused on both Macs since ${new Date(dmsPaused().time).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}: no voicenotes, relaunches or automatic partnership messages go out. Replies you schedule still send.` : ''].filter(Boolean),
     sheetRefreshedAt: sheetRefreshedAt ? new Date(sheetRefreshedAt).toISOString() : '',
   }
 }
@@ -1358,7 +1367,8 @@ async function partnerCheckins() {
     // The box message: a partnership added today or yesterday (the box just went out), before any story.
     for (const partner of await partners.list(true)) {
       if (partner.story || partner.boxMessageSent || !partner.sentDate || partner.sentDate < yesterday || !partner.arrives.length) continue
-      dmReply.add({ name: `@${partner.username}`, username: partner.username, kind: 'text', text: boxMessage(partner), voice: '', emoji: '', partnerMessage: 'box', sendAfter: Date.now() + (60 + Math.random() * 180) * 1000 })
+      // auto: queued by the app, not a person (waits while DMs are paused).
+      dmReply.add({ name: `@${partner.username}`, username: partner.username, kind: 'text', text: boxMessage(partner), voice: '', emoji: '', partnerMessage: 'box', auto: true, sendAfter: Date.now() + (60 + Math.random() * 180) * 1000 })
       await partners.boxMessageSent(partner.username, `queued ${partners.formatDate(new Date())}`)
       console.log(`partner @${partner.username}: box message queued`)
     }
@@ -1367,7 +1377,7 @@ async function partnerCheckins() {
     if (fs.existsSync(path.join(__dirname, 'data', 'partner-reminder-approved'))) {
       for (const partner of await partners.list(true)) {
         if (partner.story || partner.post || partner.reminderSent || !partner.reminderDue || partner.reminderDue > today) continue
-        dmReply.add({ name: `@${partner.username}`, username: partner.username, kind: 'text', text: reminderMessage(partner), voice: '', emoji: '', partnerMessage: 'reminder', sendAfter: Date.now() + (60 + Math.random() * 180) * 1000 })
+        dmReply.add({ name: `@${partner.username}`, username: partner.username, kind: 'text', text: reminderMessage(partner), voice: '', emoji: '', partnerMessage: 'reminder', auto: true, sendAfter: Date.now() + (60 + Math.random() * 180) * 1000 })
         await partners.reminderSent(partner.username, `queued ${partners.formatDate(new Date())}`)
         console.log(`partner @${partner.username}: story reminder queued`)
       }
@@ -1534,7 +1544,9 @@ function dmsForPage({ all = false, trace = null } = {}) {
   // Answered from here: off the list straight away (queued or sending), and once sent until the inbox
   // is read again (then it is gone for good, unless they wrote again). A failed send stays, with why.
   const answered = (item) => item.reply && (['queued', 'sending'].includes(item.reply.status) || (item.reply.status === 'sent' && item.reply.sentAt >= summary.scannedAt))
-  summary.outgoing = dmReply.outgoing().filter((entry) => entry.kind !== 'read')
+  // held: an automatic partnership message while DMs are paused (it goes once they are resumed).
+  const paused = Boolean(dmsPaused())
+  summary.outgoing = dmReply.outgoing().filter((entry) => entry.kind !== 'read').map(({ auto, ...entry }) => ({ ...entry, held: paused && auto }))
   summary.sendingNow = Date.now() < replyNowUntil
   step('before answered')
   summary.toReply = summary.toReply.filter((item) => !answered(item)).map((item) => ({ ...item, followers: followersOf(item.username) }))
@@ -1551,12 +1563,13 @@ function dmsForPage({ all = false, trace = null } = {}) {
   return summary
 }
 
-// Sends the queued replies, one at a time, when Launch is not using Instagram. Busy, paused or waiting
-// on a limit: stays queued and is tried again. Anything else: marked failed with the reason.
+// Sends the queued replies, one at a time, when Launch is not using Instagram. Busy or waiting on a
+// limit: stays queued and is tried again. Anything else: marked failed with the reason. DMs paused:
+// what a person scheduled still goes; the automatic partnership messages stay queued until resumed.
 let replySending = false
 let replyNowUntil = 0 // "Send now": the queued replies go out even outside Launch's hours, for 3 hours
 async function sendQueuedReplies() {
-  if (replySending || dmsPaused()) return
+  if (replySending) return
   const pilot = autopilot.status()
   if (pilot.current) return
   // In a gap between Launch's actions (its next one at least a minute away).
@@ -1564,7 +1577,7 @@ async function sendQueuedReplies() {
   // Same hours as Launch, unless "Send now" was pressed.
   const hour = new Date().getHours()
   if ((hour < 8 || hour >= 21) && Date.now() > replyNowUntil) return
-  const item = dmReply.next()
+  const item = dmReply.next(dmsPaused() ? (entry) => !dmReply.automatic(entry) : null)
   if (!item) return
   replySending = true
   try {
@@ -2536,7 +2549,8 @@ const server = http.createServer(async (req, res) => {
     // Remove: done with this person for good. On the do-not-message list (both Macs: never listed or
     // messaged again, whatever they write), their queued replies dropped, and, when they are on the
     // sheet, marked No so Launch unfollows them at its next unfollow step (as for a creator who said no).
-    // Pause or resume every DM Launch and the reply queue send, on both Macs: {paused: true|false, reason}.
+    // Pause or resume new DMs on both Macs (Launch's voicenotes, relaunches and reply relaunches, and the
+    // automatic partnership messages; replies a person schedules still go): {paused: true|false, reason}.
     if (req.method === 'POST' && url.pathname === '/api/dms/pause') {
       const body = await readBody(req)
       const paused = Boolean(body.paused)

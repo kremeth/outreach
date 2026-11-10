@@ -398,6 +398,8 @@ function outgoingLine(list, sendingNow) {
   const items = list.map((entry) => {
     const at = Math.max(entry.sendAfter || 0, entry.waitUntil || 0)
     if (entry.status === 'sending') return { order: 0, text: `${what(entry)}${first(entry.name)} sending now…` }
+    // An automatic partnership message while new DMs are paused: it goes once they are resumed.
+    if (entry.held) return { order: Infinity, text: `${what(entry)}${first(entry.name)} once DMs are resumed` }
     if (at > now) {
       const daily = /daily/i.test(entry.waitReason || '')
       return { order: at, text: `${what(entry)}${first(entry.name)} in ${clock(at - now)}${daily ? ' (daily limit reached)' : ''}` }
