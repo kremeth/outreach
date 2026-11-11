@@ -923,6 +923,17 @@ async function guardStatus() {
   }
 }
 
+// The safety numbers for the Home page, which asks every 5 seconds: at most every 15 seconds, as each
+// answer costs a read of the shared log in Google Sheets. Only for show; every action checks for itself.
+const PAGE_GUARD_MS = 15 * 1000
+let pageGuard = { at: 0, value: null }
+async function guardForPage() {
+  if (pageGuard.value && Date.now() - pageGuard.at < PAGE_GUARD_MS) return pageGuard.value
+  const value = await guardStatus()
+  pageGuard = value.app ? { at: Date.now(), value } : { at: 0, value: null }
+  return value
+}
+
 async function todo() {
   const guard = await guardStatus()
   const voice = voiceQueue()
@@ -1564,7 +1575,8 @@ function dmsForPage({ all = false, trace = null } = {}) {
 }
 
 // Sends the queued replies, one at a time, when Launch is not using Instagram. Busy or waiting on a
-// limit: stays queued and is tried again. Anything else: marked failed with the reason. DMs paused:
+// limit (or on Google Sheets for the safety check): stays queued and is tried again. Anything else:
+// marked failed with the reason, and never retried on its own, as it may have gone out. DMs paused:
 // what a person scheduled still goes; the automatic partnership messages stay queued until resumed.
 let replySending = false
 let replyNowUntil = 0 // "Send now": the queued replies go out even outside Launch's hours, for 3 hours
@@ -1580,6 +1592,7 @@ async function sendQueuedReplies() {
   const item = dmReply.next(dmsPaused() ? (entry) => !dmReply.automatic(entry) : null)
   if (!item) return
   replySending = true
+  let acting = false // the action itself has been asked for: from here on, no answer may mean it went out
   try {
     let username = item.username
     if (!username) {
@@ -1612,6 +1625,7 @@ async function sendQueuedReplies() {
         return
       }
     }
+    acting = item.kind !== 'read'
     if (item.kind === 'voice') {
       // Message 2 is two voicenotes, part 1 then part 2 (each under Instagram's 1 minute), from whoever
       // sent the first one, sent back to back in one go (nothing in between). A part already sent is
@@ -1651,9 +1665,10 @@ async function sendQueuedReplies() {
       tomorrow.setDate(tomorrow.getDate() + 1)
       tomorrow.setHours(8, 0, 0, 0)
       dmReply.update(item.id, { status: 'queued', waitUntil: daily ? tomorrow.getTime() : Date.now() + Math.max(30000, error.waitMs || 60000), waitReason: error.message })
-    } else if (['busy', 'hidden', 'app', 'timeout'].includes(error.kind)) dmReply.update(item.id, { status: 'queued' })
+    } else if (['busy', 'hidden', 'app'].includes(error.kind) || (error.kind === 'timeout' && !acting)) dmReply.update(item.id, { status: 'queued' })
     else {
-      dmReply.update(item.id, { status: 'failed', error: error.message })
+      // No answer in time during the send itself: the app carries on, so sending again could mean sending twice.
+      dmReply.update(item.id, { status: 'failed', error: error.kind === 'timeout' ? 'Instagram took too long to answer, so this may have gone out. Check the chat before sending it again.' : error.message })
       if (item.partnerMessage) partners.markMessage(item.username, item.partnerMessage, `failed ${partners.formatDate(new Date())}`).catch(() => {})
     }
   } finally {
@@ -2338,7 +2353,7 @@ const server = http.createServer(async (req, res) => {
       return
     }
     if (req.method === 'GET' && url.pathname === '/api/autopilot') {
-      const guard = await guardStatus()
+      const guard = await guardForPage()
       // Launch running on the other Mac (this one idle): shown as such, from its published numbers.
       const remote = liveStatus.current()
       const own = autopilot.status()

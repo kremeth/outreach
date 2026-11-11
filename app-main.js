@@ -356,8 +356,7 @@ async function inPanel(kind, label, describe, task) {
     await ensurePanelLive()
     const account = await accountId()
     if (!account) throw Object.assign(new Error('Instagram is not logged in. Log in inside the Instagram panel first.'), { kind: 'login' })
-    await guard.check(kind, account)
-    await guard.lock(account)
+    await guard.preflight(kind, account)
     let result = null
     let failure = null
     try {
