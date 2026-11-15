@@ -2924,7 +2924,8 @@ async function boot() {
   // Meta's token kept alive (renewed daily when the app secret is saved).
   const renewMeta = () => igGraph.renew().then((result) => { if (result.renewed) console.log(`meta token renewed, valid until ${new Date(result.expiresAt).toLocaleDateString('en-AU')}`) }).catch((error) => console.error('meta renew', error.message))
   setTimeout(renewMeta, 20 * 1000).unref()
-  setInterval(renewMeta, 6 * 3600 * 1000).unref()
+  // Every 10 minutes: a token saved by hand is swapped for a 60-day one before it runs out (nothing to do: no call).
+  setInterval(renewMeta, 10 * 60 * 1000).unref()
   setTimeout(() => igGraph.checkAccess().catch(() => {}), 40 * 1000).unref()
   setInterval(() => igGraph.checkAccess().catch(() => {}), 12 * 3600 * 1000).unref()
   // The wearable model's photo downloader and model, kept running on this Mac.
